@@ -308,6 +308,59 @@ void ArmInterpreter::ExecuteSingleDataTransfer(uint32_t instr) {
   }
 }
 
+void ArmInterpreter::ExecuteBlockDataTransfer(uint32_t instr) {
+  bool pre_indexed = (instr >> 24) & 1;
+  bool up = (instr >> 23) & 1;
+  bool write_back = (instr >> 21) & 1;
+  bool load = (instr >> 20) & 1;
+  uint32_t rn = (instr >> 16) & 0xF;
+  uint32_t register_list = instr & 0xFFFF;
+
+  int count = 0;
+  for (uint32_t i = 0; i < 16; ++i) {
+    if ((register_list >> i) & 1) ++count;
+  }
+
+  uint32_t base = regs_[rn];
+  // Standard ARM block-transfer address computation: registers always
+  // land in increasing register-number -> increasing memory-address
+  // order, regardless of direction; only the starting address differs
+  // per addressing mode (IA/IB/DA/DB).
+  uint32_t address = up ? (base + (pre_indexed ? 4 : 0))
+                         : (base - count * 4 + (pre_indexed ? 0 : 4));
+
+  for (uint32_t i = 0; i < 16; ++i) {
+    if (!((register_list >> i) & 1)) continue;
+    if (load) {
+      uint32_t value = memory_.Read32(address);
+      if (i == kPC) {
+        regs_[kPC] = value;
+        pc_updated_by_instruction_ = true;
+      } else {
+        regs_[i] = value;
+      }
+    } else {
+      memory_.Write32(address, ReadOperandRegister(i));
+    }
+    address += 4;
+  }
+
+  if (write_back) {
+    regs_[rn] = up ? base + count * 4 : base - count * 4;
+  }
+}
+
+void ArmInterpreter::ExecuteBranchExchange(uint32_t instr) {
+  uint32_t rm = instr & 0xF;
+  uint32_t target = ReadOperandRegister(rm);
+  if (target & 1) {
+    throw UnimplementedInstruction(
+        "BX target requests Thumb state, which isn't implemented");
+  }
+  regs_[kPC] = target;
+  pc_updated_by_instruction_ = true;
+}
+
 void ArmInterpreter::Step() {
   uint32_t fetch_addr = regs_[kPC];
   if (call_out_size_ != 0 && fetch_addr >= call_out_base_ &&
@@ -343,16 +396,31 @@ void ArmInterpreter::Step() {
 
       bool is_test_opcode = opcode >= 0x8 && opcode <= 0xB;
       if (is_test_opcode && s_bit == 0) {
-        throw UnimplementedInstruction(
-            "Miscellaneous instruction space (MRS/MSR/BX/etc.)");
-      }
-      if (bit25 == 0 && bit4 == 1 && bit7 == 1) {
+        // This opcode range with S=0 is reassigned to the "miscellaneous
+        // instructions" space (MRS/MSR/BX/CLZ/BXJ/...), not a real
+        // TST/TEQ/CMP/CMN. BX Rm's specific bit pattern is:
+        // cond 0001 0010 1111 1111 1111 0001 Rm -- everything else in
+        // this space stays unimplemented.
+        if ((instr & 0x0FFFFFF0) == 0x012FFF10) {
+          ExecuteBranchExchange(instr);
+        } else {
+          throw UnimplementedInstruction(
+              "Miscellaneous instruction space (MRS/MSR/etc.)");
+        }
+      } else if (bit25 == 0 && bit4 == 1 && bit7 == 1) {
         throw UnimplementedInstruction(
             "Multiply/halfword/signed-transfer instruction space");
+      } else {
+        ExecuteDataProcessing(instr);
       }
-      ExecuteDataProcessing(instr);
     } else if (bits27_25 == 0b100) {
-      throw UnimplementedInstruction("Block data transfer (LDM/STM)");
+      bool s_bit = (instr >> 22) & 1;
+      if (s_bit) {
+        throw UnimplementedInstruction(
+            "Block data transfer with S=1 (user-bank registers / "
+            "exception return) not supported");
+      }
+      ExecuteBlockDataTransfer(instr);
     } else {
       throw UnimplementedInstruction("Coprocessor instruction / SWI");
     }

@@ -14,6 +14,7 @@ using zeebulator::kR0;
 using zeebulator::kR1;
 using zeebulator::kR2;
 using zeebulator::kR3;
+using zeebulator::kSP;
 
 namespace {
 
@@ -254,14 +255,46 @@ TEST(Cpu, MultiplyInstructionIsUnimplemented) {
   EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
 }
 
-TEST(Cpu, BranchExchangeIsUnimplemented) {
+TEST(Cpu, BranchExchangeJumpsToArmTarget) {
   ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0x2000);  // bit 0 clear -> stay in ARM state
+  cpu.GetMemory().Write32(0, 0xE12FFF11);  // BX R1
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kPC), 0x2000u);
+}
+
+TEST(Cpu, BranchExchangeToThumbTargetIsUnimplemented) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0x2001);  // bit 0 set -> requests Thumb state
   cpu.GetMemory().Write32(0, 0xE12FFF11);  // BX R1
   EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
 }
 
-TEST(Cpu, BlockDataTransferIsUnimplemented) {
+TEST(Cpu, BlockDataTransferWithUserBankBitIsUnimplemented) {
   ArmInterpreter cpu;
-  cpu.GetMemory().Write32(0, 0xE8BD0001);  // POP {R0} (LDM-family encoding)
+  cpu.GetMemory().Write32(0, 0xE8FD0001);  // LDM with S=1 set (bit 22)
   EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
+}
+
+TEST(Cpu, PushThenPopRoundTripsMultipleRegisters) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kSP, 0x5000);
+  cpu.SetRegister(kR0, 0x11111111);
+  cpu.SetRegister(kR1, 0x22222222);
+
+  cpu.GetMemory().Write32(0, 0xE92D0003);  // PUSH {R0, R1}  (STMDB SP!)
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kSP), 0x4FF8u) << "SP decremented by 2 words";
+  // Lower register number lands at the lower address, regardless of
+  // push/pop direction.
+  EXPECT_EQ(cpu.GetMemory().Read32(0x4FF8), 0x11111111u);
+  EXPECT_EQ(cpu.GetMemory().Read32(0x4FFC), 0x22222222u);
+
+  cpu.SetRegister(kR0, 0xDEAD);  // clobber before popping back
+  cpu.SetRegister(kR1, 0xBEEF);
+  cpu.GetMemory().Write32(4, 0xE8BD0003);  // POP {R0, R1}  (LDMIA SP!)
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0x11111111u);
+  EXPECT_EQ(cpu.GetRegister(kR1), 0x22222222u);
+  EXPECT_EQ(cpu.GetRegister(kSP), 0x5000u) << "SP restored to original";
 }

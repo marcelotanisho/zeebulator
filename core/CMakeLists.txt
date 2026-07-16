@@ -11,6 +11,8 @@ add_library(zeebulator_core STATIC
   loader/ggz.h
   loader/mif.cpp
   loader/mif.h
+  loader/mod.cpp
+  loader/mod.h
 )
 
 target_include_directories(zeebulator_core PUBLIC ${PROJECT_SOURCE_DIR})

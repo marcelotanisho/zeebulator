@@ -55,16 +55,21 @@ awareness yet.
         (immediate, register with immediate or register-specified shift,
         all 4 shift types incl. RRX), all 15 condition codes, N/Z/C/V flag
         computation, B/BL, single word/byte LDR/STR (immediate and
-        register offset, pre/post-index, writeback), the PC-reads-as+8
-        operand semantics, and the call-out trap hook.
+        register offset, pre/post-index, writeback), block data transfer
+        (LDM/STM, all 4 addressing modes, writeback — added during Phase 2
+        real-`.mod` probing, see below), BX (branch-and-exchange, as long
+        as the target stays in ARM state), the PC-reads-as+8 operand
+        semantics, and the call-out trap hook.
       - **Deferred, and explicitly rejected via `UnimplementedInstruction`
         rather than silently mis-executed:** multiply/MLA/long-multiply,
-        halfword/signed-byte transfer, block transfer (LDM/STM), BX/BLX,
-        MRS/MSR (PSR transfer), SWI, coprocessor instructions, Thumb state
-        entirely. Will be picked up incrementally as real game code needs
-        them, starting in Phase 2+.
+        halfword/signed-byte transfer, BLX, MRS/MSR (PSR transfer), SWI,
+        coprocessor instructions, LDM/STM's user-bank/exception-return
+        (S=1) variant, BX to a Thumb target, Thumb state entirely. Will be
+        picked up incrementally as real game code needs them — multiply is
+        the next highest-value target (real compiled code will need it
+        constantly; we just haven't hit one yet in probing).
 - [x] Unit tests against known ARMv6 instruction-behavior vectors —
-      `tests/cpu_test.cpp`, 21 tests, all hand-encoded real ARM instruction
+      `tests/cpu_test.cpp`, 23 tests, all hand-encoded real ARM instruction
       words (not synthetic/fake encodings), verified bit-field-by-bit-field
 - [x] **Research task, mostly resolved** via `research/samples/` source
       (see Phase 0): BREW's call-out mechanism is plain **C vtable/interface
@@ -106,6 +111,15 @@ Exit criterion: a real game's GGZ archive can be opened and its `.mod` code
 mapped into memory with a valid entry point, ready to execute (even though
 it will crash immediately without Phase 3).
 
+**Exit criterion met**, and then some — verified with actual instruction
+execution, not just "it loads": GGZ opens (89/89 + 74/74 real entries
+extracted correctly), `.mod` maps into memory with a valid entry point and
+genuinely executes real code correctly (23 real instructions, see below).
+It won't get further than that without Phase 3 (BREW HLE), exactly as
+expected. BAR is unconfirmed-needed for this title; MIF's full structure
+remains deliberately deferred (see below) — neither blocks this phase's
+actual goal.
+
 - [x] **Clean-room GGZ archive reader — fully solved and verified.**
       `core/loader/ggz.{h,cpp}`. No public spec exists anywhere (checked:
       official docs, `ggzbrewtools`' README/wiki/issues — read for prose
@@ -137,7 +151,10 @@ it will crash immediately without Phase 3).
 - [x] Dev tool: `tools/ggz_inspector.cpp` — lists and optionally extracts
       a GGZ archive's contents from a runtime-supplied path (never embeds
       game content into the repo).
-- [ ] BAR file parser — not started
+- [ ] BAR file parser — not started. Worth noting: Double Dragon's dump
+      doesn't contain any `.bar` file at all (just `mif/`, `mod/`) — it
+      may not be universally needed per-title. Revisit if/when a title
+      that actually has one shows up.
 - [x] MIF (Module Information File) — **string metadata extraction solved
       and shipped; full binary structure deliberately deferred (scope
       decision, not a dead end).** No byte-level spec exists publicly for
@@ -189,20 +206,53 @@ it will crash immediately without Phase 3).
         (e.g. Double Dragon's `.mif` is literally named `274754.mif` —
         that number is a plausible class ID without parsing anything)
         before resuming this.
-- [ ] `.mod` loader: code/data segment mapping, relocation, initial register
-      state per BREW's documented ARM entry convention — **not started,
-      no byte-level spec found.** Confirmed via research: `.mod` is
-      produced by Qualcomm's closed-source `elf2mod.exe` from a linked ARM
-      ELF (`-nostartfiles --entry=AEEMod_Load --emit-relocs
-      --default-script=elf2mod.x`, `-march=armv5te -mthumb-interwork`),
-      and is described as "self-relocatable" — implying some embedded
-      relocation data, not a flat raw binary. The `elf2mod.x` linker
-      script (likely inside `BREWMPTools.exe`, which we don't currently
-      have — we have `QXBinaryDistribInstaller.msi`/`ZeeboSDKInstaller.msi`
-      instead) would be the closest thing to a real spec if it can be
-      located; otherwise this needs the same blind hypothesis-testing
-      approach as GGZ/MIF, likely starting from ELF-format familiarity
-      (relocation table layout) rather than from nothing.
+- [x] `.mod` loader — **solved and verified against real code execution,
+      not just static analysis.** Research suggested "self-relocatable"
+      (implying a relocation table); that turned out to be misleading —
+      the real answer is simpler. `core/loader/mod.{h,cpp}`:
+      - **Finding**: `.mod` is a flat, headerless, position-independent
+        ARM binary. Raw code+data starts at file offset 0. No header, no
+        relocation table, loadable at any base address.
+      - **How this was verified** (`tools/mod_probe.cpp`, a dev tool that
+        loads a raw `.mod` at a chosen address and single-steps the real
+        interpreter through it, printing each instruction): loaded the
+        real Double Dragon `ddragonz.mod` at an arbitrary address
+        (`0x00100000`, chosen for no particular reason — the whole point
+        was to confirm the code doesn't care) and executed it. Result:
+        **23 real instructions executed correctly**, decoding as
+        completely coherent, idiomatic compiler-generated ARM: a function
+        prologue (`STR LR,[SP,#-4]!` / `SUB SP,SP,#12`), sensible
+        register shuffling, a `BL` that correctly landed on a *second*
+        function's prologue (`STMFD SP!, {r3-r9,lr}`) at a totally
+        different file offset, that function's body and matching epilogue
+        (`LDMFD SP!, {r3-r9,lr}` popping exactly what was pushed), and two
+        correct `BX LR` returns — all with register values propagating
+        exactly as expected at every step. This is about as strong a
+        real-execution confirmation as is possible without the actual
+        BREW OS driving it. (Execution eventually "returns" to address 0
+        and starts executing harmless zeroed-memory no-ops — expected and
+        correct, not a bug: our probe doesn't yet set up the real initial
+        LR/SP the OS would provide before calling `AEEMod_Load`, which is
+        Phase 3 work, not a `.mod`-format problem.)
+      - **Direct payoff for Phase 1**: probing this real code is what
+        motivated (and validated) implementing LDM/STM and BX in the CPU
+        interpreter just now — both were hit almost immediately by real
+        compiled code, confirming they were exactly the right next
+        instructions to add.
+      - `elf2mod.x`/relocation-table research from before this session is
+        now believed to be a red herring for the common case (plain
+        position-independent code) — kept in git history rather than
+        deleted from here, in case some other title's `.mod` does need
+        real relocation (not every game need be compiled identically).
+      - `LoadMod()` is intentionally thin (load bytes, set PC) since
+        there's no header to parse. 3 unit tests (`tests/mod_test.cpp`),
+        including one that specifically verifies the *same* image produces
+        identical behavior at two different base addresses — the actual
+        position-independence property, not just "it loads."
+      - The `.sig` file alongside each `.mod` (e.g. `ddragonz.sig`) is
+        almost certainly a cryptographic signature for real-device code
+        verification — irrelevant to an HLE emulator with no real
+        security boundary to enforce, so deliberately ignored.
 - [x] Test fixtures: **deviated from the original plan, in a good way.**
       SDK sample apps don't include any `.ggz` files at all (only Double
       Dragon's commercial dump does), so GGZ and MIF tests both use

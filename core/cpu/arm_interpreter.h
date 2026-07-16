@@ -17,9 +17,14 @@ class UnimplementedInstruction : public std::runtime_error {
 };
 
 // v1 ARMv6 (ARM1136J-S) interpreter, ARM (A32) state only — no Thumb yet.
-// Covers data processing, branch, and single word/byte load-store.
-// Multiply, block transfer, halfword/signed transfer, PSR transfer, BX,
-// SWI, and coprocessor instructions raise UnimplementedInstruction.
+// Covers data processing, branch, single word/byte load-store, block
+// data transfer (LDM/STM, user-bank/exception-return variants excluded),
+// and BX (branch-and-exchange) as long as the target keeps execution in
+// ARM state (bit 0 of the target address clear) — a real switch into
+// Thumb state raises UnimplementedInstruction, since Thumb decoding
+// isn't implemented at all. Multiply, halfword/signed transfer, PSR
+// transfer, SWI, and coprocessor instructions also raise
+// UnimplementedInstruction.
 class ArmInterpreter : public IArmCore {
  public:
   ArmInterpreter();
@@ -61,6 +66,8 @@ class ArmInterpreter : public IArmCore {
   void ExecuteDataProcessing(uint32_t instr);
   void ExecuteBranch(uint32_t instr);
   void ExecuteSingleDataTransfer(uint32_t instr);
+  void ExecuteBlockDataTransfer(uint32_t instr);
+  void ExecuteBranchExchange(uint32_t instr);
 
   std::array<uint32_t, 16> regs_{};
   uint32_t cpsr_ = 0;
