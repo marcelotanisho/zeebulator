@@ -57,19 +57,21 @@ awareness yet.
         computation, B/BL, single word/byte LDR/STR (immediate and
         register offset, pre/post-index, writeback), block data transfer
         (LDM/STM, all 4 addressing modes, writeback — added during Phase 2
-        real-`.mod` probing, see below), BX (branch-and-exchange, as long
-        as the target stays in ARM state), the PC-reads-as+8 operand
-        semantics, and the call-out trap hook.
+        real-`.mod` probing, see below), halfword/signed transfer
+        (STRH/LDRH/LDRSB/LDRSH — added during Phase 3, hit by our own
+        compiled test app, see below), BX/BLX (branch-and-exchange,
+        register form, as long as the target stays in ARM state), the
+        PC-reads-as+8 operand semantics, and the call-out trap hook.
       - **Deferred, and explicitly rejected via `UnimplementedInstruction`
         rather than silently mis-executed:** multiply/MLA/long-multiply,
-        halfword/signed-byte transfer, BLX, MRS/MSR (PSR transfer), SWI,
-        coprocessor instructions, LDM/STM's user-bank/exception-return
-        (S=1) variant, BX to a Thumb target, Thumb state entirely. Will be
-        picked up incrementally as real game code needs them — multiply is
-        the next highest-value target (real compiled code will need it
-        constantly; we just haven't hit one yet in probing).
+        swap (SWP/SWPB), MRS/MSR (PSR transfer), SWI, coprocessor
+        instructions, LDM/STM's user-bank/exception-return (S=1) variant,
+        BX/BLX to a Thumb target, Thumb state entirely. Will be picked up
+        incrementally as real game code needs them — multiply is the next
+        highest-value target (real compiled code will need it constantly;
+        our own test app hasn't needed it yet, but a real game will).
 - [x] Unit tests against known ARMv6 instruction-behavior vectors —
-      `tests/cpu_test.cpp`, 23 tests, all hand-encoded real ARM instruction
+      `tests/cpu_test.cpp`, 27 tests, all hand-encoded real ARM instruction
       words (not synthetic/fake encodings), verified bit-field-by-bit-field
 - [x] **Research task, mostly resolved** via `research/samples/` source
       (see Phase 0): BREW's call-out mechanism is plain **C vtable/interface
@@ -268,17 +270,98 @@ actual goal.
 Exit criterion: **M0 from PRD §7** — a BREW "hello world" sample app boots
 via the standalone frontend and reaches a visible, correctly-painted screen.
 
-- [ ] Stand up Backend Abstraction Interface (ARCHITECTURE.md §3.8)
+**Core HLE pipeline is done and verified end to end; the one remaining
+piece is an actual SDL2 window** (currently proven via a test double that
+captures the exact pixel output instead of a real window — see below).
+
+- [x] Stand up Backend Abstraction Interface (ARCHITECTURE.md §3.8) —
+      done back in Phase 0 (`core/backend.h`): `PushVideoFrame`,
+      `PushAudioSamples`, `PollInput`.
 - [ ] Minimal standalone SDL2 frontend implementing that interface
-      (window + framebuffer blit only, no audio/input yet)
-- [ ] Implement `IShell` HLE: app lifecycle (init, notify, suspend/resume
-      stubs) — just enough for an app to start and stay alive
-- [ ] Implement minimal `IDisplay` HLE: framebuffer creation, basic 2D
-      blit/update-screen calls
-- [ ] Wire CPU core call-out traps (Phase 1) to the `IShell`/`IDisplay` HLE dispatch
-- [ ] **Milestone M0 checkpoint**: boot the simplest SDK sample app to a
-      visible screen. Do not proceed to Phase 4 until this works —
-      it's the smallest possible end-to-end validation of the whole pipeline.
+      (window + framebuffer blit only, no audio/input yet) — **not
+      started.** Everything up to this point has been verified against a
+      `CapturingBackend` test double (`tests/brew_lifecycle_test.cpp`)
+      that asserts on exact pixel values instead of a real window; wiring
+      an actual SDL2-backed `Backend` implementation is the one piece
+      standing between what's proven now and a human seeing a window.
+- [x] Implement `IShell` HLE (`core/brew/ishell.cpp`) — vtable slot order
+      verified directly against real Qualcomm source (`AEEIShell.h`, see
+      below). All 42 pre-BREW-MP slots present; every slot is currently a
+      safe stub (nothing in scope calls any IShell method yet — the test
+      app gets `IDisplay` directly via the `EVT_APP_START` event, not
+      through IShell). Extend individual slots with real behavior as
+      games need them.
+- [x] Implement `IDisplay` HLE (`core/brew/idisplay.cpp`) — vtable slot
+      order verified directly against real `AEEIDisplay.h`. Real behavior
+      for `DrawText` (draws a placeholder block sized from the real
+      x/y/length arguments — no font rasterizer yet, that's later
+      graphics-phase work) and `Update` (pushes the framebuffer to
+      `Backend::PushVideoFrame`); the other 11 slots are stubs.
+- [x] Wire CPU core call-out traps (Phase 1) to the `IShell`/`IDisplay` HLE
+      dispatch — `core/brew/hle_runtime.{h,cpp}` (`HleRuntime`). Also
+      provides the reverse direction, `CallArmFunction()`: calling INTO
+      the app's own compiled code and running until it returns, which
+      turned out to be necessary (see below) — not originally scoped as
+      part of "wire call-out traps" but required to actually drive an
+      app's lifecycle rather than just service its calls.
+- [x] **Real Qualcomm vtable ABI, verified from actual source, not
+      guessed.** No public byte-level IShell/IDisplay spec exists (same
+      story as every other format in this project), but unlike
+      MIF/`.mod`, the *header declarations* (not implementations) for
+      these interfaces turned out to be findable: archive.org hosts full
+      original BREW SDK installers (`brew_1.1_sdk` from ~2001,
+      `bmp-sdkmp-7.12.5` from 2012). Extracted both (outside the repo,
+      git-ignored, `research/docs/sdk_installer_extract/
+      brew_sdk_headers_reference/`) and independently read the real
+      `AEEIShell.h`/`AEEIDisplay.h` vtable macros directly (not just
+      trusted a research agent's summary — first verification pass
+      actually returned zero matches due to the files' non-standard
+      ASCII encoding silently breaking `grep`'s locale handling; re-ran
+      with `LC_ALL=C` and confirmed for real). Slot order is identical
+      across both SDK versions (BREW's ABI policy is strictly
+      append-only), which is why the pre-BREW-MP subset is trustworthy
+      for a 2009-era Zeebo target even though only 2001 and 2012 were
+      directly checked.
+- [x] **Full app lifecycle actually driven end to end, against real
+      compiled ARM code** (`tests/brew_lifecycle_test.cpp`,
+      `tests/fixtures/hello_brew/`). Wrote our own minimal BREW-shaped
+      test app in C (not Qualcomm code — see the file's header comment),
+      structurally faithful to the real `AEEMod_Load` ->
+      `IModule::CreateInstance` -> `HandleEvent(EVT_APP_START)` contract
+      reverse-engineered from the official `AEEModGen.c`/`AEEAppGen.c`
+      reference sources, compiled with `arm-none-eabi-gcc` (real
+      cross-compiler, not `elf2mod.exe`) targeting the same
+      `-march=armv5te -mthumb-interwork` flags Zeebo used. Result,
+      verified pixel-exact: our loader calls the compiled `AEEMod_Load`,
+      reads back the returned `IModule*`, calls its `CreateInstance`
+      through the vtable, gets back a `HandleEvent` function pointer,
+      builds a real `AEEAppStart` struct in emulated memory, calls
+      `HandleEvent(EVT_APP_START, ...)` — and the app's own compiled code
+      correctly calls `IDISPLAY_DrawText` then `IDISPLAY_Update` through
+      the vtable we built, landing exactly the expected pixels in the
+      framebuffer.
+  - Compiling this test app surfaced two genuinely necessary CPU core
+    additions (not speculative — both were hit immediately by real
+    compiled code): **BLX** (register-form branch-and-exchange-with-link
+    — real vtable calls use this, not a bare `BX`) and **halfword/signed
+    transfer** (`STRH`/`LDRH`/`LDRSB`/`LDRSH` — real compiled code uses
+    these for 16-bit locals). Both implemented with real tests, not just
+    added to make the integration test pass.
+  - Compiling it also caught a **real dispatcher bug**: the "opcode
+    0x8-0xB with S=0 is reassigned to the miscellaneous instruction space
+    (MRS/MSR/BX/...)" rule was being checked *before* the
+    multiply/halfword bit-pattern check, but bits[24:21] only mean
+    "opcode" for true data-processing-shaped instructions — `STRH`'s
+    P/U/I/W encoding bits happen to numerically collide with that opcode
+    range, so it was being wrongly routed to "unimplemented misc
+    instruction" instead of halfword transfer. Fixed by checking the
+    multiply/halfword bit pattern first; would not have been caught
+    without testing against real compiled code, since none of the
+    hand-encoded unit tests happened to exercise that exact collision.
+- [ ] **Milestone M0 checkpoint**: not yet fully met — the HLE
+      pipeline and app lifecycle are proven correct against a captured
+      framebuffer, but nothing has been shown in an actual window yet.
+      SDL2 frontend integration is the remaining step.
 
 ## Phase 4 — File System & Asset Access
 Exit criterion: a game can enumerate and read its own bundled assets

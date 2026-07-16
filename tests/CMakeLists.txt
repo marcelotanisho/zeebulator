@@ -16,9 +16,13 @@ add_executable(zeebulator_tests
   ggz_test.cpp
   mif_test.cpp
   mod_test.cpp
+  hle_runtime_test.cpp
+  brew_test.cpp
+  brew_lifecycle_test.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)
+target_compile_definitions(zeebulator_tests PRIVATE FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 include(GoogleTest)
 gtest_discover_tests(zeebulator_tests)

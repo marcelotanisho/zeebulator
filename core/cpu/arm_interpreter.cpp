@@ -351,14 +351,85 @@ void ArmInterpreter::ExecuteBlockDataTransfer(uint32_t instr) {
 }
 
 void ArmInterpreter::ExecuteBranchExchange(uint32_t instr) {
+  // BX: cond 0001 0010 1111 1111 1111 0001 Rm
+  // BLX (register): identical except bit 5 is set (link).
+  bool link = (instr >> 5) & 1;
   uint32_t rm = instr & 0xF;
   uint32_t target = ReadOperandRegister(rm);
   if (target & 1) {
     throw UnimplementedInstruction(
-        "BX target requests Thumb state, which isn't implemented");
+        "BX/BLX target requests Thumb state, which isn't implemented");
+  }
+  if (link) {
+    regs_[kLR] = regs_[kPC] + 4;
   }
   regs_[kPC] = target;
   pc_updated_by_instruction_ = true;
+}
+
+void ArmInterpreter::ExecuteHalfwordTransfer(uint32_t instr) {
+  bool pre_indexed = (instr >> 24) & 1;
+  bool add_offset = (instr >> 23) & 1;
+  bool immediate_offset = (instr >> 22) & 1;
+  bool write_back = (instr >> 21) & 1;
+  bool load = (instr >> 20) & 1;
+  uint32_t rn = (instr >> 16) & 0xF;
+  uint32_t rd = (instr >> 12) & 0xF;
+  uint32_t sh = (instr >> 5) & 0x3;
+
+  uint32_t offset;
+  if (immediate_offset) {
+    offset = (((instr >> 8) & 0xF) << 4) | (instr & 0xF);
+  } else {
+    uint32_t rm = instr & 0xF;
+    offset = ReadOperandRegister(rm);
+  }
+
+  uint32_t base = ReadOperandRegister(rn);
+  uint32_t transfer_address =
+      pre_indexed ? (add_offset ? base + offset : base - offset) : base;
+
+  if (load) {
+    uint32_t value;
+    switch (sh) {
+      case 1:  // LDRH: zero-extended halfword
+        value = memory_.Read16(transfer_address);
+        break;
+      case 2: {  // LDRSB: sign-extended byte
+        auto b = static_cast<int8_t>(memory_.Read8(transfer_address));
+        value = static_cast<uint32_t>(static_cast<int32_t>(b));
+        break;
+      }
+      case 3: {  // LDRSH: sign-extended halfword
+        auto h = static_cast<int16_t>(memory_.Read16(transfer_address));
+        value = static_cast<uint32_t>(static_cast<int32_t>(h));
+        break;
+      }
+      default:
+        throw UnimplementedInstruction(
+            "Halfword transfer with SH=00 (multiply/swap space)");
+    }
+    if (rd == kPC) {
+      regs_[kPC] = value;
+      pc_updated_by_instruction_ = true;
+    } else {
+      regs_[rd] = value;
+    }
+  } else {
+    if (sh != 1) {
+      throw UnimplementedInstruction(
+          "Halfword transfer store with SH != 01 (not a valid encoding)");
+    }
+    memory_.Write16(transfer_address,
+                     static_cast<uint16_t>(ReadOperandRegister(rd)));
+  }
+
+  if (!pre_indexed) {
+    uint32_t new_base = add_offset ? base + offset : base - offset;
+    regs_[rn] = new_base;
+  } else if (write_back) {
+    regs_[rn] = transfer_address;
+  }
 }
 
 void ArmInterpreter::Step() {
@@ -394,22 +465,35 @@ void ArmInterpreter::Step() {
       uint32_t bit4 = (instr >> 4) & 1;
       uint32_t bit7 = (instr >> 7) & 1;
 
+      // Must be checked BEFORE the opcode/S-bit "miscellaneous
+      // instructions" reassignment below: bits[24:21] only mean "opcode"
+      // for true data-processing-shaped instructions. Multiply/halfword
+      // encodings reuse those same bit positions for P/U/I/W-type fields
+      // that can numerically collide with the 0x8-0xB opcode range
+      // (e.g. STRH's immediate/down-indexed form does exactly this) --
+      // checking bit4/bit7 first routes those correctly regardless.
       bool is_test_opcode = opcode >= 0x8 && opcode <= 0xB;
-      if (is_test_opcode && s_bit == 0) {
+      if (bit25 == 0 && bit4 == 1 && bit7 == 1) {
+        // Shared bit pattern for multiply/swap (SH=00) and halfword/
+        // signed transfer (SH=01/10/11) -- only the former stays
+        // unimplemented.
+        uint32_t sh = (instr >> 5) & 0x3;
+        if (sh == 0) {
+          throw UnimplementedInstruction("Multiply/swap instruction space");
+        }
+        ExecuteHalfwordTransfer(instr);
+      } else if (is_test_opcode && s_bit == 0) {
         // This opcode range with S=0 is reassigned to the "miscellaneous
-        // instructions" space (MRS/MSR/BX/CLZ/BXJ/...), not a real
-        // TST/TEQ/CMP/CMN. BX Rm's specific bit pattern is:
-        // cond 0001 0010 1111 1111 1111 0001 Rm -- everything else in
-        // this space stays unimplemented.
-        if ((instr & 0x0FFFFFF0) == 0x012FFF10) {
+        // instructions" space (MRS/MSR/BX/BLX/CLZ/BXJ/...), not a real
+        // TST/TEQ/CMP/CMN. BX/BLX Rm's bit pattern is:
+        // cond 0001 0010 1111 1111 1111 001L Rm (L = link bit, bit 5) --
+        // everything else in this space stays unimplemented.
+        if ((instr & 0x0FFFFFD0) == 0x012FFF10) {
           ExecuteBranchExchange(instr);
         } else {
           throw UnimplementedInstruction(
               "Miscellaneous instruction space (MRS/MSR/etc.)");
         }
-      } else if (bit25 == 0 && bit4 == 1 && bit7 == 1) {
-        throw UnimplementedInstruction(
-            "Multiply/halfword/signed-transfer instruction space");
       } else {
         ExecuteDataProcessing(instr);
       }

@@ -14,6 +14,7 @@ using zeebulator::kR0;
 using zeebulator::kR1;
 using zeebulator::kR2;
 using zeebulator::kR3;
+using zeebulator::kR4;
 using zeebulator::kSP;
 
 namespace {
@@ -247,6 +248,40 @@ TEST(Cpu, RunStopsEarlyOnCallOutTrap) {
   EXPECT_EQ(executed, 1u) << "Run() must stop immediately on a call-out trap";
 }
 
+// --- Halfword / signed transfer ---
+
+TEST(Cpu, StrhThenLdrhRoundTrip) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x2000);
+  cpu.SetRegister(kR1, 0xBEEF1234);
+  cpu.GetMemory().Write32(0, 0xE1C010B4);  // STRH R1, [R0, #4]
+  cpu.Step();
+  EXPECT_EQ(cpu.GetMemory().Read16(0x2004), 0x1234u)
+      << "STRH stores only the low halfword";
+
+  cpu.GetMemory().Write32(4, 0xE1D020B4);  // LDRH R2, [R0, #4]
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0x1234u) << "LDRH zero-extends";
+}
+
+TEST(Cpu, LdrsbSignExtendsNegativeByte) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x2000);
+  cpu.GetMemory().Write8(0x2000, 0xFF);  // -1 as a signed byte
+  cpu.GetMemory().Write32(0, 0xE1D030D0);  // LDRSB R3, [R0]
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR3), 0xFFFFFFFFu);
+}
+
+TEST(Cpu, LdrshSignExtendsNegativeHalfword) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x2000);
+  cpu.GetMemory().Write16(0x2000, 0x8000);  // negative as a signed halfword
+  cpu.GetMemory().Write32(0, 0xE1D040F0);  // LDRSH R4, [R0]
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR4), 0xFFFF8000u);
+}
+
 // --- Unimplemented instruction classes are rejected, not mis-executed ---
 
 TEST(Cpu, MultiplyInstructionIsUnimplemented) {
@@ -268,6 +303,16 @@ TEST(Cpu, BranchExchangeToThumbTargetIsUnimplemented) {
   cpu.SetRegister(kR1, 0x2001);  // bit 0 set -> requests Thumb state
   cpu.GetMemory().Write32(0, 0xE12FFF11);  // BX R1
   EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
+}
+
+TEST(Cpu, BranchWithLinkExchangeSetsLrAndJumps) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kPC, 0x1000);
+  cpu.SetRegister(kR1, 0x2000);
+  cpu.GetMemory().Write32(0x1000, 0xE12FFF31);  // BLX R1
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kPC), 0x2000u);
+  EXPECT_EQ(cpu.GetRegister(kLR), 0x1004u) << "LR = address of next instruction";
 }
 
 TEST(Cpu, BlockDataTransferWithUserBankBitIsUnimplemented) {
