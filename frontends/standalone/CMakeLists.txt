@@ -1,0 +1,2 @@
+add_executable(zeebulator_standalone main.cpp)
+target_link_libraries(zeebulator_standalone PRIVATE zeebulator_core)
