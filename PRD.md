@@ -135,8 +135,13 @@ Public technical resources available to this project:
 
 ## 7. Success Metrics / Milestones
 
-- **M0 — Hello World**: A minimal BREW sample app (from the SDK) boots and
-  reaches a visible, correctly-painted screen via the standalone frontend.
+- **M0 — Hello World — ACHIEVED.** A minimal BREW-shaped app boots and
+  reaches a visible, correctly-painted screen via the standalone frontend,
+  screenshot-verified. Used our own from-scratch test app (compiled with a
+  real ARM cross-compiler, not Qualcomm's SDK/toolchain) rather than a
+  compiled SDK sample, since we don't have Qualcomm's `elf2mod.exe` and
+  can't legally distribute a compiled version of their sample source
+  either way — see TASKS.md Phase 3 for the full writeup.
 - **M1 — First Commercial Game**: One simple commercial title (candidate:
   *Double Dragon*, a simple 2D game and a reasonable first target) is fully
   playable start-to-finish at full speed, standalone build.

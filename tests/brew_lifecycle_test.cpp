@@ -16,6 +16,7 @@
 #include "core/brew/ishell.h"
 #include "core/cpu/arm_interpreter.h"
 #include "core/loader/mod.h"
+#include "fixtures/hello_brew/entry_offset.h"
 
 using zeebulator::ArmInterpreter;
 using zeebulator::Backend;
@@ -25,11 +26,6 @@ using zeebulator::PixelFormat;
 using zeebulator::ZPadState;
 
 namespace {
-
-// AEEMod_Load's offset within hello_brew.bin -- verified against the
-// actual build, NOT assumed to be 0 (the compiler is free to place
-// functions in any order). See tests/fixtures/hello_brew/README.md.
-constexpr uint32_t kAeeModLoadOffset = 0x104;
 
 class CapturingBackend : public Backend {
  public:
@@ -78,7 +74,7 @@ TEST(BrewLifecycle, HelloBrewAppDrawsTextAndUpdatesScreen) {
   uint32_t display_obj = display.Build(cpu.GetMemory(), hle,
                                         /*vtable=*/0x80002000, /*object=*/0x80003000);
 
-  uint32_t entry = kBase + kAeeModLoadOffset;
+  uint32_t entry = kBase + kHelloBrewAeeModLoadOffset;
 
   // int AEEMod_Load(IShell *pIShell, void *ph, IModule **ppMod)
   constexpr uint32_t kPpModAddr = 0x00090000;

@@ -270,20 +270,33 @@ actual goal.
 Exit criterion: **M0 from PRD §7** — a BREW "hello world" sample app boots
 via the standalone frontend and reaches a visible, correctly-painted screen.
 
-**Core HLE pipeline is done and verified end to end; the one remaining
-piece is an actual SDL2 window** (currently proven via a test double that
-captures the exact pixel output instead of a real window — see below).
+**Phase 3 is complete — M0 achieved and visually confirmed**, not just
+proven via a test double. Screenshot-verified: a real SDL2 window titled
+"Zeebulator" opens, shows a black 640x480 canvas (Zeebo's native
+resolution) with a white block visibly drawn where `hello_brew`'s
+`HandleEvent` called `IDISPLAY_DrawText`/`IDISPLAY_Update` through the
+real vtable.
 
 - [x] Stand up Backend Abstraction Interface (ARCHITECTURE.md §3.8) —
       done back in Phase 0 (`core/backend.h`): `PushVideoFrame`,
       `PushAudioSamples`, `PollInput`.
-- [ ] Minimal standalone SDL2 frontend implementing that interface
-      (window + framebuffer blit only, no audio/input yet) — **not
-      started.** Everything up to this point has been verified against a
-      `CapturingBackend` test double (`tests/brew_lifecycle_test.cpp`)
-      that asserts on exact pixel values instead of a real window; wiring
-      an actual SDL2-backed `Backend` implementation is the one piece
-      standing between what's proven now and a human seeing a window.
+- [x] Minimal standalone SDL2 frontend implementing that interface
+      (`frontends/standalone/main.cpp`) — window + framebuffer blit via a
+      streaming `SDL_Texture` (RGB565, matching `IDisplayHle`'s
+      framebuffer format directly, no conversion needed); no audio/input
+      yet (`Sdl2Backend::PushAudioSamples`/`PollInput` are no-ops for
+      now). SDL2 vendored via CMake `FetchContent` (`libsdl-org/SDL`,
+      `release-2.30.9`) consistent with the project's existing
+      zlib/GoogleTest pattern, built as a static lib
+      (`SDL2::SDL2`/`SDL2::SDL2main`). On Linux this needed X11 dev
+      headers installed on the build machine (`libx11-dev` and friends —
+      build-time only, never needed by end users or by anyone just
+      running a released binary).
+      Currently boots the bundled `hello_brew` M0 demo specifically
+      (hardcoded fixture path with an optional CLI override) — loading
+      arbitrary real games needs the `.mod` entry-point-discovery and
+      GGZ/MIF wiring that's later-phase work; this frontend exists right
+      now to prove the pipeline, not as the final game loader.
 - [x] Implement `IShell` HLE (`core/brew/ishell.cpp`) — vtable slot order
       verified directly against real Qualcomm source (`AEEIShell.h`, see
       below). All 42 pre-BREW-MP slots present; every slot is currently a
@@ -358,10 +371,13 @@ captures the exact pixel output instead of a real window — see below).
     multiply/halfword bit pattern first; would not have been caught
     without testing against real compiled code, since none of the
     hand-encoded unit tests happened to exercise that exact collision.
-- [ ] **Milestone M0 checkpoint**: not yet fully met — the HLE
-      pipeline and app lifecycle are proven correct against a captured
-      framebuffer, but nothing has been shown in an actual window yet.
-      SDL2 frontend integration is the remaining step.
+- [x] **Milestone M0 checkpoint: achieved, screenshot-verified.** Ran
+      `zeebulator_standalone`, captured the actual window with
+      `gnome-screenshot`, and visually confirmed a black 640x480 canvas
+      with a white block drawn at the expected position — the smallest
+      possible end-to-end validation of the whole pipeline (CPU
+      interpreter -> HLE dispatch -> real compiled ARM code -> vtable
+      calls -> framebuffer -> SDL2 window), and it holds up.
 
 ## Phase 4 — File System & Asset Access
 Exit criterion: a game can enumerate and read its own bundled assets
