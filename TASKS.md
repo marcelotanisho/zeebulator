@@ -28,8 +28,13 @@ Exit criterion: a contributor can clone, build an empty core, and CI is green.
 - [x] Acquire one simple commercial game dump for local dev/test use —
       Double Dragon (`mif`/`mod`/`sig`/`data.ggz`/`sound.ggz`) added under
       `research/games/Double Dragon/` (git-ignored)
-- [ ] Acquire a small set of BREW SDK sample apps for local dev/test use —
-      go in `research/samples/` (git-ignored) — still pending
+- [x] Acquire a small set of BREW SDK sample apps for local dev/test use —
+      turned out to already be bundled inside `ZeeboSDKPackage-1.2.4.zip`
+      (`samples.zip`), extracted to `research/samples/` (git-ignored):
+      ~10 OpenGL ES sample apps in **source form** (`MSM7500_OGLES_...`)
+      plus `conftest_source/` (includes `AEEModGen.c`/`AEEAppGen.c`, the
+      reference module/applet boilerplate). Source form is strictly better
+      for research than a bare `.mod` would have been — see Phase 1 note
 - [x] Set up test infrastructure: GoogleTest via CMake `FetchContent`, wired
       through CTest (`ZEEBULATOR_BUILD_TESTS` option) — verified building
       and passing (`tests/core_test.cpp` smoke test green) locally
@@ -44,13 +49,30 @@ awareness yet.
 - [ ] Implement `IArmCore` interface (ARCHITECTURE.md §3.1)
 - [ ] Implement v1 ARMv6 interpreter covering the ARM1136J-S instruction set
 - [ ] Unit tests against known ARMv6 instruction-behavior vectors
-- [ ] **Research task**: determine the actual BREW call-out mechanism (how
-      app code invokes AEE interface methods — vtable call to a
-      real/fake address vs. SWI/trap instruction). Cross-reference the BREW
-      OEM API Reference and Developer Guide; if inconclusive, disassemble a
-      BREW sample app's compiled output to observe the calling convention
-      directly. This determines the CPU core's hook API — do not proceed to
-      Phase 3 until resolved.
+- [x] **Research task, mostly resolved** via `research/samples/` source
+      (see Phase 0): BREW's call-out mechanism is plain **C vtable/interface
+      calls**, not an SWI/trap instruction. Confirmed from source:
+      - A `.mod` exports a well-known entry point (`AEEMod_Load`, per
+        `conftest_source/conftest/AEEModGen.c`'s "sample IModule
+        implementation") that the loader calls, passing in an `IShell*`.
+      - `AEEMod_Load` → `AEEMod_CreateInstance` → the app's own
+        `AEEClsCreateInstance(ClsId, pIShell, po, ppObj)` (confirmed in
+        `simple_drawtexture.c`), which calls `AEEApplet_New(...)` to
+        register an `AEEHANDLER` event callback (`HandleEvent`).
+      - The OS then drives the app purely through that event callback,
+        starting with `EVT_APP_START`.
+      - Every AEE interface (`IShell`, `IDisplay`, `IFile`, ...) is a
+        struct of function pointers (COM-style), invoked through macros
+        (e.g. `ISHELL_xxx(pIShell, ...)`) — this validates the
+        ARCHITECTURE.md §3.4 design as-is: our loader constructs these
+        interface objects with vtable slots pointing at sentinel addresses;
+        the CPU core traps execution reaching one of those addresses and
+        dispatches to HLE.
+      - **Still open** (narrower now, not a fundamentally unknown
+        mechanism): exact per-interface vtable slot ordering and AAPCS
+        register-passing details — work this out per-interface against the
+        BREW OEM API Reference as each one gets implemented (Phase 3+),
+        not a blocking Phase 1 unknown anymore.
 - [ ] Add CPU core hook points for trapping on the call-out mechanism found above
 - [ ] Evaluate `dynarmic` integration spike (does it support the exact
       ARMv6/ARM1136 feature set needed, license fit, build complexity) —
