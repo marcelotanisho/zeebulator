@@ -383,13 +383,65 @@ real vtable.
 Exit criterion: a game can enumerate and read its own bundled assets
 through HLE `IFile` calls, sourced from the loaded GGZ contents.
 
-- [ ] Implement `IFile`/`IFileMgr` HLE backed by an in-memory virtual
+**Exit criterion met.** A game can open, read (with correct partial-read
+and independent-multi-handle semantics), seek, get info on, and enumerate
+its own GGZ-backed assets through real, vtable-order-verified `IFile`/
+`IFileMgr` HLE calls.
+
+- [x] Implement `IFile`/`IFileMgr` HLE backed by an in-memory virtual
       filesystem populated from the loaded GGZ archive (never expose the
-      real host filesystem directly — ARCHITECTURE.md §3.4)
+      real host filesystem directly — ARCHITECTURE.md §3.4).
+      `core/brew/virtual_filesystem.{h,cpp}` (`VirtualFilesystem`, flat
+      name -> bytes map, eager decompression via `GgzArchive::Extract()`
+      — already real-file-verified in Phase 2, so no redundant real-data
+      check was needed here) + `core/brew/file_hle.{h,cpp}` (`FileHle`,
+      the actual HLE dispatch).
+      **Real Qualcomm vtable ABI, verified from actual source, same
+      method as IShell/IDisplay** (archive.org-hosted original BREW SDK
+      installers — see Phase 3 for how that source was first found).
+      This round needed a fresh background research pass (the specific
+      headers weren't part of what got extracted for Phase 3), which hit
+      a genuine large-file download (892MB BREW MP 7.12.5 installer) that
+      looked stalled at first glance — checked the actual transcript
+      instead of trusting a vague status update, confirmed real transfer
+      progress (~1.7MB/s, growing) via a timed size-delta check, and let
+      it finish properly rather than assuming failure. Independently
+      re-verified the resulting header content myself afterward (same
+      `LC_ALL=C` lesson from Phase 3 — plain `grep` silently misses
+      content in these ISO-8859/non-UTF8-encoded files).
+      Both `IFile` and `IFileMgr` are defined together in a single
+      `AEEFile.h` in both SDK versions (no separate `AEEFileMgr.h`
+      exists) — confirmed vtable orders:
+      - `IFile` (inherits `IAStream`): `AddRef, Release, Readable, Read,
+        Cancel`, then `Write, GetInfo, Seek, Truncate` (BREW MP adds
+        `GetInfoEx, SetCacheSize, Map` — not implemented, post-dates
+        Zeebo).
+      - `IFileMgr`: `AddRef, Release, OpenFile, GetInfo, Remove, MkDir,
+        RmDir, Test, GetFreeSpace, GetLastError, EnumInit, EnumNext,
+        Rename` (BREW MP adds 8 more trailing slots — not implemented).
+      - Confirmed append-only/stable across both 2001 and 2012 SDK
+        versions, same pattern as IShell/IDisplay.
+      Files are read-only (`Write`/`Remove`/`MkDir`/`RmDir`/`Truncate`/
+      `Rename` all return an error rather than silently succeeding or
+      doing nothing) since GGZ contents aren't meant to be mutated. One
+      real design point worth noting: `IFile` instances share a single
+      vtable (built once) but each `OpenFile` call allocates a fresh
+      object header at a bump-allocated address, with per-handle state
+      (current read position, which file) looked up by that address at
+      dispatch time — this is what makes multiple simultaneously-open
+      files with independent read positions work correctly, verified by
+      a dedicated test.
+      17 new tests (`tests/virtual_filesystem_test.cpp`,
+      `tests/file_hle_test.cpp`), all synthetic (no copyrighted content).
 - [ ] Handle whatever asset sub-formats appear inside GGZ containers for the
       target test game (models, sprites, etc. — format specifics are a
       per-content research task, informed by `ggzbrewtools`' documented
-      coverage)
+      coverage) — **deferred, not blocking this phase's exit criterion.**
+      `IFile`/`IFileMgr` hand back raw bytes correctly regardless of what
+      those bytes mean internally; understanding `.obm1` sprite/model
+      internals is graphics-subsystem work (Phase 5) triggered by
+      whatever a real game's rendering code actually needs, not a
+      file-access concern.
 
 ## Phase 5 — Graphics (OpenGL ES 1.0/1.1 translation)
 Exit criterion: the target test game's 3D/2D rendering appears on screen,

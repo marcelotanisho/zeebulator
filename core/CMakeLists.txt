@@ -23,6 +23,8 @@ add_library(zeebulator_core STATIC
   brew/idisplay.h
   brew/virtual_filesystem.cpp
   brew/virtual_filesystem.h
+  brew/file_hle.cpp
+  brew/file_hle.h
 )
 
 target_include_directories(zeebulator_core PUBLIC ${PROJECT_SOURCE_DIR})

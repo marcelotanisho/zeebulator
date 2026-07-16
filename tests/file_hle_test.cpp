@@ -1,0 +1,194 @@
+#include "core/brew/file_hle.h"
+
+#include <gtest/gtest.h>
+
+#include "core/brew/hle_runtime.h"
+#include "core/cpu/arm_interpreter.h"
+
+using zeebulator::ArmInterpreter;
+using zeebulator::FileHle;
+using zeebulator::HleRuntime;
+using zeebulator::VirtualFilesystem;
+
+namespace {
+
+constexpr uint32_t kTrapBase = 0xF0000000;
+constexpr uint32_t kTrapSize = 0x10000;
+constexpr uint32_t kMgrVtable = 0x80000000;
+constexpr uint32_t kMgrObject = 0x80001000;
+constexpr uint32_t kFileVtable = 0x80002000;
+constexpr uint32_t kFileObjectRegion = 0x80003000;
+constexpr uint32_t kScratch = 0x00090000;
+
+void WriteCString(zeebulator::Memory& mem, uint32_t addr, const std::string& s) {
+  for (size_t i = 0; i < s.size(); ++i) {
+    mem.Write8(addr + static_cast<uint32_t>(i), static_cast<uint8_t>(s[i]));
+  }
+  mem.Write8(addr + static_cast<uint32_t>(s.size()), 0);
+}
+
+// Every vtable slot for both interfaces, in the real verified order.
+enum FileMgrSlot {
+  kMgrOpenFile = 2,
+  kMgrGetInfo = 3,
+  kMgrRemove = 4,
+  kMgrMkDir = 5,
+  kMgrRmDir = 6,
+  kMgrTest = 7,
+  kMgrEnumInit = 10,
+  kMgrEnumNext = 11,
+  kMgrRename = 12,
+};
+enum FileSlot {
+  kFileRead = 3,
+  kFileWrite = 5,
+  kFileGetInfo = 6,
+  kFileSeek = 7,
+  kFileTruncate = 8,
+};
+
+struct Fixture {
+  ArmInterpreter cpu;
+  HleRuntime hle{cpu, kTrapBase, kTrapSize};
+  VirtualFilesystem vfs;
+  FileHle file_hle{cpu.GetMemory(), hle, vfs, kFileObjectRegion};
+  uint32_t mgr;
+
+  Fixture() {
+    vfs.AddFile("foo.txt", {'h', 'e', 'l', 'l', 'o'});
+    vfs.AddFile("bar.bin", std::vector<uint8_t>{1, 2, 3, 4, 5, 6, 7, 8});
+    mgr = file_hle.Build(kMgrVtable, kMgrObject, kFileVtable);
+  }
+
+  uint32_t MgrSlot(FileMgrSlot slot) {
+    return cpu.GetMemory().Read32(kMgrVtable + slot * 4);
+  }
+  uint32_t FileSlotAddr(FileSlot slot) {
+    return cpu.GetMemory().Read32(kFileVtable + slot * 4);
+  }
+};
+
+}  // namespace
+
+TEST(FileHle, OpenExistingFileReturnsNonNullHandle) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "foo.txt");
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  EXPECT_NE(handle, 0u);
+}
+
+TEST(FileHle, OpenMissingFileReturnsNull) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "nope.txt");
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  EXPECT_EQ(handle, 0u);
+}
+
+TEST(FileHle, ReadReturnsCorrectBytesAndAdvancesPosition) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "foo.txt");
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  ASSERT_NE(handle, 0u);
+
+  uint32_t dest = kScratch + 0x100;
+  uint32_t n = f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), handle, dest, 3);
+  EXPECT_EQ(n, 3u);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 'h');
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest + 1), 'e');
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest + 2), 'l');
+
+  // Second read continues from where the first left off.
+  uint32_t n2 = f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), handle, dest, 100);
+  EXPECT_EQ(n2, 2u) << "only 2 bytes ('l','o') remain, even though 100 were requested";
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 'l');
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest + 1), 'o');
+}
+
+TEST(FileHle, SeekStartCurrentEndAllWorkCorrectly) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "bar.bin");  // 8 bytes: 1..8
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  ASSERT_NE(handle, 0u);
+
+  // _SEEK_START = 0
+  uint32_t pos = f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 0, 3);
+  EXPECT_EQ(pos, 3u);
+  uint32_t dest = kScratch + 0x100;
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), handle, dest, 1);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 4) << "byte at index 3 (0-based) is value 4";
+
+  // _SEEK_CURRENT = 2 (position is now 4 after that read)
+  pos = f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 2, 2);
+  EXPECT_EQ(pos, 6u);
+
+  // _SEEK_END = 1
+  pos = f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 1, 0);
+  EXPECT_EQ(pos, 8u) << "file is 8 bytes";
+}
+
+TEST(FileHle, TwoOpenFilesHaveIndependentPositions) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "foo.txt");
+  WriteCString(f.cpu.GetMemory(), kScratch + 0x40, "bar.bin");
+  uint32_t h1 = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  uint32_t h2 = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch + 0x40, 0);
+  ASSERT_NE(h1, h2);
+
+  uint32_t dest = kScratch + 0x100;
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), h1, dest, 2);  // advances h1 to pos 2
+  uint32_t n2 = f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), h2, dest, 1);  // h2 still at pos 0
+  EXPECT_EQ(n2, 1u);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 1) << "bar.bin's first byte, unaffected by h1's reads";
+}
+
+TEST(FileHle, MgrGetInfoAndFileGetInfoReportCorrectSize) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "bar.bin");
+  uint32_t info_addr = kScratch + 0x100;
+
+  uint32_t result = f.hle.CallArmFunction(f.MgrSlot(kMgrGetInfo), f.mgr, kScratch, info_addr);
+  EXPECT_EQ(result, 0u);
+  EXPECT_EQ(f.cpu.GetMemory().Read32(info_addr + 8), 8u) << "dwSize field at offset 8";
+
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  f.cpu.GetMemory().Write32(info_addr + 8, 0xDEADBEEF);  // clobber to prove it gets rewritten
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileGetInfo), handle, info_addr);
+  EXPECT_EQ(f.cpu.GetMemory().Read32(info_addr + 8), 8u);
+}
+
+TEST(FileHle, TestReturnsZeroForExistingNonzeroForMissing) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "foo.txt");
+  EXPECT_EQ(f.hle.CallArmFunction(f.MgrSlot(kMgrTest), f.mgr, kScratch), 0u);
+
+  WriteCString(f.cpu.GetMemory(), kScratch, "nope.txt");
+  EXPECT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrTest), f.mgr, kScratch), 0u);
+}
+
+TEST(FileHle, EnumInitThenEnumNextWalksAllFilesThenReturnsFalse) {
+  Fixture f;
+  f.hle.CallArmFunction(f.MgrSlot(kMgrEnumInit), f.mgr, 0, 0);
+
+  uint32_t info_addr = kScratch + 0x100;
+  uint32_t r1 = f.hle.CallArmFunction(f.MgrSlot(kMgrEnumNext), f.mgr, info_addr);
+  EXPECT_EQ(r1, 1u);
+  uint32_t r2 = f.hle.CallArmFunction(f.MgrSlot(kMgrEnumNext), f.mgr, info_addr);
+  EXPECT_EQ(r2, 1u);
+  uint32_t r3 = f.hle.CallArmFunction(f.MgrSlot(kMgrEnumNext), f.mgr, info_addr);
+  EXPECT_EQ(r3, 0u) << "only 2 files were added; the 3rd call must signal end-of-enumeration";
+}
+
+TEST(FileHle, ReadOnlyMethodsAllReturnAnError) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "foo.txt");
+
+  EXPECT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrRemove), f.mgr, kScratch), 0u);
+  EXPECT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrMkDir), f.mgr, kScratch), 0u);
+  EXPECT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrRmDir), f.mgr, kScratch), 0u);
+  EXPECT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrRename), f.mgr, kScratch, kScratch), 0u);
+
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  ASSERT_NE(handle, 0u);
+  EXPECT_NE(f.hle.CallArmFunction(f.FileSlotAddr(kFileWrite), handle, kScratch, 1), 0u);
+  EXPECT_NE(f.hle.CallArmFunction(f.FileSlotAddr(kFileTruncate), handle, 0), 0u);
+}
