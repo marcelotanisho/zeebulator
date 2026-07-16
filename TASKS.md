@@ -44,11 +44,28 @@ Exit criterion: can load an arbitrary ARM binary blob into emulated memory
 and execute it correctly, verified against ISA test vectors — no BREW
 awareness yet.
 
-- [ ] Stand up Memory Subsystem: flat 32-bit address space, typed
-      read/write, bulk-load API (ARCHITECTURE.md §3.2)
-- [ ] Implement `IArmCore` interface (ARCHITECTURE.md §3.1)
-- [ ] Implement v1 ARMv6 interpreter covering the ARM1136J-S instruction set
-- [ ] Unit tests against known ARMv6 instruction-behavior vectors
+- [x] Stand up Memory Subsystem: flat 32-bit address space, typed
+      read/write, bulk-load API (ARCHITECTURE.md §3.2) — paged/sparse
+      backing store, little-endian, `core/memory/`
+- [x] Implement `IArmCore` interface (ARCHITECTURE.md §3.1) — `core/cpu/arm_core.h`
+- [x] Implement v1 ARMv6 interpreter — `core/cpu/arm_interpreter.cpp`.
+      **Honest scope, not full ISA coverage:**
+      - Covered: all 16 data-processing opcodes (AND/EOR/SUB/RSB/ADD/ADC/
+        SBC/RSC/TST/TEQ/CMP/CMN/ORR/MOV/BIC/MVN), both operand2 forms
+        (immediate, register with immediate or register-specified shift,
+        all 4 shift types incl. RRX), all 15 condition codes, N/Z/C/V flag
+        computation, B/BL, single word/byte LDR/STR (immediate and
+        register offset, pre/post-index, writeback), the PC-reads-as+8
+        operand semantics, and the call-out trap hook.
+      - **Deferred, and explicitly rejected via `UnimplementedInstruction`
+        rather than silently mis-executed:** multiply/MLA/long-multiply,
+        halfword/signed-byte transfer, block transfer (LDM/STM), BX/BLX,
+        MRS/MSR (PSR transfer), SWI, coprocessor instructions, Thumb state
+        entirely. Will be picked up incrementally as real game code needs
+        them, starting in Phase 2+.
+- [x] Unit tests against known ARMv6 instruction-behavior vectors —
+      `tests/cpu_test.cpp`, 21 tests, all hand-encoded real ARM instruction
+      words (not synthetic/fake encodings), verified bit-field-by-bit-field
 - [x] **Research task, mostly resolved** via `research/samples/` source
       (see Phase 0): BREW's call-out mechanism is plain **C vtable/interface
       calls**, not an SWI/trap instruction. Confirmed from source:
@@ -73,10 +90,16 @@ awareness yet.
         register-passing details — work this out per-interface against the
         BREW OEM API Reference as each one gets implemented (Phase 3+),
         not a blocking Phase 1 unknown anymore.
-- [ ] Add CPU core hook points for trapping on the call-out mechanism found above
+- [x] Add CPU core hook points for trapping on the call-out mechanism found
+      above — `SetCallOutRange`/`SetCallOutHandler` on `IArmCore`; `Step()`
+      checks the trap range before fetch/decode, `Run()` stops early on a
+      trap. Covered by `Cpu.CallOutRangeTrapsInsteadOfExecuting` and
+      `Cpu.RunStopsEarlyOnCallOutTrap`.
 - [ ] Evaluate `dynarmic` integration spike (does it support the exact
       ARMv6/ARM1136 feature set needed, license fit, build complexity) —
-      decide interpreter-only-for-now vs. JIT-from-the-start
+      decide interpreter-only-for-now vs. JIT-from-the-start — not started;
+      the v1 interpreter above is correctness-first per Design Principle 4,
+      revisit once something is actually slow
 
 ## Phase 2 — Loader (GGZ / BAR / MIF / .mod)
 Exit criterion: a real game's GGZ archive can be opened and its `.mod` code

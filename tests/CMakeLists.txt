@@ -11,6 +11,8 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(zeebulator_tests
   core_test.cpp
+  memory_test.cpp
+  cpu_test.cpp
 )
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main)
 
