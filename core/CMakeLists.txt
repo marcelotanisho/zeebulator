@@ -7,6 +7,12 @@ add_library(zeebulator_core STATIC
   cpu/arm_core.h
   cpu/arm_interpreter.cpp
   cpu/arm_interpreter.h
+  loader/ggz.cpp
+  loader/ggz.h
 )
 
 target_include_directories(zeebulator_core PUBLIC ${PROJECT_SOURCE_DIR})
+# zlib's CMakeLists predates modern usage-requirement propagation, so its
+# generated zconf.h (in the binary dir) needs to be added explicitly.
+target_include_directories(zeebulator_core PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
+target_link_libraries(zeebulator_core PRIVATE zlibstatic)
