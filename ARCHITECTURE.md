@@ -270,6 +270,11 @@ zeebulator/
 
 ## 8. Testing Strategy
 
+Framework: **GoogleTest** (BSD-3-Clause), pulled via CMake `FetchContent`,
+run through CTest (`ctest --test-dir build`). Every unit of work is expected
+to land with tests covering it, and the full suite is expected to pass
+before that work is considered done — not just at phase boundaries.
+
 - **CPU core**: unit tests against known ARMv6 instruction-behavior test
   vectors (independent of any Zeebo-specific content — pure ISA
   correctness).
@@ -294,6 +299,7 @@ zeebulator/
 | ARM core (fallback) | `unicorn` (GPLv2) | Backup if `dynarmic` integration stalls; license-compatible with a GPLv3 project (GPLv2-only code can be included in a GPLv3-or-later work — verify the exact GPLv2 vs. "GPLv2 or later" terms on `unicorn` before depending on it) |
 | Graphics | Desktop OpenGL via libretro HW render | Available cross-platform, first-class libretro support; revisit Metal/D3D only if OpenGL deprecation on macOS becomes a real blocker |
 | Standalone windowing/audio/input | SDL2 (zlib license) | Cross-platform, minimal, dev-focused, permissively licensed — fine as a dependency under GPLv3 |
+| Testing | GoogleTest (BSD-3-Clause) via CMake `FetchContent`, run through CTest | Standard, well-supported, integrates cleanly with the existing CMake-based build across all three OSes |
 | License | **GPLv3** (decided — PRD §6.3) | Matches emulation-scene convention (Dolphin, PCSX2, RPCS3, PPSSPP, yuzu, RetroArch); copyleft prevents a closed-fork outcome |
 
 ## 10. Key Technical Risks (architecture-specific)

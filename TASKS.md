@@ -21,11 +21,18 @@ Exit criterion: a contributor can clone, build an empty core, and CI is green.
 - [x] Set up GitHub Actions CI matrix (Windows/macOS/Ubuntu, both build targets)
 - [x] Add `CONTRIBUTING.md` codifying the clean-room policy (PRD §6.3 LR2) — no
       pasting SDK/decompiled source into the repo, ever
-- [ ] Pull down and locally archive (outside the repo — not committed) the
-      research materials: official Zeebo SDK, BREW Developer Guide, BREW OEM
-      API Reference for MSM, ARM1136 TRM, from the tripleoxygen.net mirror
-- [ ] Acquire a small set of BREW SDK sample apps + one simple commercial
-      game dump (e.g. Double Dragon) for local dev/test use
+- [x] Pull down and locally archive (outside the repo — not committed) the
+      research materials: official Zeebo SDK (v0.93, v1.2.4), BREW Developer
+      Guide, BREW OEM API Reference for MSM, ARM1136 TRM, from the
+      tripleoxygen.net mirror — saved under `research/docs/` (git-ignored)
+- [x] Acquire one simple commercial game dump for local dev/test use —
+      Double Dragon (`mif`/`mod`/`sig`/`data.ggz`/`sound.ggz`) added under
+      `research/games/Double Dragon/` (git-ignored)
+- [ ] Acquire a small set of BREW SDK sample apps for local dev/test use —
+      go in `research/samples/` (git-ignored) — still pending
+- [x] Set up test infrastructure: GoogleTest via CMake `FetchContent`, wired
+      through CTest (`ZEEBULATOR_BUILD_TESTS` option) — verified building
+      and passing (`tests/core_test.cpp` smoke test green) locally
 
 ## Phase 1 — CPU & Memory Core
 Exit criterion: can load an arbitrary ARM binary blob into emulated memory
@@ -182,3 +189,6 @@ Exit criterion: **M3 from PRD §7** — 5-10 playable titles; open-ended past th
       this is a legal-risk item, not just a style preference (PRD §6.3)
 - [ ] Revisit license decision if the project seeks libretro official listing
       (buildbot may have its own requirements to check)
+- [ ] Every task/unit of work lands with tests covering it; run the full
+      suite (`ctest --test-dir build`) before considering that task done —
+      standing project convention (ARCHITECTURE.md §8), not a one-time setup item

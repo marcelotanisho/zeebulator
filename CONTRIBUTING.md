@@ -41,11 +41,21 @@ the earliest bring-up milestones (see TASKS.md).
 ```
 cmake -S . -B build
 cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 Build options:
 - `ZEEBULATOR_BUILD_STANDALONE` (default ON) — the SDL2 dev/debug frontend
 - `ZEEBULATOR_BUILD_LIBRETRO` (default ON) — the libretro core
+- `ZEEBULATOR_BUILD_TESTS` (default ON) — the test suite (GoogleTest, fetched via CMake `FetchContent`)
+
+## Testing
+
+Every unit of work should come with tests covering it, and the full suite
+(`ctest --test-dir build`) should pass before considering that work done —
+this applies whether it's a CPU instruction, an HLE API stub, or a loader
+format. Tests live in `tests/`, mirroring the module being tested (e.g.
+`core/cpu/...` behavior gets covered by a `tests/cpu_test.cpp`-style file).
 
 ## Where things live
 

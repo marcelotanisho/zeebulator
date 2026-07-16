@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(ZEEBULATOR_BUILD_LIBRETRO "Build the libretro core" ON)
 option(ZEEBULATOR_BUILD_STANDALONE "Build the standalone dev frontend" ON)
+option(ZEEBULATOR_BUILD_TESTS "Build the test suite" ON)
 
 add_subdirectory(core)
 
@@ -15,4 +16,9 @@ endif()
 
 if(ZEEBULATOR_BUILD_LIBRETRO)
   add_subdirectory(frontends/libretro)
+endif()
+
+if(ZEEBULATOR_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
 endif()
