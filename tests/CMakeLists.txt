@@ -14,6 +14,7 @@ add_executable(zeebulator_tests
   memory_test.cpp
   cpu_test.cpp
   ggz_test.cpp
+  mif_test.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)

@@ -9,6 +9,8 @@ add_library(zeebulator_core STATIC
   cpu/arm_interpreter.h
   loader/ggz.cpp
   loader/ggz.h
+  loader/mif.cpp
+  loader/mif.h
 )
 
 target_include_directories(zeebulator_core PUBLIC ${PROJECT_SOURCE_DIR})
