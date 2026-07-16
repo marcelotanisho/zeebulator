@@ -1,0 +1,2 @@
+add_executable(zeebulator_cpu_demo cpu_demo.cpp)
+target_link_libraries(zeebulator_cpu_demo PRIVATE zeebulator_core)
