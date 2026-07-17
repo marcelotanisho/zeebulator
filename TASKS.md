@@ -1429,10 +1429,33 @@ playable start-to-finish at full speed, standalone build.
         reason: a real in-module helper (`0x23e58`) that indirects
         through a global pointer chain (not through the `IDisplay*`
         argument it's nominally called with) to reach some other
-        object's vtable slot 4, and returns NULL. Not yet understood
-        well enough to fix without guessing -- tracked as the next
-        concrete step, alongside decoding what "state = 3" actually
-        displays.
+        object's vtable slot 4, and returns NULL. **Pinned down exactly
+        which object via the same instruction-trace technique** (a
+        temporary `trace=true` on the `CreateInstance` call, removed
+        after use): `0x23e58` reads a module-global pointer at file
+        offset `0x4ccb8` (computed PC-relative, not through the
+        static-base table) -- which holds the *exact object our own
+        `0x01014bc4` scaffold created* (confirmed live: the trace shows
+        it loading our own `0x80017000` object address, then its
+        `0x80016000` vtable, then calling slot 4, landing on our own
+        generic `Stub` sentinel, which is why it returns 0). So this
+        isn't a mystery third object -- it's the *same* class
+        `0x01014bc4` we already scaffolded, being asked to do
+        real work (its slot 4, called with the original `IDisplay*`
+        as `po`) that a uniform "return 0" stub can't satisfy. Searched
+        the binary for embedded debug/class-name strings (none found --
+        this is a release build) and for corroborating references in
+        other real `.mod` files (none available -- only one real game
+        binary in `research/games/` this session). Real progress
+        requires either finding another real BREW binary/doc that
+        identifies class `0x01014bc4`'s actual interface, or reasoning
+        from its usage here (slot 4, called with the display as `po`,
+        result later validated against a fixed `0x3000`-byte size and
+        fed to two more real helper calls) -- deferred rather than
+        guessed, since a wrong shape risks a harder-to-diagnose failure
+        downstream than the current clean "returns failure" state.
+        Tracked as the next concrete step, alongside decoding what
+        "state = 3" actually displays.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
