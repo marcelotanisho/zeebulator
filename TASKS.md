@@ -904,11 +904,20 @@ playable start-to-finish at full speed, standalone build.
       evidence) — are all real, tested, working HLE now.
       **Not yet playable**: the game is currently stuck redrawing a
       diagnostic overlay (`"ERROR CODE:6"` / `"LIST COUNT:3"`) every
-      tick. Traced the error-code field to a real struct offset
-      (`applet+0x36c4`) with no direct missing-HLE-call writing it —
-      this looks like real application business logic, not an emulator
-      gap, so it's a different (and likely longer) kind of investigation
-      than everything above. See `PHASE8_LOG.md`'s final entries for the
+      tick. A real gap behind part of this is now fixed: the game opens
+      its own packed resource archive as a raw file
+      (`IFILEMGR_OpenFile("sound.ggz")`), which the dev tool's
+      `VirtualFilesystem` never exposed (only each archive's
+      *decompressed entries*, not its own raw bytes) — fixed, verified
+      against the real game (`OpenFile` now succeeds with the real
+      1.9 MB file size, and the game genuinely reads/seeks within it).
+      The diagnostic loop itself persists for a different, deeper
+      reason: traced to a real 81-slot resource-list loop
+      (`ddragonz.mod` offset `0x1c964`) and its per-item helper
+      (offset `0x1bfd0`) — genuine application business logic (why
+      entry N behaves differently from entry 0), not a missing HLE
+      primitive, so a different and likely longer investigation than
+      everything above. See `PHASE8_LOG.md`'s final entries for the
       full trace.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)

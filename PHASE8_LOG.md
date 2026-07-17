@@ -865,3 +865,39 @@ window (`Sdl2GlBackend::SwapBuffers` really does call
 `frontends/standalone/sdl2_gl_backend.cpp`) -- moot for now since
 the game hasn't reached real per-frame GL presentation yet, only
 this diagnostic-overlay loop.
+
+**Found and fixed a real gap this round, via a live memory watchpoint
+on `applet+0x36c4`** (temporary, `Memory::Write32` -- confirmed the
+field is legitimately written `0` a few times during setup, then a
+single real write of `6` correlates exactly with one specific HLE call
+sequence right before it). That sequence: `IFILEMGR_OpenFile(pFileMgr,
+"sound.ggz", mode=1)` -- the game opens its own packed resource
+archive **as a raw file**, by its plain filename, rather than expecting
+every entry pre-extracted. `tools/game_probe.cpp`'s `MergeGgzInto` only
+ever registered each GGZ archive's *decompressed entries* in the
+`VirtualFilesystem`, never the archive's own raw bytes under its own
+basename -- so `OpenFile("sound.ggz")` correctly, honestly returned
+"not found." Fixed by also registering each archive's raw bytes under
+`BaseName(path)` when loading (`vfs.AddFile(BaseName(path), raw)`).
+**Verified against the real game** (a temporary debug print in
+`FileHle::OpenFileImpl`/`SeekImpl`/`ReadImpl`, removed after use):
+`OpenFile("sound.ggz", mode=1)` now succeeds (`file_size=1928097`,
+exactly the real file's size), and the game goes on to genuinely
+`Read`/`Seek` within it -- real audio-archive access now works, not
+just a non-crash.
+**The `ERROR CODE:6` loop itself persists past this fix, for a
+different, deeper reason.** Traced the caller (a real loop at
+`ddragonz.mod` offset `0x1c964`, disassembled directly): it iterates
+a resource list (up to 81 slots) calling a helper at offset `0x1bfd0`
+for each with `(pIShell, "sound.ggz", nameTable[i], &resultTable[i])`,
+stopping as soon as that helper returns `0`. A second real open of
+`"sound.ggz"` in this loop does `Open` -> `Seek(SEEK_START, 488)` ->
+`Release`, with **no `Read` in between** this time (unlike the first,
+successful open earlier in the same tick, which did `Read` before
+seeking further) -- and the error gets set immediately after. This is
+genuine resource-list business logic (why does entry N behave
+differently from entry 0, what `0x1bfd0` actually validates, what
+"`LIST COUNT:3`" really counts) rather than a missing HLE primitive --
+would need substantially more disassembly of `0x1bfd0` and the
+81-slot-iteration loop specifically to resolve, tracked as the next
+concrete step.

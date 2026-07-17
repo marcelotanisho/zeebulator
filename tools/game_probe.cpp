@@ -41,11 +41,25 @@ std::vector<uint8_t> ReadFile(const char* path) {
                                std::istreambuf_iterator<char>());
 }
 
+// Real disassembly of Double Dragon (PHASE8_LOG.md) shows it calling
+// IFILEMGR_OpenFile("sound.ggz") directly -- the game opens its own
+// packed resource archive as a raw file and presumably streams/parses
+// it itself (e.g. for on-demand audio), rather than expecting every
+// entry pre-extracted. So the archive's own raw bytes need to be a
+// VFS entry under its basename too, alongside its extracted contents.
+std::string BaseName(const char* path) {
+  std::string s(path);
+  size_t slash = s.find_last_of("/\\");
+  return slash == std::string::npos ? s : s.substr(slash + 1);
+}
+
 void MergeGgzInto(zeebulator::VirtualFilesystem& vfs, const char* path) {
-  auto archive = zeebulator::GgzArchive::Parse(ReadFile(path));
+  std::vector<uint8_t> raw = ReadFile(path);
+  auto archive = zeebulator::GgzArchive::Parse(raw);
   for (const auto& entry : archive.Entries()) {
     vfs.AddFile(entry.name, archive.Extract(entry));
   }
+  vfs.AddFile(BaseName(path), std::move(raw));
   std::printf("loaded %zu entries from %s\n", archive.Entries().size(), path);
 }
 
