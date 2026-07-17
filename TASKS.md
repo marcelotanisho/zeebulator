@@ -1332,10 +1332,47 @@ playable start-to-finish at full speed, standalone build.
       (MEMCPY), `0x4` (MEMSET), `0x8` (STRCPY), `0x14` (STRLEN), `0x68`
       (MALLOC), `0x6c` (FREE), `0xb0` (GETUPTIMEMS), `0xc0`
       (GETAPPCONTEXT), `0xe4` (bounded copy) -- nine confirmed slots
-      total. Tracked as the next concrete step: expanding `font5x7` for
-      legible real text, and continuing to exercise more of the game's
-      real logic (deeper ticks, more key combinations, sound) to see
-      what the next gap turns out to be.
+      total.
+      **Solved the mystery of what the six on-screen strings actually
+      say, and why**: added a temporary debug print of `DrawText`'s raw
+      code units (removed after use, not committed) and found they
+      aren't `AECHAR`/UTF-16 at all -- they're a plain 8-bit `char*`
+      being read 16 bits at a time, so each "code unit" is really two
+      swapped ASCII bytes. Decoded, the six strings are fragments of one
+      real message: **"Memory is insufficient. Please start \[the game\]
+      after finishing \[the\] other application \[...\] by pushing the
+      button."** -- a genuine BREW low-memory warning dialog, not
+      gameplay HUD text, which is why it renders identically every
+      single frame.
+      **Root-caused *why* the game thinks memory is insufficient** (a
+      real, hardware-realistic diagnosis, not a guess): traced the
+      renderer back through a generic "draw N strings from a table"
+      helper (`ddragonz.mod` offset `0x49f0`) to a per-state dispatch
+      keyed by a field at `applet+0x24`, confirmed live via a temporary
+      watchpoint on that exact address (removed after use) to show it's
+      written twice during `CreateInstance` -- to `0` (proceeding
+      normally), then immediately to `1` (the "show warning" state) --
+      *before* `HandleEvent(EVT_APP_START)` even runs. Two candidate
+      "if this fails, set state=1" checks earlier in the same function
+      were ruled out by disassembly (both real called functions
+      unconditionally return success in this binary). The real cause:
+      `ISHELL_CreateInstance(shell, ClsId=0x01002001, &field)` -- a real
+      class ID we don't have registered -- fails, and the function
+      wrapping that call has an explicit `mov r0, #0; bx lr` failure
+      path that propagates the failure straight into
+      `state = 1`. This is a **real, mechanically accurate**
+      "insufficient memory" trigger: the game asks for some subsystem
+      via `CreateInstance`, doesn't get it, and (reasonably, from the
+      game's perspective) reports it as a resource-availability problem.
+      **Not yet fixed**: `0x01002001` is an unidentified real BREW class
+      (a different numeric family than `AEECLSID_DISPLAY`'s
+      `0x0100_1xxx`, plausibly a Zeebo-specific or sound/config-related
+      service) -- registering a stub for it risks a *different* crash
+      the moment the game calls a method on it we haven't scaffolded,
+      since we don't yet know what interface shape it expects. Tracked
+      as the next concrete step: identify (or reference-implement a
+      shape for) class `0x01002001`, alongside expanding `font5x7` for
+      legible real text now that we know what it's mostly needed for.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
