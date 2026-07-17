@@ -883,6 +883,70 @@ Exit criterion: **M1 from PRD §7** — target title (Double Dragon) fully
 playable start-to-finish at full speed, standalone build.
 
 - [ ] Iteratively debug against the real game, filling HLE API gaps as they're hit
+      **First real attempt, honestly reported**: built `tools/game_probe.cpp`,
+      a dev tool that drives Double Dragon's real, compiled
+      `mod/274754/ddragonz.mod` through the actual BREW app lifecycle —
+      `AEEMod_Load` → `IModule::CreateInstance(ClsId=274754)` →
+      `HandleEvent(EVT_APP_START)` — using the real `IShell`/`IDisplay`/
+      `IGL`/`IEGL`/`IFile`/`IMedia` HLE built in earlier phases, real
+      `data.ggz`/`sound.ggz` assets mounted via `VirtualFilesystem`, and a
+      real SDL2 window/GL context/audio device (not a headless stub).
+      **Result: does not yet load.** The game does not successfully reach
+      `EVT_APP_START`. Two real, previously-unknown facts about the real
+      BREW ABI were discovered and corrected along the way (via a genuine
+      NSIS extraction of the Qualcomm BREW MP SDK installer, not guessed):
+        - `EVT_APP_START = 0`, not `1` as our own `hello_brew.c`/
+          `hello_gl.c` SDK fixtures had assumed (`platform/system/inc/AEEEvent.h`).
+          Those fixtures are self-consistent, so this never broke anything
+          internally — but it was wrong for real game code.
+        - The real `AEEAppStart` struct is
+          `{ int error; AEECLSID clsApp; IDisplay *pDisplay; AEERect rc; const char *pszArgs; }`
+          — 5 fields, not 4 — and the real `AEERect` is
+          `{ int16 x, y, dx, dy; }` (8 bytes), not `{ int x, y, dx, dy; }`
+          (16 bytes) as our own fixtures assumed. Correct total size: 24 bytes.
+      **The actual blocker**: disassembling the real `.mod` directly
+      (`arm-none-eabi-objdump -D -b binary -m arm`, the authoritative way to
+      read a raw flat binary — manual hex decoding of this same function
+      produced real mistakes before switching to the real tool) shows
+      `AEEMod_Load`'s body computing `r0 = <module's own loaded base
+      address>` via PC-relative addressing, then executing
+      `ldr r0, [r0, #-4]` — reading a pointer from 4 bytes *before* the
+      module's own base. This is the real ARM RVCT "ROPI" (Read-Only
+      Position-Independent) convention: compiled code expects the real BREW
+      OS loader to place a pointer to a runtime-allocated global-data/
+      static-base segment immediately before the module image in memory.
+      Zeebulator's `.mod` loader (`core/loader/mod.{h,cpp}`) does not
+      currently provide this — nothing is written at `moduleBase - 4` — so
+      that load reads whatever was already in emulated memory there (zero,
+      since it was never written), and the module jumps through a garbage
+      function pointer built from it.
+      **Why this wasn't obvious at first**: the ARM interpreter's existing,
+      correct convention of decoding never-written (zero-filled) memory as
+      harmless `ANDEQ r0,r0,r0` no-ops meant the very first attempt produced
+      a *plausible-looking but meaningless* "success" — 262,237 steps of
+      no-ops walking PC from address 0 back up to the module's own base
+      address, silently re-entering `AEEMod_Load`, and returning
+      `R0=0x00000001` (a bogus "module pointer"). This was **not** a CPU
+      interpreter bug (it behaves exactly as specified for the bytes it's
+      given) — it's the loader's missing static-base setup producing a
+      false positive that looked like progress. Caught by building
+      `CallArmFunctionChecked`, a diagnostic wrapper that tracks whether PC
+      ever leaves the loaded module's address range and reports it as a
+      loud warning rather than silently accepting whatever `R0` comes back.
+      With that check in place, the real, honest result is: PC leaves the
+      module's range after only 37 steps (reading the garbage pointer and
+      jumping through it), and the tool now stops and reports this cleanly
+      instead of reporting a false "AEEMod_Load OK".
+      **Net assessment**: real compiled Double Dragon code now runs
+      further and more meaningfully than at any prior phase — past the
+      entry-stub validation exercised by Phase 2's `mod_probe` (which never
+      called real `AEEMod_Load` with real arguments) and into real
+      argument-validated logic inside the actual function. It still does
+      not load. The next concrete step (not yet attempted) is teaching
+      `core/loader/mod.{h,cpp}` to allocate and populate a static-base
+      segment at `moduleBase - 4`, per the real ROPI convention — this is a
+      loader/runtime-support gap, not an HLE API gap, so it's tracked here
+      rather than under a specific interface.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

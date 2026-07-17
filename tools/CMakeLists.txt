@@ -9,3 +9,14 @@ target_link_libraries(zeebulator_mif_inspector PRIVATE zeebulator_core)
 
 add_executable(zeebulator_mod_probe mod_probe.cpp)
 target_link_libraries(zeebulator_mod_probe PRIVATE zeebulator_core)
+
+if(ZEEBULATOR_BUILD_STANDALONE)
+  add_executable(zeebulator_game_probe
+    game_probe.cpp
+    ${PROJECT_SOURCE_DIR}/frontends/standalone/sdl2_backend.cpp
+    ${PROJECT_SOURCE_DIR}/frontends/standalone/sdl2_gl_backend.cpp
+  )
+  target_include_directories(zeebulator_game_probe PRIVATE ${PROJECT_SOURCE_DIR})
+  target_link_libraries(zeebulator_game_probe PRIVATE zeebulator_core SDL2::SDL2 SDL2::SDL2main
+                                                       OpenGL::GL)
+endif()
