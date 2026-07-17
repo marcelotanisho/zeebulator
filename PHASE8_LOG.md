@@ -950,3 +950,45 @@ step: find that init routine (the same technique as every fix this
 session -- find what constructs `applet+0x19c`, trace its own
 `ISHELL_CreateInstance` calls) to finally identify class `0x01001014`
 for real, the same way `0x01001003` was identified.
+
+**Follow-up investigation into the `0x01001014` object, no code changes
+this round.** The previous entry's guess at *which* struct field was
+the culprit was imprecise -- corrected here with direct trace evidence.
+A live watchpoint on `applet+0x19c`'s own `+12` field found it gets
+written `0x8030014c` (i.e. `applet+0x128`'s address), but that field
+turned out to be an unrelated cached back-reference, not the actual
+object dereferenced by the failing `Read` call. Re-reading the exact
+instruction trace of the failing call directly (register values, not
+re-derived by hand) showed the real culprit precisely: inside
+`0x1bfd0`, its own first argument (confirmed via the trace to be
+`applet+0x128`, not `applet+0x19c` -- `0x1c964` passes
+`*applet+0x19c` i.e. `applet+0x19c`'s *own* `+0` field, which caches a
+pointer back to the shared `applet+0x128` loader struct) is
+dereferenced at `+12` to get the object, whose vtable slot 3 (`Read`)
+is called. That's exactly `applet[0x128+12]` -- the real, confirmed
+`0x01001014` object from the very first `0x1b2fc` gate -- still our
+blind 40-slot generic scaffold, whose slot 3 just returns 0.
+**Searched further for the class's real identity, still inconclusive.**
+Re-examined `0x1b2fc` (where the object is created) directly: no
+initialization call is made on it after `CreateInstance` succeeds --
+it's created once and presumably used standalone later, with no
+"attach me to a specific open file" step visible anywhere in the
+traced call chain (`0x1b2fc` create -> `0x1c964` resource-list loop ->
+`0x1bfd0` per-item loader -> `0x739c` open/seek/read-header, none of
+which ever write `applet[0x128+12]` after creation). Chased one
+promising real lead to a dead end: the same qx_cab SDK extraction that
+named `AEEAppGen.c`/`AEEModGen.c` also contains real Qualcomm "QX
+Engine" middleware headers, including `QXPackFileManager.h` and
+`QXPack.h` -- a real pack-file archive reader many Zeebo-era BREW games
+built on. Read both directly: `QXPack`'s own file format (string
+table, directory records, `QXPackFile{fileNameStringID, fileSize,
+fileDataOffset}`) does not match our own GGZ format's simpler
+"N 8-byte (offset,size) entries" structure at all, and `QXPackFileMgr`
+is a plain host-side C API (`QXPackFileMgr_Create(QXState*)`), not
+something obtained via `ISHELL_CreateInstance` -- ruled out with real
+evidence, not assumed. No further real leads found in this repo's
+bundled materials for what `0x01001014` actually is. Deferred rather
+than guessed -- a wrong implementation here risks trading "reads 0
+bytes, harmlessly" for "reads garbage bytes, corrupts real game state
+in a way that's much harder to notice or diagnose than the current
+clean failure."

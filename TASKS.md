@@ -919,12 +919,18 @@ playable start-to-finish at full speed, standalone build.
       real data offset) both now succeed correctly where they
       previously failed. The diagnostic loop still persists past both
       fixes, for a third, narrower reason: the same routine reads real
-      resource content through a per-subsystem field
-      (`applet+0x19c`'s own `+12`) that's still wired to an old,
+      resource content through `applet[0x128+12]` (a shared loader
+      struct's field, confirmed via direct trace evidence, not a
+      per-subsystem field as first suspected), still wired to an old
       unidentified generic scaffold (class `0x01001014`, found
       alongside `AEECLSID_FILEMGR` at the very first `CreateInstance`
       gate this session but never resolved) instead of a real `IFile`-
-      shaped object — tracked as the next concrete step. See
+      shaped object. Its exact real identity remains unconfirmed after
+      searching this repo's bundled real Qualcomm "QX Engine" SDK
+      extraction (a real pack-file reader whose own format doesn't
+      match our GGZ format, ruled out with evidence) — deliberately
+      not guessed further, since a wrong implementation risks trading
+      a clean, diagnosable failure for silent data corruption. See
       `PHASE8_LOG.md`'s final entries for the full trace.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
