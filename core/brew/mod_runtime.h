@@ -76,7 +76,18 @@ namespace zeebulator {
 // including the null terminator, matching ANSI `size_t strlen(const
 // char *s)` exactly.
 //
-// Only these six table slots are confirmed by real disassembly so
+// A seventh slot, offset 0xe4, is a bounded string copy: the one real
+// call site (`ddragonz.mod` offset 0x23b18, right after the STRLEN call
+// above) passes `(src=r0, n=strlen(src)+1, dest=r2=a stack buffer,
+// cap=r3=0x200)` -- i.e. copy up to `n` bytes from `src` to `dest`,
+// never more than `cap`. Unlike MALLOC/FREE/GETUPTIMEMS/MEMSET/STRLEN,
+// this one wasn't matched against a specific named reference function
+// (the argument order doesn't cleanly match a standard `strlcpy(dest,
+// src, len)`) -- but the copy semantics themselves are unambiguous from
+// the calling convention alone, so it's implemented as exactly that:
+// `n = min(strlen_plus_one, cap); memcpy(dest, src, n)`.
+//
+// Only these seven table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -118,6 +129,7 @@ class ModRuntime {
   void MallocImpl(IArmCore& core);
   void MemsetImpl(IArmCore& core);
   void StrlenImpl(IArmCore& core);
+  void BoundedStrcpyImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);
 

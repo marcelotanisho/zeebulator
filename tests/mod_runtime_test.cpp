@@ -12,6 +12,7 @@ using zeebulator::ModRuntime;
 namespace {
 constexpr uint32_t kMemsetSlotOffset = 0x4;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
+constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
@@ -195,4 +196,44 @@ TEST(ModRuntime, StrlenReturnsZeroForEmptyString) {
   cpu.GetMemory().Write8(kStr, 0);
 
   EXPECT_EQ(hle.CallArmFunction(strlen_fn, kStr), 0u);
+}
+
+TEST(ModRuntime, BoundedStrcpyCopiesUpToRequestedLength) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t bounded_strcpy_fn = cpu.GetMemory().Read32(kTableAddress + kBoundedStrcpySlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  constexpr uint32_t kDest = 0x80300200;
+  const char* text = "hello";
+  for (size_t i = 0; i <= 5; ++i) {
+    cpu.GetMemory().Write8(kSrc + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
+  }
+
+  EXPECT_EQ(hle.CallArmFunction(bounded_strcpy_fn, kSrc, /*n=*/6, kDest, /*cap=*/0x200), kDest);
+  for (size_t i = 0; i <= 5; ++i) {
+    EXPECT_EQ(cpu.GetMemory().Read8(kDest + static_cast<uint32_t>(i)),
+              static_cast<uint8_t>(text[i]))
+        << "byte " << i;
+  }
+}
+
+TEST(ModRuntime, BoundedStrcpyNeverExceedsCap) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t bounded_strcpy_fn = cpu.GetMemory().Read32(kTableAddress + kBoundedStrcpySlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  constexpr uint32_t kDest = 0x80300200;
+  cpu.GetMemory().Write8(kSrc, 0xAB);
+  cpu.GetMemory().Write8(kSrc + 1, 0xCD);
+  cpu.GetMemory().Write8(kDest + 1, 0x99);  // sentinel: must not be overwritten
+
+  hle.CallArmFunction(bounded_strcpy_fn, kSrc, /*n=*/10, kDest, /*cap=*/1);
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest), 0xAB);
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 1), 0x99) << "copied past the cap";
 }

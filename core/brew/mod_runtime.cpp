@@ -1,5 +1,7 @@
 #include "core/brew/mod_runtime.h"
 
+#include <algorithm>
+
 namespace zeebulator {
 
 namespace {
@@ -8,6 +10,7 @@ namespace {
 // living.
 constexpr uint32_t kMemsetSlotOffset = 0x4;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
+constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
@@ -63,6 +66,21 @@ void ModRuntime::StrlenImpl(IArmCore& core) {
   core.SetRegister(kR0, len);
 }
 
+void ModRuntime::BoundedStrcpyImpl(IArmCore& core) {
+  // Copy semantics inferred from the calling convention (see
+  // mod_runtime.h) rather than matched to a named reference function:
+  // n = min(n, cap); memcpy(dest, src, n).
+  uint32_t src = core.GetRegister(kR0);
+  uint32_t n = core.GetRegister(kR1);
+  uint32_t dest = core.GetRegister(kR2);
+  uint32_t cap = core.GetRegister(kR3);
+  n = std::min(n, cap);
+  for (uint32_t i = 0; i < n; ++i) {
+    memory_.Write8(dest + i, memory_.Read8(src + i));
+  }
+  core.SetRegister(kR0, dest);
+}
+
 void ModRuntime::GetAppContextImpl(IArmCore& core) {
   // Written fresh on every call rather than once in Install() so this
   // works regardless of whether SetShellInstance() is called before or
@@ -83,8 +101,10 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t free_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t get_uptime_ms_fn = hle_.Register([this](IArmCore& core) { GetUpTimeMsImpl(core); });
   uint32_t get_app_context_fn = hle_.Register([this](IArmCore& core) { GetAppContextImpl(core); });
+  uint32_t bounded_strcpy_fn = hle_.Register([this](IArmCore& core) { BoundedStrcpyImpl(core); });
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
   memory_.Write32(table_address + kStrlenSlotOffset, strlen_fn);
+  memory_.Write32(table_address + kBoundedStrcpySlotOffset, bounded_strcpy_fn);
   memory_.Write32(table_address + kMallocSlotOffset, malloc_fn);
   memory_.Write32(table_address + kFreeSlotOffset, free_fn);
   memory_.Write32(table_address + kGetUpTimeMsSlotOffset, get_uptime_ms_fn);

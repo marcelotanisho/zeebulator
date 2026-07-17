@@ -1198,8 +1198,32 @@ playable start-to-finish at full speed, standalone build.
       the earlier whole-binary scan (a gap in that scan's own pattern-
       matching window, worth revisiting) -- called with a string
       pointer, a stack buffer, and a size constant `0x200`, shaped like
-      `strlcpy`/`strncpy`. Not yet implemented. Tracked as the next
-      concrete step.
+      `strlcpy`/`strncpy`.
+      **Implemented it**: unlike the other libc-shaped slots, this one's
+      exact real name/signature wasn't matched against a reference
+      source (the argument order -- `src, strlen(src)+1, dest, cap` --
+      doesn't cleanly match a standard `strlcpy(dest, src, len)`), but
+      the copy semantics are unambiguous from the calling convention
+      alone: `n = min(strlen_plus_one, cap); memcpy(dest, src, n)`.
+      Implemented exactly that (`ModRuntime::BoundedStrcpyImpl`). 2 new
+      tests (copies up to the requested length; never writes past the
+      cap).
+      **Reran against the real game and got real visible output for the
+      first time**: no wander, no `UnimplementedInstruction`, no
+      "did not complete trustworthily" -- the tick callback ran cleanly
+      across roughly 500 real frames over an 8-second observation window
+      with no new gap surfacing. Captured a live screenshot (`xwd` +
+      `ffmpeg`): a small white rectangle now renders in the top-left of
+      the window (our `IDisplayHle::DrawText` placeholder-block
+      behavior, so not real game graphics yet, but real proof the game
+      is now genuinely calling into `IDisplay` draw methods every frame
+      through the fully-resolved static-base table). This is the first
+      point all session where something is visibly different on screen.
+      Not yet investigated further this session: whether it stays stable
+      indefinitely, what specific `IDisplay`/other calls it's making
+      each frame, and input handling (`EVT_KEY` etc., real BREW event
+      codes `>0x100` per the app's own dispatcher, seen earlier but not
+      driven) are all open. Tracked as the next concrete step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
