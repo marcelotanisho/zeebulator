@@ -19,11 +19,21 @@ namespace zeebulator {
 //   IFileMgr: AddRef, Release, OpenFile, GetInfo, Remove, MkDir, RmDir,
 //   Test, GetFreeSpace, GetLastError, EnumInit, EnumNext, Rename.
 //
-// Files are read-only (backed by the loaded GGZ contents) -- Write,
-// Remove, MkDir, RmDir, Truncate, and Rename all return an error rather
-// than silently succeeding. The filesystem is flat (GGZ has no
-// directory structure), so EnumInit ignores its directory argument and
-// always enumerates everything.
+// The GGZ-backed content is read-only (Remove/MkDir/RmDir/Rename all
+// return an error rather than silently succeeding), but OpenFile
+// supports real save-game style read/write/create against a separate,
+// in-memory "user data" store (see writable_files_) -- confirmed real
+// disassembly of Double Dragon's own save/load routine (`ddragonz.mod`
+// offset `0x9f3c`, called from `0x237c4`, TASKS.md Phase 8) does
+// exactly `IFILEMGR_Test("./udata/ddz.sav")`, then on failure
+// `IFILEMGR_GetFreeSpace()` (checked against a minimum), then
+// `IFILEMGR_OpenFile(..., _OFM_CREATE)` -- a real "load save, or create
+// a fresh one" pattern this class needs to actually satisfy, not just
+// avoid crashing on. The filesystem is flat (GGZ has no directory
+// structure), so EnumInit ignores its directory argument and always
+// enumerates everything (only the read-only GGZ-backed files, not
+// writable ones -- nothing exercised so far enumerates a save
+// directory).
 //
 // IFile and IFileMgr are implemented together here (not one-file-per-
 // interface like IShell/IDisplay) because they're a tightly coupled
@@ -45,7 +55,8 @@ class FileHle {
  private:
   struct OpenFile {
     std::string name;
-    const std::vector<uint8_t>* data;
+    const std::vector<uint8_t>* data;  // current bytes, for Read/Seek/GetInfo/size
+    std::vector<uint8_t>* mutable_data = nullptr;  // non-null only for writable_files_ entries
     uint32_t position = 0;
   };
 
@@ -53,16 +64,19 @@ class FileHle {
   void OpenFileImpl(IArmCore& core);
   void FileMgrGetInfoImpl(IArmCore& core);
   void TestImpl(IArmCore& core);
+  void GetFreeSpaceImpl(IArmCore& core);
   void EnumInitImpl(IArmCore& core);
   void EnumNextImpl(IArmCore& core);
 
   // IFile methods (shared vtable; instance looked up by "po", i.e. R0).
   void ReadImpl(IArmCore& core);
+  void WriteImpl(IArmCore& core);
   void FileGetInfoImpl(IArmCore& core);
   void SeekImpl(IArmCore& core);
 
   void WriteFileInfo(uint32_t dest_addr, const std::string& name, uint32_t size);
-  uint32_t AllocateFileObject(const std::string& name, const std::vector<uint8_t>* data);
+  uint32_t AllocateFileObject(const std::string& name, const std::vector<uint8_t>* data,
+                               std::vector<uint8_t>* mutable_data = nullptr);
 
   Memory& memory_;
   HleRuntime& hle_;
@@ -71,6 +85,9 @@ class FileHle {
   uint32_t next_object_address_;
   size_t enum_cursor_ = 0;
   std::unordered_map<uint32_t, OpenFile> open_files_;
+  // Runtime-created/written files (e.g. save games) -- separate from
+  // the read-only GGZ-backed vfs_, never persisted past this process.
+  std::unordered_map<std::string, std::vector<uint8_t>> writable_files_;
 };
 
 }  // namespace zeebulator

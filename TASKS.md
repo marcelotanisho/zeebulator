@@ -1595,6 +1595,78 @@ playable start-to-finish at full speed, standalone build.
       numeric ID or call-shape example anywhere in the bundled
       materials, using that to implement slot 2's real behavior would
       still be guessing, not verifying -- left as-is.
+      **The user asked directly: is this ninth gate actually necessary to
+      run the game? Answer, confirmed empirically: yes** --
+      `applet+0x24` must be exactly `0` (not `1`, `2`, or `3`) for the
+      per-tick game loop to run real logic instead of redrawing a
+      warning dialog every frame forever; this gate is the last of the
+      ten that was still nonzero.
+      **Found the real identity by reading the actual string/flags
+      involved, not just the call shape**: the "name" argument passed to
+      `0x01001003`'s slot 2 is a real, literal C string baked into the
+      file (`./udata/ddz.sav`, read directly from `ddragonz.mod` at file
+      offset `0x4e078`) -- a save-game path, not a font/texture name as
+      guessed last round. Full disassembly of the surrounding routine
+      (`0x237c4`/`0x9f3c`) shows a textbook "load save, or create a
+      fresh one" sequence: `IFILEMGR_Test` (slot 7) on that path, and on
+      failure `IFILEMGR_GetFreeSpace` (slot 8, checked against a
+      minimum) then `IFILEMGR_OpenFile` (slot 2) with a literal mode of
+      `2`, which is exactly real `AEEFile.h`'s `_OFM_READWRITE` (a
+      literal `4` appears too, matching `_OFM_CREATE`). That's
+      `IFileMgr`'s real vtable shape precisely -- so `0x01001003` is
+      very likely real `AEECLSID_FILEMGR` (still not a confirmed literal
+      number, same caveat as `AEECLSID_DIB`/`SignalCBFactory`, since no
+      bundled header states it numerically -- but the call shape and
+      flow leave little doubt).
+      **This project already had a complete, tested `FileHle`** (an
+      earlier phase, GGZ-backed, deliberately read-only) that had never
+      been wired into `CreateInstance` either -- same pattern as
+      `GlHle`. Wiring it in alone wasn't enough, though: the read-only
+      design would legitimately fail this exact "create a save file"
+      flow (`OpenFile` returning null for a path that doesn't exist in
+      the shipped GGZ content, `GetFreeSpace` returning `0`). **Extended
+      `FileHle` with a real, separate in-memory "user data" store**
+      (`core/brew/file_hle.h`'s `writable_files_`, distinct from the
+      read-only GGZ-backed `vfs_`): `OpenFile` now honors
+      `_OFM_CREATE`, creating a genuinely writable/readable file if
+      nothing else has it; `Write` (previously `StubFailed` for every
+      file) now really writes into a writable file's backing buffer
+      (growing it as needed) and still correctly fails for read-only
+      GGZ-backed files; `Test`/`GetInfo` recognize writable files too;
+      `GetFreeSpace` (previously a blind `Stub` returning literal `0`,
+      which would have failed this exact minimum-space check) now
+      reports a plausible simulated 1 MiB quota, optionally writing
+      total capacity through its real second `uint32*` argument. 8 new
+      tests in `tests/file_hle_test.cpp`: create-on-missing, write-then-
+      read-back round trip, `Test` sees newly-created files,
+      re-opening a created file by name sees previously-written bytes,
+      `GetFreeSpace` returns nonzero and correctly writes its optional
+      output pointer -- plus confirmed the existing
+      `ReadOnlyMethodsAllReturnAnError` test still passes unchanged
+      (GGZ-backed files remain genuinely read-only; only the new
+      writable store accepts writes).
+      **Verified against the real game -- the entire ten-gate chain
+      finally clears**: `applet+0x24` reads `0` after `CreateInstance`
+      for the first time this project. Real per-frame game logic now
+      runs -- tick traces show over a hundred distinct real HLE calls
+      per frame (texture/rendering-shaped, not the same six repeated
+      `DrawText` calls from the old warning dialog) across 4 full
+      ticks, a qualitative change from every previous run.
+      **Found a tenth gap this unblocked, of a new kind**: tick 4
+      throws `"Miscellaneous instruction space (MRS/MSR/etc.)"` --
+      not a missing HLE slot this time, but a real ARM instruction our
+      interpreter doesn't decode. Real cause (traced from the log, not
+      yet from fresh disassembly): a "wandered outside module" warning
+      (`pc=0x00000000`) fires a few real instructions earlier, meaning
+      something *else* -- most likely still one more missing/incomplete
+      HLE slot -- causes a jump through a null/garbage function
+      pointer; the CPU then walks forward through zeroed memory (which
+      happens to decode as harmless no-ops) until it reaches real data
+      at a low, non-code address that isn't a valid instruction. The
+      MRS/MSR error is a downstream symptom, not the real bug -- tracked
+      as the next concrete step: find what actually jumps to null in
+      tick 4 (a fresh instruction trace + objdump, same technique as
+      every fix this session, should pin it down directly).
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

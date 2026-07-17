@@ -250,15 +250,32 @@ int main(int argc, char** argv) {
         }
       });
   display.SetDeviceBitmapInstance(device_bitmap_obj);
-  // Two more unidentified real BREW classes a later init routine requires
-  // (found by the same technique: real disassembly of 0x1b2fc showed two
-  // more ISHELL_CreateInstance calls gating the same "memory
-  // insufficient" state -- see TASKS.md Phase 8). Neither is dereferenced
-  // within that routine itself, so a generic scaffold is enough to clear
-  // this specific gate; extend if/when real code calls a method on one.
-  uint32_t unknown_0x01001003_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80010000, /*object=*/0x80011000, /*slot_count=*/40);
-  shell_hle.RegisterInstance(0x01001003, unknown_0x01001003_obj);
+  // ClsId 0x01001003: real disassembly of 0x1b2fc showed
+  // ISHELL_CreateInstance gating the same "memory insufficient" state on
+  // this class alongside 0x01001014 below -- initially scaffolded
+  // generically since neither is dereferenced within 0x1b2fc itself.
+  // Deeper disassembly (0x1c6b0 -> 0x22384 -> 0x237c4 -> 0x9f3c, TASKS.md
+  // Phase 8) later showed this object IS used, extensively, by the
+  // applet's own save-game load/create routine: IFILEMGR_Test on
+  // "./udata/ddz.sav", IFILEMGR_GetFreeSpace checked against a minimum,
+  // then IFILEMGR_OpenFile with mode literal 2 -- which is exactly real
+  // AEEFile.h's _OFM_READWRITE (also confirmed a literal 4 elsewhere in
+  // the same routine, matching _OFM_CREATE). That's IFileMgr's real
+  // vtable shape exactly (slot 2 OpenFile, slot 7 Test, slot 8
+  // GetFreeSpace) -- so this is very likely real AEECLSID_FILEMGR
+  // (not confirmed by a literal number match, unlike AEECLSID_GL/EGL/HID,
+  // since no bundled header states FILEMGR's numeric ClsId -- but the
+  // vtable shape and the exact "test/create-if-missing/open" flow
+  // matching real AEEFile.h leave little doubt). This project's own
+  // FileHle already implements real IFileMgr/IFile (built in an earlier
+  // phase for GGZ-backed read-only content, extended this round with a
+  // real writable "user data" store -- see file_hle.h -- specifically so
+  // this save-file flow can genuinely succeed instead of merely not
+  // crashing) -- wired in below instead of a generic scaffold.
+  uint32_t file_mgr_obj = file_hle.Build(/*file_mgr_vtable=*/0x80004000,
+                                          /*file_mgr_object=*/0x80005000,
+                                          /*file_vtable=*/0x80006000);
+  shell_hle.RegisterInstance(0x01001003, file_mgr_obj);
   uint32_t unknown_0x01001014_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x80012000, /*object=*/0x80013000, /*slot_count=*/40);
   shell_hle.RegisterInstance(0x01001014, unknown_0x01001014_obj);
@@ -327,8 +344,6 @@ int main(int argc, char** argv) {
   // AEEMod_Load/CreateInstance -- see core/brew/mod_runtime.h.
   mod_runtime.SetShellInstance(shell);
   mod_runtime.SetDisplayInstance(display_obj);
-  file_hle.Build(/*file_mgr_vtable=*/0x80004000, /*file_mgr_object=*/0x80005000,
-                  /*file_vtable=*/0x80006000);
   media_hle.Build(/*vtable=*/0x8000B000);
 
   auto& mem = cpu.GetMemory();

@@ -40,25 +40,49 @@ void FileHle::WriteFileInfo(uint32_t dest_addr, const std::string& name, uint32_
   memory_.Write8(dest_addr + 12 + static_cast<uint32_t>(n), 0);
 }
 
-uint32_t FileHle::AllocateFileObject(const std::string& name,
-                                      const std::vector<uint8_t>* data) {
+uint32_t FileHle::AllocateFileObject(const std::string& name, const std::vector<uint8_t>* data,
+                                      std::vector<uint8_t>* mutable_data) {
   uint32_t obj_addr = next_object_address_;
   next_object_address_ += 4;
   memory_.Write32(obj_addr, file_vtable_address_);
-  open_files_[obj_addr] = OpenFile{name, data, 0};
+  open_files_[obj_addr] = OpenFile{name, data, mutable_data, 0};
   return obj_addr;
 }
 
 void FileHle::OpenFileImpl(IArmCore& core) {
   // IFile* OpenFile(IFileMgr* piname, const char* pszFile, OpenFileMode mode)
+  // Real OpenFileMode bits (confirmed against AEEFile.h): _OFM_READ=1,
+  // _OFM_READWRITE=2, _OFM_CREATE=4, _OFM_APPEND=8.
+  constexpr uint32_t kOfmCreate = 0x0004;
   std::string name = ReadCString(memory_, core.GetRegister(kR1));
-  const std::vector<uint8_t>* data = vfs_.Find(name);
-  core.SetRegister(kR0, data ? AllocateFileObject(name, data) : 0);
+  uint32_t mode = core.GetRegister(kR2);
+
+  auto writable_it = writable_files_.find(name);
+  if (writable_it != writable_files_.end()) {
+    core.SetRegister(kR0, AllocateFileObject(name, &writable_it->second, &writable_it->second));
+    return;
+  }
+  if (const std::vector<uint8_t>* data = vfs_.Find(name)) {
+    core.SetRegister(kR0, AllocateFileObject(name, data));
+    return;
+  }
+  if ((mode & kOfmCreate) != 0) {
+    auto [inserted, _] = writable_files_.emplace(name, std::vector<uint8_t>{});
+    core.SetRegister(kR0, AllocateFileObject(name, &inserted->second, &inserted->second));
+    return;
+  }
+  core.SetRegister(kR0, 0);
 }
 
 void FileHle::FileMgrGetInfoImpl(IArmCore& core) {
   // int GetInfo(IFileMgr* piname, const char* pszName, FileInfo* pInfo)
   std::string name = ReadCString(memory_, core.GetRegister(kR1));
+  auto writable_it = writable_files_.find(name);
+  if (writable_it != writable_files_.end()) {
+    WriteFileInfo(core.GetRegister(kR2), name, static_cast<uint32_t>(writable_it->second.size()));
+    core.SetRegister(kR0, 0);
+    return;
+  }
   const std::vector<uint8_t>* data = vfs_.Find(name);
   if (!data) {
     core.SetRegister(kR0, 1);
@@ -71,7 +95,25 @@ void FileHle::FileMgrGetInfoImpl(IArmCore& core) {
 void FileHle::TestImpl(IArmCore& core) {
   // int Test(IFileMgr* piname, const char* pszName)
   std::string name = ReadCString(memory_, core.GetRegister(kR1));
-  core.SetRegister(kR0, vfs_.Exists(name) ? 0u : 1u);
+  bool exists = vfs_.Exists(name) || writable_files_.count(name) != 0;
+  core.SetRegister(kR0, exists ? 0u : 1u);
+}
+
+void FileHle::GetFreeSpaceImpl(IArmCore& core) {
+  // uint32 GetFreeSpace(IFileMgr* piname, uint32* pdwTotal) -- returns
+  // free bytes directly, optionally also writing total capacity.
+  // Reports a plausible simulated user-data quota (1 MiB); not a
+  // measured real device value -- confirmed real disassembly
+  // (TASKS.md Phase 8) shows Double Dragon's save routine treating 0
+  // (the previous blind-Stub behavior) as "storage unusable" and
+  // aborting, so this must be a believable nonzero amount, not just
+  // "not zero".
+  constexpr uint32_t kSimulatedFreeSpaceBytes = 1024 * 1024;
+  uint32_t total_addr = core.GetRegister(kR1);
+  if (total_addr != 0) {
+    memory_.Write32(total_addr, kSimulatedFreeSpaceBytes);
+  }
+  core.SetRegister(kR0, kSimulatedFreeSpaceBytes);
 }
 
 void FileHle::EnumInitImpl(IArmCore& core) {
@@ -112,6 +154,26 @@ void FileHle::ReadImpl(IArmCore& core) {
   }
   f.position += n;
   core.SetRegister(kR0, n);
+}
+
+void FileHle::WriteImpl(IArmCore& core) {
+  // int32 Write(IFile* po, const void* pSrc, uint32 nWant)
+  auto it = open_files_.find(core.GetRegister(kR0));
+  if (it == open_files_.end() || it->second.mutable_data == nullptr) {
+    core.SetRegister(kR0, static_cast<uint32_t>(-1));  // EFAILED-ish: read-only or unknown handle
+    return;
+  }
+  OpenFile& f = it->second;
+  uint32_t src = core.GetRegister(kR1);
+  uint32_t want = core.GetRegister(kR2);
+  if (f.position + want > f.mutable_data->size()) {
+    f.mutable_data->resize(f.position + want);
+  }
+  for (uint32_t i = 0; i < want; ++i) {
+    (*f.mutable_data)[f.position + i] = memory_.Read8(src + i);
+  }
+  f.position += want;
+  core.SetRegister(kR0, want);
 }
 
 void FileHle::FileGetInfoImpl(IArmCore& core) {
@@ -165,10 +227,10 @@ uint32_t FileHle::Build(uint32_t file_mgr_vtable_address, uint32_t file_mgr_obje
       Stub,                                          // 2  Readable
       [this](IArmCore& c) { ReadImpl(c); },           // 3  Read
       Stub,                                          // 4  Cancel
-      StubFailed,                                    // 5  Write (read-only)
+      [this](IArmCore& c) { WriteImpl(c); },          // 5  Write
       [this](IArmCore& c) { FileGetInfoImpl(c); },    // 6  GetInfo
       [this](IArmCore& c) { SeekImpl(c); },           // 7  Seek
-      StubFailed,                                    // 8  Truncate (read-only)
+      StubFailed,                                    // 8  Truncate (not implemented)
   };
   for (size_t i = 0; i < file_methods.size(); ++i) {
     uint32_t sentinel = hle_.Register(file_methods[i]);
@@ -184,7 +246,7 @@ uint32_t FileHle::Build(uint32_t file_mgr_vtable_address, uint32_t file_mgr_obje
       StubFailed,                                      // 5  MkDir (read-only)
       StubFailed,                                      // 6  RmDir (read-only)
       [this](IArmCore& c) { TestImpl(c); },             // 7  Test
-      Stub,                                            // 8  GetFreeSpace (0 free)
+      [this](IArmCore& c) { GetFreeSpaceImpl(c); },     // 8  GetFreeSpace
       Stub,                                            // 9  GetLastError (unused)
       [this](IArmCore& c) { EnumInitImpl(c); },         // 10 EnumInit
       [this](IArmCore& c) { EnumNextImpl(c); },         // 11 EnumNext

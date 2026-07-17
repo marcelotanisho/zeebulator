@@ -35,6 +35,7 @@ enum FileMgrSlot {
   kMgrMkDir = 5,
   kMgrRmDir = 6,
   kMgrTest = 7,
+  kMgrGetFreeSpace = 8,
   kMgrEnumInit = 10,
   kMgrEnumNext = 11,
   kMgrRename = 12,
@@ -191,4 +192,82 @@ TEST(FileHle, ReadOnlyMethodsAllReturnAnError) {
   ASSERT_NE(handle, 0u);
   EXPECT_NE(f.hle.CallArmFunction(f.FileSlotAddr(kFileWrite), handle, kScratch, 1), 0u);
   EXPECT_NE(f.hle.CallArmFunction(f.FileSlotAddr(kFileTruncate), handle, 0), 0u);
+}
+
+TEST(FileHle, OpenFileWithCreateModeMakesANewWritableFile) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  constexpr uint32_t kOfmCreate = 4;
+  uint32_t handle =
+      f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  EXPECT_NE(handle, 0u);
+}
+
+TEST(FileHle, WriteThenReadBackRoundTripsOnACreatedFile) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  constexpr uint32_t kOfmCreate = 4;
+  uint32_t handle =
+      f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  ASSERT_NE(handle, 0u);
+
+  uint32_t payload_addr = kScratch + 0x100;
+  const uint8_t payload[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+  for (int i = 0; i < 4; ++i) {
+    f.cpu.GetMemory().Write8(payload_addr + i, payload[i]);
+  }
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileWrite), handle, payload_addr, 4), 4u);
+
+  // Seek back to start (position is at EOF right after the write).
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_START=*/0, 0);
+  uint32_t read_addr = kScratch + 0x200;
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), handle, read_addr, 4), 4u);
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_EQ(f.cpu.GetMemory().Read8(read_addr + i), payload[i]) << "byte " << i;
+  }
+}
+
+TEST(FileHle, TestRecognizesAFileCreatedAtRuntime) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  EXPECT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrTest), f.mgr, kScratch), 0u)
+      << "doesn't exist yet";
+
+  constexpr uint32_t kOfmCreate = 4;
+  ASSERT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate), 0u);
+  EXPECT_EQ(f.hle.CallArmFunction(f.MgrSlot(kMgrTest), f.mgr, kScratch), 0u)
+      << "exists after being created";
+}
+
+TEST(FileHle, ReopeningACreatedFileByNameSeesThePreviouslyWrittenBytes) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  constexpr uint32_t kOfmCreate = 4;
+  uint32_t handle1 =
+      f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  ASSERT_NE(handle1, 0u);
+  uint32_t payload_addr = kScratch + 0x100;
+  f.cpu.GetMemory().Write8(payload_addr, 0x42);
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileWrite), handle1, payload_addr, 1);
+
+  uint32_t handle2 = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  ASSERT_NE(handle2, 0u);
+  uint32_t read_addr = kScratch + 0x200;
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), handle2, read_addr, 1), 1u);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(read_addr), 0x42u);
+}
+
+TEST(FileHle, GetFreeSpaceReturnsAPlausibleNonzeroAmount) {
+  Fixture f;
+  uint32_t free_bytes = f.hle.CallArmFunction(f.MgrSlot(kMgrGetFreeSpace), f.mgr, 0);
+  EXPECT_GT(free_bytes, 0u);
+}
+
+TEST(FileHle, GetFreeSpaceWritesTotalWhenPointerIsNonNull) {
+  Fixture f;
+  uint32_t total_addr = kScratch + 0x300;
+  f.cpu.GetMemory().Write32(total_addr, 0xDEADBEEF);
+  uint32_t free_bytes =
+      f.hle.CallArmFunction(f.MgrSlot(kMgrGetFreeSpace), f.mgr, total_addr);
+  EXPECT_EQ(f.cpu.GetMemory().Read32(total_addr), free_bytes);
 }
