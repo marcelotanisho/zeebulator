@@ -173,11 +173,12 @@ int main(int argc, char** argv) {
   zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
   shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
   uint32_t shell = shell_hle.Build(/*vtable=*/0x80000000, /*object=*/0x80001000);
-  // Real code fetches "the current app's IShell" from an ambient context
-  // (the static-base table's offset-0xc0 slot) in many places, not just
-  // via the pIShell argument explicitly passed to AEEMod_Load/
-  // CreateInstance -- see core/brew/mod_runtime.h.
+  // Real code fetches "the current app's IShell"/"IDisplay" from an
+  // ambient context (the static-base table's offset-0xc0 slot) in many
+  // places, not just via the pIShell argument explicitly passed to
+  // AEEMod_Load/CreateInstance -- see core/brew/mod_runtime.h.
   mod_runtime.SetShellInstance(shell);
+  mod_runtime.SetDisplayInstance(display_obj);
   file_hle.Build(/*file_mgr_vtable=*/0x80004000, /*file_mgr_object=*/0x80005000,
                   /*file_vtable=*/0x80006000);
   gl_hle.BuildGl(cpu.GetMemory(), hle, /*vtable=*/0x80007000, /*object=*/0x80008000);

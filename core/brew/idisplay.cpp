@@ -58,9 +58,14 @@ uint32_t IDisplayHle::Build(Memory& memory, HleRuntime& hle,
                              uint32_t vtable_address, uint32_t object_address) {
   // Order matches AEEIDisplay.h's INHERIT_IDisplay macro exactly
   // (verified directly against real Qualcomm source -- see TASKS.md
-  // Phase 3): AddRef/Release (IBase) through DrawFrame, the pre-BREW-MP
-  // slot set (13 total), which is what a 2009-era Zeebo/BREW 4.x
-  // IDisplay should have.
+  // Phase 3). Originally only the first 13 slots (through DrawFrame)
+  // were built, on the assumption that was the full pre-BREW-MP
+  // interface -- that assumption was wrong: real disassembly of Double
+  // Dragon (TASKS.md Phase 8) shows it calling slot 18 (SetClipRect)
+  // directly, so the real Zeebo IDisplay includes the later slots too.
+  // All 26 real slots are present now; only AddRef/Release/DrawText/
+  // Update have real behavior so far -- extend individual stubs as
+  // games need them.
   std::vector<HleRuntime::HleFunction> methods = {
       Stub,                                    // 0  AddRef
       Stub,                                    // 1  Release
@@ -75,6 +80,19 @@ uint32_t IDisplayHle::Build(Memory& memory, HleRuntime& hle,
       Stub,                                    // 10 SetColor
       Stub,                                    // 11 GetSymbol
       Stub,                                    // 12 DrawFrame
+      Stub,                                    // 13 CreateDIBitmap
+      Stub,                                    // 14 SetDestination
+      Stub,                                    // 15 GetDestination
+      Stub,                                    // 16 GetDeviceBitmap
+      Stub,                                    // 17 SetFont
+      Stub,                                    // 18 SetClipRect
+      Stub,                                    // 19 GetClipRect
+      Stub,                                    // 20 Clone
+      Stub,                                    // 21 MakeDefault
+      Stub,                                    // 22 IsEnabled
+      Stub,                                    // 23 NotifyEnable
+      Stub,                                    // 24 CreateDIBitmapEx
+      Stub,                                    // 25 SetPrefs
   };
   return BuildInterfaceObject(memory, hle, vtable_address, object_address,
                                methods);

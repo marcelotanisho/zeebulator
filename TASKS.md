@@ -1149,7 +1149,57 @@ playable start-to-finish at full speed, standalone build.
       its one real HLE call was). Root-causing this means tracing
       `HandleEvent`'s full internal control flow, not just another
       library-call mapping -- a different, larger kind of investigation
-      than the last several fixes. Not yet started.
+      than the last several fixes.
+      **Root-caused, and the actual cause was simpler than expected**:
+      full per-instruction tracing of `HandleEvent(EVT_APP_START)` shows
+      it does *nothing* for `evt==0` except call `ISHELL_SetTimer` and
+      return TRUE (confirmed via real disassembly of the app's own event
+      dispatcher at `ddragonz.mod` offset `0xc5e0`, which switches on the
+      real BREW event codes with `evt==0` landing on exactly that path)
+      -- so `applet+0x140` was never going to be set there. Tracing
+      further up, into the *already-passing* `CreateInstance` call (with
+      full tracing this time, not just its HLE calls), found the real
+      write: `ddragonz.mod` offset `0x1b5e4` does
+      `*(applet+0x140) = *(our_context_struct + 20)` -- reading a
+      **second field** of the same "app context" struct our own
+      `ModRuntime::GetAppContextImpl` (offset-`0xc0` slot) returns, one
+      we'd only ever populated at offset `+12` (the `IShell` pointer).
+      Offset `+20` was never written, so it read back 0 and the NULL
+      propagated forward into `applet+0x140`, surfacing several function
+      calls later as the crash actually being chased. Confirmed what
+      offset `+20` should be by continuing to trace forward: the value
+      written into `applet+0x140` later gets dereferenced and called on
+      vtable slot 18, which -- checked directly against the real
+      `AEEIDisplay.h`'s `INHERIT_IDisplay` macro -- is exactly
+      `SetClipRect(po, pRect)`, called with `pRect=NULL`. So context
+      offset `+20` is the current app's `IDisplay` pointer, sibling to
+      `IShell` at `+12`. `ModRuntime` gained `SetDisplayInstance()`.
+      **Bonus finding**: `IDisplayHle`'s vtable only had the first 13 of
+      `IDisplay`'s real slots built (an incorrect assumption from Phase 3
+      that that was the full pre-BREW-MP interface) -- extended it to
+      all 26 real slots per `AEEIDisplay.h` (through `SetPrefs`), stubbed
+      beyond the four with real behavior (`AddRef`/`Release`/`DrawText`/
+      `Update`), so slot-18 and beyond no longer read past the array.
+      **Also mapped a sixth static-base slot** the same session, offset
+      `0x14`: a real call site (`ddragonz.mod` offset `0x23b00`) calls it
+      with one string-pointer argument and immediately does
+      `add r1, r0, #1` on the result -- the classic `strlen(s) + 1`
+      buffer-sizing idiom, matching ANSI `strlen` exactly.
+      6 new tests total across `mod_runtime_test.cpp`
+      (`GetAppContextSlotReturnsDisplayInstanceAtConfirmedOffset`,
+      `StrlenReturnsLengthExcludingNullTerminator`,
+      `StrlenReturnsZeroForEmptyString`, plus the earlier increment's).
+      **Reran against the real game**: the tick callback now runs
+      measurably further with each fix -- 153 (before this round) → 229
+      (after the `IDisplay` context field) → 238 (after `STRLEN`) real
+      steps. The very next real call the trace already shows waiting
+      (right after `STRLEN` returns, at `ddragonz.mod` offset `0x23b18`)
+      is a **seventh** static-base slot, offset `0xe4` -- not caught by
+      the earlier whole-binary scan (a gap in that scan's own pattern-
+      matching window, worth revisiting) -- called with a string
+      pointer, a stack buffer, and a size constant `0x200`, shaped like
+      `strlcpy`/`strncpy`. Not yet implemented. Tracked as the next
+      concrete step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

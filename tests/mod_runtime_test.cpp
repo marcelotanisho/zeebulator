@@ -11,11 +11,13 @@ using zeebulator::ModRuntime;
 
 namespace {
 constexpr uint32_t kMemsetSlotOffset = 0x4;
+constexpr uint32_t kStrlenSlotOffset = 0x14;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
 constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
 constexpr uint32_t kAppContextShellOffset = 12;
+constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kTableAddress = 0x80280000;
 constexpr uint32_t kContextAddress = 0x80280200;
 constexpr uint32_t kHeapRegion = 0x80300000;
@@ -106,6 +108,19 @@ TEST(ModRuntime, GetAppContextSlotReturnsShellInstanceAtConfirmedOffset) {
   EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextShellOffset), kShellPtr);
 }
 
+TEST(ModRuntime, GetAppContextSlotReturnsDisplayInstanceAtConfirmedOffset) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  constexpr uint32_t kDisplayPtr = 0x80003000;
+  mod_runtime.SetDisplayInstance(kDisplayPtr);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+
+  uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
+  uint32_t context = hle.CallArmFunction(get_app_context_fn);
+  EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextDisplayOffset), kDisplayPtr);
+}
+
 TEST(ModRuntime, SetShellInstanceCanBeCalledAfterInstall) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
@@ -150,4 +165,34 @@ TEST(ModRuntime, MemsetFillsExactlyTheRequestedRangeAndReturnsDest) {
   }
   EXPECT_EQ(cpu.GetMemory().Read8(kDest - 1), 0xAA) << "wrote before the requested range";
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 10), 0xAA) << "wrote past the requested range";
+}
+
+TEST(ModRuntime, StrlenReturnsLengthExcludingNullTerminator) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strlen_fn = cpu.GetMemory().Read32(kTableAddress + kStrlenSlotOffset);
+
+  constexpr uint32_t kStr = 0x80300100;
+  const char* text = "hello";
+  for (size_t i = 0; text[i] != '\0'; ++i) {
+    cpu.GetMemory().Write8(kStr + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
+  }
+  cpu.GetMemory().Write8(kStr + 5, 0);
+
+  EXPECT_EQ(hle.CallArmFunction(strlen_fn, kStr), 5u);
+}
+
+TEST(ModRuntime, StrlenReturnsZeroForEmptyString) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strlen_fn = cpu.GetMemory().Read32(kTableAddress + kStrlenSlotOffset);
+
+  constexpr uint32_t kStr = 0x80300100;
+  cpu.GetMemory().Write8(kStr, 0);
+
+  EXPECT_EQ(hle.CallArmFunction(strlen_fn, kStr), 0u);
 }

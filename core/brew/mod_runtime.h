@@ -42,6 +42,15 @@ namespace zeebulator {
 // take an IShell parameter rely on internally. `SetShellInstance()`
 // supplies the real pointer this slot should expose.
 //
+// The same context struct has a second confirmed field, offset +20
+// (sibling to the IShell pointer at +12): a real call site
+// (`ddragonz.mod` offset 0x1b5e0) reads it and stores it directly into
+// a field inside the applet's own struct, which real code elsewhere
+// (offset 0x23a18) later dereferences and calls vtable slot 18 on with
+// `pRect=NULL` -- matching real `AEEIDisplay.h`'s `SetClipRect(po,
+// pRect)` at that exact slot index precisely. This field is the current
+// app's `IDisplay` pointer. `SetDisplayInstance()` supplies it.
+//
 // A fourth slot, offset 0xb0 (4 real call sites, far rarer than 0xc0),
 // is GETUPTIMEMS: called with no argument, twice, around a chunk of
 // per-tick work, with `second_result - first_result` used immediately
@@ -60,7 +69,14 @@ namespace zeebulator {
 // plain C library calls through this table, not just AEE/BREW-specific
 // ones.
 //
-// Only these five table slots are confirmed by real disassembly so
+// A sixth slot, offset 0x14, is STRLEN: a real call site
+// (`ddragonz.mod` offset 0x23b00) calls it with one argument (a string
+// pointer) and immediately does `add r1, r0, #1` on the return value --
+// the classic `strlen(s) + 1` idiom for computing a buffer size
+// including the null terminator, matching ANSI `size_t strlen(const
+// char *s)` exactly.
+//
+// Only these six table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -81,6 +97,11 @@ class ModRuntime {
   // before or after Install().
   void SetShellInstance(uint32_t shell_ptr);
 
+  // Sets the IDisplay object pointer the offset-0xc0 "get app context"
+  // slot should expose at the confirmed field offset (+20). Safe to call
+  // before or after Install().
+  void SetDisplayInstance(uint32_t display_ptr);
+
   // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot
   // returns. Deterministic and tick-driven (not a real wall-clock read)
   // to match how the rest of the emulator's timing works (see
@@ -96,6 +117,7 @@ class ModRuntime {
  private:
   void MallocImpl(IArmCore& core);
   void MemsetImpl(IArmCore& core);
+  void StrlenImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);
 
@@ -105,6 +127,7 @@ class ModRuntime {
   uint32_t heap_end_;
   uint32_t context_address_;
   uint32_t shell_ptr_ = 0;
+  uint32_t display_ptr_ = 0;
   uint32_t uptime_ms_ = 0;
 };
 
