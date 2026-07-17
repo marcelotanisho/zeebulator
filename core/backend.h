@@ -26,8 +26,15 @@ class Backend {
 
   virtual void PushVideoFrame(const void* framebuffer, int width, int height,
                                PixelFormat format) = 0;
-  virtual void PushAudioSamples(const int16_t* interleaved_stereo,
-                                 size_t frame_count) = 0;
+  // `sample_rate` travels with every push rather than being fixed
+  // per-Backend or negotiated once: real Double Dragon audio assets are
+  // uniformly 22050Hz (confirmed against the actual game data -- see
+  // TASKS.md Phase 6), but nothing about the interface should assume
+  // every title/asset shares one rate. The Mixer (core/audio/mixer.h)
+  // is the only thing that calls this today, and it always passes
+  // whatever rate its voices were actually recorded at.
+  virtual void PushAudioSamples(const int16_t* interleaved_stereo, size_t frame_count,
+                                 int sample_rate) = 0;
   virtual ZPadState PollInput() = 0;
 };
 

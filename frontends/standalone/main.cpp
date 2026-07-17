@@ -12,43 +12,19 @@
 #include <fstream>
 #include <vector>
 
+#include "core/audio/mixer.h"
 #include "core/brew/gl_hle.h"
 #include "core/brew/hle_runtime.h"
 #include "core/brew/idisplay.h"
 #include "core/brew/ishell.h"
+#include "core/brew/media_hle.h"
+#include "core/brew/virtual_filesystem.h"
 #include "core/cpu/arm_interpreter.h"
 #include "core/loader/mod.h"
+#include "frontends/standalone/sdl2_backend.h"
 #include "frontends/standalone/sdl2_gl_backend.h"
 #include "tests/fixtures/hello_brew/entry_offset.h"
 #include "tests/fixtures/hello_gl/entry_offset.h"
-
-namespace {
-
-class Sdl2Backend : public zeebulator::Backend {
- public:
-  Sdl2Backend(SDL_Renderer* renderer, int width, int height)
-      : renderer_(renderer),
-        texture_(SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565,
-                                    SDL_TEXTUREACCESS_STREAMING, width, height)) {}
-  ~Sdl2Backend() override { SDL_DestroyTexture(texture_); }
-
-  void PushVideoFrame(const void* framebuffer, int width, int height,
-                       zeebulator::PixelFormat format) override {
-    (void)format;  // IDisplayHle's framebuffer is always RGB565 for now.
-    SDL_UpdateTexture(texture_, nullptr, framebuffer, width * 2);
-    SDL_RenderClear(renderer_);
-    SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
-    SDL_RenderPresent(renderer_);
-  }
-  void PushAudioSamples(const int16_t*, size_t) override {}
-  zeebulator::ZPadState PollInput() override { return {}; }
-
- private:
-  SDL_Renderer* renderer_;
-  SDL_Texture* texture_;
-};
-
-}  // namespace
 
 int main(int argc, char** argv) {
   const char* fixture_path = argc > 1 ? argv[1] : HELLO_BREW_FIXTURE_PATH;
@@ -61,13 +37,16 @@ int main(int argc, char** argv) {
   std::vector<uint8_t> mod_data((std::istreambuf_iterator<char>(in)),
                                  std::istreambuf_iterator<char>());
 
-  if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     return 1;
   }
 
   constexpr int kWidth = 640;
   constexpr int kHeight = 480;  // Zeebo's native output resolution.
+  // Matches Mixer's fixed output rate below -- also the real sample rate
+  // of every actual Double Dragon audio asset (see TASKS.md Phase 6).
+  constexpr int kAudioSampleRate = 22050;
   SDL_Window* window =
       SDL_CreateWindow("Zeebulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                         kWidth, kHeight, SDL_WINDOW_SHOWN);
@@ -75,7 +54,7 @@ int main(int argc, char** argv) {
 
   zeebulator::ArmInterpreter cpu;
   zeebulator::HleRuntime hle(cpu, 0xF0000000, 0x10000);
-  Sdl2Backend backend(renderer, kWidth, kHeight);
+  zeebulator::Sdl2Backend backend(renderer, kWidth, kHeight, kAudioSampleRate);
   zeebulator::IDisplayHle display(backend, kWidth, kHeight);
 
   constexpr uint32_t kBase = 0x00100000;
@@ -190,12 +169,69 @@ int main(int argc, char** argv) {
       "Zeebulator: hello_gl booted -- second window should show a real "
       "red/green/blue triangle\n");
 
+  // --- Phase 6 audio demo -------------------------------------------
+  // Real IMedia HLE, driven directly (like the Phase 5 GL smoke-test
+  // increment, before hello_gl.bin existed to validate it against real
+  // compiled code) rather than through a compiled test app -- proves the
+  // WAV/MIDI decode -> IMedia HLE -> Mixer -> real SDL2 audio device path
+  // works end to end for both real target-game codecs. test_tone.wav and
+  // test_tune.mid are our own synthesized/composed content (see their
+  // READMEs), loaded into a VirtualFilesystem exactly the way a
+  // GGZ-backed one would be.
+  zeebulator::VirtualFilesystem audio_vfs;
+  auto load_fixture = [&](const char* path, const std::string& vfs_name) {
+    std::ifstream in(path, std::ios::binary);
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+    audio_vfs.AddFile(vfs_name, std::move(data));
+  };
+  load_fixture(TEST_TONE_FIXTURE_PATH, "test_tone.wav");
+  load_fixture(TEST_TUNE_FIXTURE_PATH, "test_tune.mid");
+
+  zeebulator::Mixer mixer(kAudioSampleRate);
+  constexpr uint32_t kMediaVtable = 0x80008000;
+  zeebulator::MediaHle media_hle(cpu.GetMemory(), hle, audio_vfs, mixer, /*object_region=*/
+                                  0x00092000);
+  media_hle.Build(kMediaVtable);
+  constexpr uint32_t kParmMediaData = 1;
+  uint32_t set_media_parm_fn = mem.Read32(kMediaVtable + 4 * 4);  // slot 4 = SetMediaParm
+  uint32_t play_fn = mem.Read32(kMediaVtable + 6 * 4);            // slot 6 = Play
+
+  // AEEMediaData { AEECLSID clsData; void *pData; uint32 dwSize; }
+  uint32_t scratch = 0x00093000;
+  auto play_media = [&](const std::string& vfs_name) {
+    uint32_t media_data_addr = scratch;
+    uint32_t name_addr = scratch + 0x100;
+    scratch += 0x200;
+    for (size_t i = 0; i < vfs_name.size(); ++i) {
+      mem.Write8(name_addr + static_cast<uint32_t>(i), static_cast<uint8_t>(vfs_name[i]));
+    }
+    mem.Write8(name_addr + static_cast<uint32_t>(vfs_name.size()), 0);
+    mem.Write32(media_data_addr + 0, 0);  // MMD_FILE_NAME
+    mem.Write32(media_data_addr + 4, name_addr);
+    mem.Write32(media_data_addr + 8, 0);
+
+    uint32_t media_obj = media_hle.CreateMediaObject();
+    hle.CallArmFunction(set_media_parm_fn, media_obj, kParmMediaData, media_data_addr, 0);
+    hle.CallArmFunction(play_fn, media_obj);
+  };
+  play_media("test_tone.wav");
+  play_media("test_tune.mid");
+
+  std::printf(
+      "Zeebulator: playing a real 440Hz test tone and a 4-note MIDI tune "
+      "through SDL2 audio\n");
+
   bool running = true;
   SDL_Event event;
   while (running) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) running = false;
     }
+    // One mixer tick per ~16ms frame -- see Mixer's class doc for why
+    // this simple per-tick pull (rather than a real-time audio callback
+    // thread) is an acceptable, documented simplification for now.
+    mixer.Mix(backend, static_cast<size_t>(kAudioSampleRate * 16 / 1000));
     SDL_Delay(16);
   }
 

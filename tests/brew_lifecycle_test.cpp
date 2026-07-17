@@ -39,7 +39,7 @@ class CapturingBackend : public Backend {
                        static_cast<const uint16_t*>(framebuffer) +
                            static_cast<size_t>(width) * height);
   }
-  void PushAudioSamples(const int16_t*, size_t) override {}
+  void PushAudioSamples(const int16_t*, size_t, int) override {}
   ZPadState PollInput() override { return {}; }
 
   int push_count = 0;

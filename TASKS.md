@@ -687,12 +687,163 @@ real title — the CPU's still-unimplemented multiply instruction.
 ## Phase 6 — Audio
 Exit criterion: target test game's audio plays back correctly.
 
-- [ ] PCM decode/playback path
-- [ ] IMA-ADPCM decoder
-- [ ] MIDI playback
-- [ ] MP3 decoder integration
-- [ ] Mixer + ring buffer feeding the Backend Abstraction Interface
-- [ ] Implement `IMedia`/`ISound` HLE wired to the above
+**Both codecs the real target game actually needs (PCM, MIDI) are done
+and verified against real Double Dragon assets; IMA-ADPCM/MP3 are
+deliberately deferred (see research below) — same relationship Phase
+5's graphics work had to the actual game's rendering.** Not yet done:
+driving any of this from real compiled ARM code (everything so far is
+verified via direct HLE calls and unit tests, mirroring Phase 5's early
+increments before `hello_gl.bin` existed) — a natural next step,
+not attempted yet.
+
+- [x] **Research: real `IMedia` interface + real target-game codec need —
+      see ARCHITECTURE.md §3.6 for full detail.** Found and read the real
+      `AEEMedia.h`/`AEEIMedia.h` (extracted from the same genuine BREW MP
+      SDK installer used in Phase 4/5 — this time via a full NSIS
+      extraction rather than a hand-picked file list, since the earlier
+      partial extraction hadn't pulled the media headers). Confirmed a
+      small 14-slot vtable, mostly a generic `SetMediaParm`/
+      `GetMediaParm` command interface rather than one slot per feature.
+      Also inspected Double Dragon's real `sound.ggz` directly (via
+      `zeebulator_ggz_inspector`, already built and real-file-verified in
+      Phase 2): 62 `.wav` (effects/voice) + 12 `.mid` (music), zero MP3.
+      Checked a real extracted `.wav`'s `fmt ` chunk: plain 16-bit PCM,
+      not IMA-ADPCM, on every file sampled. This directly reprioritizes
+      the rest of this phase — PCM and MIDI are what M1 actually needs;
+      ADPCM/MP3 are real BREW codecs (confirmed via the SDK's own
+      `ctsoundmgr.c` sample, which genuinely uses ADPCM-named assets) but
+      not required by the target title.
+- [x] PCM decode/playback path (real target-game need, confirmed above —
+      RIFF/WAVE container parsing; the audio data itself is already raw
+      PCM, no real "decoding" math needed). `core/loader/wav.{h,cpp}`
+      (`ParseWav`): handles 8-bit unsigned and 16-bit signed PCM,
+      mono/stereo, chunk word-alignment padding (a real `bext` chunk in
+      Double Dragon's own files exercises exactly this). Explicitly
+      rejects non-PCM format tags (e.g. IMA-ADPCM) rather than
+      mis-decoding them — same "reject, don't guess" philosophy as the
+      CPU interpreter's `UnimplementedInstruction`. Cross-verified two
+      ways: 7 synthetic-fixture unit tests (`tests/wav_test.cpp`), and a
+      throwaway harness run against a real extracted Double Dragon `.wav`
+      (13,411 real, correctly-shaped waveform samples at 22050Hz mono —
+      not committed, matches every other real-file verification pass in
+      this project).
+- [x] Mixer + ring buffer feeding the Backend Abstraction Interface —
+      `Backend::PushAudioSamples` has existed since Phase 0 and is
+      finally used starting this phase. `core/audio/mixer.{h,cpp}`
+      (`Mixer`): sample-accurate multi-voice mixing (mono duplicated to
+      stereo, overlapping voices summed and clamped rather than wrapped
+      on overflow, looping vs. one-shot voices, pause/resume preserving
+      position), pushed to `Backend::PushAudioSamples` — which gained a
+      `sample_rate` parameter as part of this work (previously
+      undocumented and uncalled by anything). Deliberately does not
+      resample — every real Double Dragon audio asset is uniformly
+      22050Hz (confirmed in the research above), so a fixed-rate mixer is
+      correct for the actual target game; a documented, revisit-if-needed
+      simplification, not an oversight. 9 unit tests
+      (`tests/mixer_test.cpp`).
+- [x] Implement `IMedia` HLE (14-slot vtable, real order verified above)
+      wired to the PCM path — `core/brew/media_hle.{h,cpp}`
+      (`MediaHle`). `SetMediaParm(MM_PARM_MEDIA_DATA, ...)` assigns a
+      virtual-filesystem-backed file (reusing Phase 4's GGZ-backed
+      `VirtualFilesystem`) and decodes it immediately via `ParseWav`,
+      matching real `IMedia`'s documented "SetMediaData puts IMedia in
+      Ready state" behavior; `Play`/`Stop`/`Pause`/`Resume` drive a
+      `Mixer` voice and update state accordingly; `GetState` also
+      notices when a non-looping voice finished naturally since the last
+      check. `MM_PARM_PLAY_REPEAT` maps repeat-forever (0) to the
+      Mixer's boolean loop (exact repeat counts > 1 aren't tracked yet).
+      `RegisterNotify` stores the callback but doesn't fire it yet —
+      firing it on real transitions needs a periodic "tick" hook this
+      project doesn't have wired into a real run loop yet (Phase 7/8
+      territory, not a fundamental gap). Follows the same shared-vtable
+      pattern as `FileHle` (many `IMedia` instances, one vtable).
+      10 unit tests (`tests/media_hle_test.cpp`).
+      **Wired into the standalone frontend with real SDL2 audio output,
+      verified with unambiguous, concrete proof, not just "it compiled"**:
+      split `Sdl2Backend` out to its own file
+      (`frontends/standalone/sdl2_backend.{h,cpp}`) and gave it a real
+      `SDL_AudioDevice` (`SDL_QueueAudio`-based); main.cpp builds a real
+      `IMedia` object over a small self-synthesized 440Hz test tone
+      (`tests/fixtures/test_tone.wav`, our own content, not a real game
+      asset) and drives `SetMediaParm`/`Play` on it, with the event loop
+      calling `Mixer::Mix` once per ~16ms tick. Needed
+      `libasound2-dev`/`libpulse-dev` as a one-time local dev-machine
+      install (same category of build-time-only dependency as Phase 3's
+      X11 headers and Phase 5's OpenGL headers — SDL2 silently compiled
+      out ALSA/PulseAudio/PipeWire/JACK support entirely despite the
+      CMake cache saying "Wanted: ON" for all of them, because the actual
+      dev headers weren't present at `FetchContent` build time; a real
+      PulseAudio server was running the whole time, the build just
+      couldn't link against it). After installing the headers and doing
+      a full clean SDL2 rebuild: ran the standalone frontend and checked
+      `pactl list sink-inputs` — found a real, live sink input
+      (`application.process.binary = "zeebulator_standalone"`,
+      matching PID, `Sample Specification: s16le 2ch 22050Hz`,
+      `Corked: no`) — concrete, external, OS-level proof that real audio
+      is actually flowing out through PulseAudio/PipeWire, the audio
+      equivalent of Phase 3/5's screenshot verification. 124/124 project
+      tests green throughout.
+- [x] MIDI playback (real target-game need, confirmed above — genuine
+      Standard MIDI Format 0 files, confirmed by parsing the real header
+      bytes directly, not assumed; needed a real SMF parser + a simple
+      synthesizer, not just a container parser like PCM).
+      `core/loader/midi.{h,cpp}`: `ParseMidi` handles format 0/1 (format
+      2 and SMPTE-timecode division are explicitly rejected, not
+      mis-parsed), variable-length-quantity delta-times, running status
+      (a real compression convention Standard MIDI Files use — repeated
+      same-type events omit the status byte), meta events (only Set
+      Tempo and End-of-Track are acted on; others are skipped by length),
+      and merges note-on/note-off pairs across all tracks into one
+      absolute-tick timeline, auto-closing any note never explicitly
+      turned off at the track's end. `RenderMidiToPcm` converts that into
+      PCM: a simple sine-wave synthesizer, one tone per note scaled by
+      velocity with a short linear fade in/out to avoid clicks between
+      notes, tick positions converted to real seconds via the file's
+      full tempo-change map (not just tempo at tick 0 — a real Double
+      Dragon track changes tempo repeatedly mid-file, confirmed below).
+      **Deliberately no instrument/timbre modeling** (every note sounds
+      the same sine tone regardless of MIDI program-change events, and
+      the percussion channel isn't treated specially) — a documented,
+      honest scope for a first correct-but-crude synthesizer, not a full
+      General MIDI implementation; revisit if the target game's music
+      turns out to need real instrument timbres to be recognizable.
+      Both codecs converge on the same `WavAudio` shape, so `MediaHle`
+      dispatches purely by file extension (`.wav` → `ParseWav`, `.mid`/
+      `.midi` → `ParseMidi` + `RenderMidiToPcm`) and everything
+      downstream (Mixer, playback state, `IMedia` HLE) is fully
+      codec-agnostic.
+      **Cross-verified against all three real Double Dragon `.mid` files
+      checked**, not just synthetic fixtures: `bgm_1_0.mid` → 1788 notes,
+      163 BPM, 47.5s; `bgm_2.mid` → 1811 notes, a real gradual tempo
+      ramp (82→87.4 BPM across the first few tempo-change events), 109s;
+      `bgm_9.mid` (the smallest file, 1034 bytes) → 110 notes, 3.96s —
+      all durations and note counts are exactly what you'd expect from
+      the respective file sizes, strong independent confirmation the
+      tempo-map/tick-to-seconds conversion is correct on real data, not
+      just hand-built test cases.
+      11 new unit tests (`tests/midi_test.cpp`) covering VLQ/running-
+      status parsing, chords, unclosed notes, explicit tempo changes, and
+      a zero-crossing-count sanity check that a max-velocity A4 note
+      actually renders audio near 440Hz. One real bug caught and fixed
+      *in the test suite itself* while writing these (not the parser):
+      an early version of the "unclosed note" test left a dangling
+      delta-time VLQ with no attached event — invalid MIDI, since a
+      delta-time must always be immediately followed by an event — which
+      the parser (correctly, per real running-status semantics) then
+      misinterpreted as a second bogus note; fixed by constructing that
+      test's track by hand instead of relying on the shared helper's
+      assumptions.
+      Also wired a second live demo into the standalone frontend
+      (`tests/fixtures/test_tune.mid`, our own tiny 4-note original
+      arpeggio) alongside the WAV tone, verified the same way — a real,
+      live `pactl` sink input from the running process. 10 new
+      `MediaHle` coverage assertions total across both codecs
+      (`tests/media_hle_test.cpp`). 136/136 project tests green.
+- [ ] IMA-ADPCM decoder — deferred, not needed by the target title (see
+      research above); revisit if a future title actually needs it
+- [ ] MP3 decoder integration — deferred, not needed by the target title
+      (see research above); MP3 patents have expired so there's no
+      licensing blocker whenever it does become needed
 
 ## Phase 7 — Input
 Exit criterion: target test game responds correctly to controller input.

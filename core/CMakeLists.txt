@@ -13,6 +13,12 @@ add_library(zeebulator_core STATIC
   loader/mif.h
   loader/mod.cpp
   loader/mod.h
+  loader/wav.cpp
+  loader/wav.h
+  loader/midi.cpp
+  loader/midi.h
+  audio/mixer.cpp
+  audio/mixer.h
   brew/hle_runtime.cpp
   brew/hle_runtime.h
   brew/interface_object.cpp
@@ -25,6 +31,8 @@ add_library(zeebulator_core STATIC
   brew/virtual_filesystem.h
   brew/file_hle.cpp
   brew/file_hle.h
+  brew/media_hle.cpp
+  brew/media_hle.h
   brew/gl_types.h
   brew/gl_backend.h
   brew/gl_hle.cpp

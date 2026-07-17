@@ -182,11 +182,38 @@ call.
   risk — see §10.
 
 ### 3.6 Audio Subsystem
-- Decodes PCM, IMA-ADPCM, MIDI, and MP3 — the codec set BREW/Zeebo games are
-  known to use. MP3 patents have expired; no licensing concern. Consider
-  `libsoundio`/a small internal mixer for the ring-buffer -> host callback
-  path, feeding the abstract backend
-  interface (§3.8) rather than any OS audio API directly.
+- **Real interface confirmed (Phase 6 research)**: the app-facing surface
+  is `IMedia` (`AEEIMedia.h`, extracted from the same genuine BREW MP SDK
+  installer already used for Phase 4/5's research — MSI/NSIS → full
+  extraction → `platform/media/inc/AEEMedia.h` + `AEEIMedia.h`) — a
+  small, 14-slot vtable (`AddRef, Release, QueryInterface`, then
+  `RegisterNotify, SetMediaParm, GetMediaParm, Play, Record, Stop, Seek,
+  Pause, Resume, GetTotalTime, GetState`), confirmed against the real
+  `INHERIT_IMedia`/`INHERIT_IQI` macros. Unlike `IDisplay`/`IFile`, almost
+  everything (assigning the media data source, volume, repeat count,
+  channel sharing, ...) goes through the generic `SetMediaParm`/
+  `GetMediaParm(nParamID, p1, p2)` pair rather than dedicated per-feature
+  slots — real Qualcomm sample source (`ctsoundmgr.c`, `AEEMediaUtil.c`,
+  research-only) confirms this pattern and that codec selection is
+  inferred from the file extension / MIME-sniffed content at
+  `ISHELL_CreateInstance` time, not chosen explicitly by the app.
+- **Real target-game codec need confirmed from Double Dragon's actual
+  `sound.ggz`, not assumed**: 62 `.wav` files (sound effects + voice) and
+  12 `.mid` files (background music) — zero MP3. Inspecting a real
+  extracted `.wav`'s `fmt ` chunk shows `audio_format=0x1` (plain 16-bit
+  PCM, mono, 22050Hz) on every file checked — **not IMA-ADPCM** despite
+  the real BREW SDK sample (`ctsoundmgr.c`) naming its own bundled test
+  assets `ADPCM_FILE_*`. Real `.mid` files are genuine Standard MIDI
+  Format 1 files. Consequence: PCM decode (trivial — these files barely
+  need "decoding", just RIFF/WAVE container parsing) and MIDI playback
+  are the two codecs that actually matter for M1; IMA-ADPCM and MP3
+  support are real, legitimate BREW codecs (the SDK sample genuinely uses
+  both) but not required by the target title — deprioritized, not
+  dropped, same category of decision as BAR-format parsing in Phase 2.
+- Mixer + ring buffer feeding the Backend Abstraction Interface (§3.8)
+  rather than any OS audio API directly — `Backend::PushAudioSamples`
+  already exists (defined since Phase 0) and is finally used starting
+  this phase.
 
 ### 3.7 Input Subsystem
 - Reimplements the Zeebo `IHID` extension, mapping the standard Z-Pad

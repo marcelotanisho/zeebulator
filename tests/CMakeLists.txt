@@ -23,6 +23,10 @@ add_executable(zeebulator_tests
   file_hle_test.cpp
   gl_hle_test.cpp
   gl_lifecycle_test.cpp
+  wav_test.cpp
+  mixer_test.cpp
+  media_hle_test.cpp
+  midi_test.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)
