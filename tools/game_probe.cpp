@@ -120,6 +120,30 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
   return result;
 }
 
+// Maps a subset of SDL keys to real BREW AVK-family key codes for
+// exploratory input testing. The exact AVK_* enum values aren't
+// confirmed against a real header this session -- what IS confirmed via
+// real disassembly (TASKS.md Phase 8) is that Double Dragon's own
+// HandleEvent treats wParam values in [0xe021, 0xe021+22] as key codes,
+// converting them to a bitmask via a jump table. This maps number keys
+// 0-9 to that range's first 10 offsets (0xe021..0xe02a) and arrow keys
+// to the next four (0xe02b..0xe02e), purely so real keypresses can be
+// tried against the running game and their effect (if any) observed --
+// not a claimed-correct real key mapping.
+uint32_t SdlKeyToAvk(SDL_Keycode key) {
+  constexpr uint32_t kAvkBase = 0xe021;
+  if (key >= SDLK_0 && key <= SDLK_9) {
+    return kAvkBase + static_cast<uint32_t>(key - SDLK_0);
+  }
+  switch (key) {
+    case SDLK_UP: return kAvkBase + 10;
+    case SDLK_DOWN: return kAvkBase + 11;
+    case SDLK_LEFT: return kAvkBase + 12;
+    case SDLK_RIGHT: return kAvkBase + 13;
+    default: return 0;
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -205,6 +229,8 @@ int main(int argc, char** argv) {
   uint32_t entry = kBase;
 
   const char* stage = "AEEMod_Load";
+  uint32_t applet_ptr = 0;
+  uint32_t handle_event_fn = 0;
   try {
     std::printf("Calling AEEMod_Load...\n");
     constexpr uint32_t kPpModAddr = 0x00090000;
@@ -228,9 +254,9 @@ int main(int argc, char** argv) {
     // is slot 2 of *its* vtable (AddRef=0, Release=1, HandleEvent=2, per
     // the real AEEAppGen.c reference source's IAppletVtbl init order).
     // Same double-indirection already used above for IModule::CreateInstance.
-    uint32_t applet_ptr = mem.Read32(kPpObjAddr);
+    applet_ptr = mem.Read32(kPpObjAddr);
     uint32_t applet_vtable = mem.Read32(applet_ptr);
-    uint32_t handle_event_fn = mem.Read32(applet_vtable + 2 * 4);
+    handle_event_fn = mem.Read32(applet_vtable + 2 * 4);
     if (create_result.wandered_outside_module || create_result.exceeded_step_budget ||
         !applet_ptr) {
       std::printf(
@@ -284,6 +310,28 @@ int main(int argc, char** argv) {
   while (running) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) running = false;
+      if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !event.key.repeat) {
+        uint32_t avk = SdlKeyToAvk(event.key.keysym.sym);
+        if (avk != 0 && applet_ptr != 0) {
+          // boolean HandleEvent(IApplet *po, AEEEvent evt, uint16 wParam, uint32 dwParam)
+          // evt 0x101/0x102 confirmed via real disassembly of Double
+          // Dragon's own event dispatcher -- see SdlKeyToAvk's comment
+          // and TASKS.md Phase 8.
+          constexpr uint32_t kEvtKeyDown = 0x101;
+          constexpr uint32_t kEvtKeyUp = 0x102;
+          uint32_t evt = (event.type == SDL_KEYDOWN) ? kEvtKeyDown : kEvtKeyUp;
+          try {
+            auto key_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size,
+                                                       handle_event_fn, applet_ptr, evt, avk, 0);
+            std::printf("HandleEvent(evt=0x%x, wParam=0x%x) returned %u%s\n", evt, avk,
+                        key_result.r0,
+                        key_result.wandered_outside_module ? " (wandered!)" : "");
+          } catch (const std::exception& e) {
+            std::printf("key event threw: %s (pc=0x%08x, offset 0x%08x from mod base)\n", e.what(),
+                        cpu.GetRegister(zeebulator::kPC), cpu.GetRegister(zeebulator::kPC) - kBase);
+          }
+        }
+      }
     }
     // Real BREW timers are one-shot -- real game code re-arms its own via
     // ISHELL_SetTimer from inside the callback (see core/brew/ishell.h).

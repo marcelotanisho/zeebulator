@@ -1252,14 +1252,42 @@ playable start-to-finish at full speed, standalone build.
       positive signal the reverse-engineered `RGBVAL` packing and
       `AEERect` layout assumptions are correct. This is the first frame
       all session with real, meaningful visual content.
-      Not yet investigated further this session: whether it stays stable
-      indefinitely, what the six drawn strings actually say (real glyph
-      rendering isn't implemented -- `DrawText` still draws placeholder
-      blocks, not real characters, so the yellow/black screen doesn't
-      show readable text yet), and input handling (`EVT_KEY` etc., real
-      BREW event codes `>0x100` per the app's own dispatcher, seen
-      earlier but not driven) are all open. Tracked as the next concrete
-      step.
+      **Confirmed stable over a longer window**: reran for 35 real
+      seconds (~2000 real frames) with `hle_trace` capped to the first
+      10 ticks for output volume -- no wander, no exception, no "did not
+      complete trustworthily" for the entire run.
+      **Wired up real keyboard input**: real disassembly of the app's
+      own `HandleEvent` dispatcher (`ddragonz.mod` offset `0xc640`)
+      shows real BREW event codes `evt==0x101`/`0x102` both calling a
+      helper (offset `0x1a3c4`) that does
+      `sub r0, wParam, #0xe021; cmp r0, #22; addls pc, pc, r0, lsl #2` --
+      a jump table converting `wParam` values in `[0xe021, 0xe021+22]`
+      into per-key bitmask flags (OR'd in for `0x101`, AND-cleared for
+      `0x102`) -- i.e. real key-down/key-up events, confirmed from the
+      binary itself even though the exact real `AVK_*` numeric mapping
+      wasn't independently verified against a header this session.
+      `tools/game_probe.cpp` now forwards real SDL key events into
+      `HandleEvent(applet, 0x101/0x102, wParam, 0)` -- number keys 0-9
+      map to the confirmed range's first 10 offsets, arrow keys to the
+      next four (a real, disassembly-grounded event *mechanism*, but an
+      exploratory, unconfirmed *specific key* mapping, documented as
+      such in code).
+      **Tested with real synthetic key events** (`python-xlib`'s XTest
+      extension, since the harness has no physical keyboard): number
+      key `1` and the up/down/left arrows all dispatch cleanly through
+      real app code and return `TRUE` (handled), matching the confirmed
+      bitmask-flag mechanism -- no visible change on screen yet since
+      `DrawText` still only draws placeholder blocks rather than real
+      glyphs, so distinguishing key-driven state changes visually isn't
+      possible yet either. The right-arrow-mapped code hit a **new**
+      gap (same "wandered into scratch memory, hit an invalid
+      instruction" shape as every other gap this session) -- caught
+      cleanly by `game_probe`'s own exception handling (prints and
+      continues) rather than crashing the tool, confirming that
+      safety net holds up under real, unplanned input too. Not yet
+      root-caused. Tracked as the next concrete step, alongside real
+      glyph rendering (needed to make any of this visually legible) and
+      further exploring which key codes map to which real game actions.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
