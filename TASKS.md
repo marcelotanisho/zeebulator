@@ -1456,6 +1456,107 @@ playable start-to-finish at full speed, standalone build.
         downstream than the current clean "returns failure" state.
         Tracked as the next concrete step, alongside decoding what
         "state = 3" actually displays.
+      **Broke the "0x01014bc4 is unidentified" dead end wide open**: the
+      Zeebo SDK package bundled in this repo
+      (`research/docs/sdk_installer_extract/ZeeboSDKPackage-1.2.4/
+      OpenGLES_Extension_1.5.3_...zip`) turned out to be a real,
+      unextracted MSI installer -- `7z x Installer.msi` pulled out its
+      embedded CAB, `cabextract` on that produced ~46 hashed-name files,
+      several of which are real Qualcomm C headers/DLLs. One of them
+      (`AEEGL.h`) contains, verbatim: `#define AEECLSID_GL 0x01014bc3`
+      and `#define AEECLSID_EGL 0x01014bc4` -- an exact match for both
+      literals `0x1d5b8` requires. Even better: this codebase already
+      has a complete, previously-tested `GlHle` (real `IGL`/`IEGL`
+      implementations, built in an earlier phase for a different purpose
+      and wired up directly rather than through `CreateInstance`) --
+      `tools/game_probe.cpp` now registers `GlHle::BuildGl`/`BuildEgl`'s
+      real objects as the `CreateInstance` answers for these two real
+      classes instead of generic scaffolds, and removed the now-
+      redundant direct `BuildGl`/`BuildEgl` calls further down.
+      **Found two more real, evidence-backed gaps this unlocked** (all
+      via the same trace-then-objdump technique, `trace=true` +
+      temporary PC-filtered gate prints, both fully reverted before
+      each commit):
+      - A missing static-base runtime-table slot, offset `0xe8`
+        (STRSTR): real disassembly of `0x1d5b8` shows
+        `eglQueryString(dpy, EGL_EXTENSIONS)`'s result fed straight into
+        this slot alongside a literal string read directly out of the
+        real file's bytes (`"EGL_QUALCOMM_COLOR_BUFFER"`, at file offset
+        `0x4fcc4`) -- the standard `strstr(exts, "SOME_EXT")` idiom.
+        Implemented as real `ModRuntime::StrstrImpl` (3 new tests:
+        finds-a-match, no-match, empty-needle). This only crashed
+        because `GlHle::EglQueryString` (slot 7 of `IEGL`) was a blind
+        `Stub` returning null -- implemented for real: returns an
+        honest (never-null, per the real EGL spec's guarantee) string
+        for `EGL_VENDOR`/`EGL_VERSION`/`EGL_CLIENT_APIS`, and an empty
+        string for `EGL_EXTENSIONS` since no extensions are implemented
+        (2 new tests: never-null across several query names, extensions
+        string is genuinely empty).
+      - The bitmap object `IDisplay::GetDeviceBitmap` returns gets a
+        second real call site (beyond the one in `0x1b5c0`): its slot 2
+        again, this time inside `0x1d5b8`, in the same
+        "QueryInterface"-shaped way (`obj, clsid=0x01001045, &ppo`) --
+        and this time the result is unconditionally `Release()`'d
+        moments later with no null check, so leaving the output pointer
+        unwritten (the generic scaffold's blind-`Stub` default) is a
+        real, confirmed crash (traced to a null-pointer `bx`), not a
+        hypothetical risk. Added `BuildStubObjectWithOverride` to
+        `scaffold_object.h/.cpp` (same generic-stub base, but one named
+        slot gets a real caller-supplied implementation) and used it to
+        give the bitmap's slot 2 a real (if still generic-downstream)
+        `CreateInstance`-shaped implementation: succeeds and writes a
+        fresh scaffold object for `clsid == 0x01001045`, fails
+        otherwise -- exactly mirroring `IShellHle::CreateInstanceImpl`'s
+        own discipline. 2 new tests (override slot runs the real
+        implementation; non-overridden slots stay generic).
+      **Verified against the real game**: with all of the above, the
+      *entire* graphics-init routine at `0x1b060` -- which turned out to
+      gate `applet+0x24` on **ten** sequential checks, not seven --
+      passes zero-crash from `AEEMod_Load` through `CreateInstance`
+      through `HandleEvent(EVT_APP_START)` and into the steady-state
+      tick loop, for the first time this project.
+      **Found and identified an eighth real, previously-unknown gate**
+      (same technique): `0x1b71c`, called from inside `0x1b060` after
+      the GL/EGL work, does `ISHELL_CreateInstance(shell,
+      ClsId=0x0106c411, ...)` then `IHID_GetConnectedDevices(pIHID,
+      nDeviceType=0x0106c3fd, ...)`. Both literals are real and
+      confirmed two different ways: they're named exactly
+      (`AEECLSID_HID`, `AEEUID_HID_Joystick_Device`) in the real BREW
+      SDK sample source already bundled in this repo
+      (`research/samples/conftest_source/conftest/GamepadMgr.c`), and
+      the real `AEEIHID.h` (found the same way as `AEEGL.h`, in a
+      *different* Zeebo SDK installer CAB under
+      `research/docs/sdk_installer_extract/sdk_installer_cab/`) confirms
+      `GetConnectedDevices` really is vtable slot 7
+      (`INHERIT_IQI`'s 3 slots + `CreateDevice`/`GetDeviceInfo`/
+      `GetNextConnectEvent`/`RegisterForConnectEvents`/
+      `GetConnectedDevices`). We have no real joystick to enumerate, so
+      `game_probe.cpp` registers a `BuildStubObjectWithOverride` scaffold
+      whose slot 7 honestly reports zero connected devices (true, not
+      guessed) -- confirmed via the gate-trace technique that this is
+      enough to clear this specific check. A second class the same
+      routine would need next (`0x01041207`, only reachable once a
+      device is found) is registered as a fully generic scaffold, since
+      it's unreached in practice (0 devices) but still needs to exist
+      so `CreateInstance` doesn't fail outright if that assumption is
+      ever wrong.
+      **Found a ninth gate, not yet identified**: `0x1c6b0` (called
+      right after the HID work) delegates to `0x22384`, which delegates
+      to `0x237c4`, which calls a method (vtable slot 2, args
+      `(object, name=<a literal string pointer>, flags=2)`) on the
+      object created for `ClsId 0x01001003` back in the `0x1b2fc` gate
+      -- our generic scaffold's blind `Stub` returns a null handle,
+      which the caller correctly detects and returns failure for (no
+      crash, just the same "insufficient" dead end one layer deeper).
+      This has the shape of a real resource/texture/font "load by name"
+      call, but unlike `AEECLSID_GL`/`EGL`/`HID` above, nothing in this
+      repo's bundled research materials (searched: extracted GLES SDK
+      cab, extracted plain sdk_installer_cab, the SDK headers reference)
+      names class `0x01001003` or corroborates a real shape for this
+      call -- implementing it further would mean guessing a return
+      value and its downstream consumption, not verifying one, so
+      deliberately stopped here rather than fabricate behavior. Tracked
+      as the next concrete step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

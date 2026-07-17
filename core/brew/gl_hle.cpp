@@ -28,6 +28,20 @@ void WriteEGLintIfNonNull(Memory& memory, uint32_t addr, EGLint value) {
   }
 }
 
+// Scratch space for eglQueryString's return value -- real callers only
+// ever read the string immediately after the call (confirmed via real
+// disassembly of Double Dragon, TASKS.md Phase 8: fed straight into a
+// strstr-shaped call), so a single reused buffer is enough.
+constexpr uint32_t kQueryStringBufferAddr = 0x8001B000;
+
+void WriteCString(Memory& memory, uint32_t addr, const char* text) {
+  size_t i = 0;
+  for (; text[i] != '\0'; ++i) {
+    memory.Write8(addr + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
+  }
+  memory.Write8(addr + static_cast<uint32_t>(i), 0);
+}
+
 }  // namespace
 
 GlHle::GlHle(GlBackend& backend) : backend_(backend) {}
@@ -49,6 +63,30 @@ void GlHle::EglInitialize(IArmCore& core) {
   WriteEGLintIfNonNull(core.GetMemory(), core.GetRegister(kR1), 1);
   WriteEGLintIfNonNull(core.GetMemory(), core.GetRegister(kR2), 0);
   core.SetRegister(kR0, kEglTrue);
+}
+
+void GlHle::EglQueryString(IArmCore& core) {
+  // const char *eglQueryString(EGLDisplay dpy, EGLint name) -- R0 is dpy
+  // (ignored), R1 is name. Real EGL 1.x values (confirmed against the
+  // real BREW OpenGL ES extension SDK headers, extracted from
+  // research/docs/sdk_installer_extract/ZeeboSDKPackage-1.2.4/
+  // OpenGLES_Extension_...zip -- see TASKS.md Phase 8).
+  constexpr EGLint kEglVendor = 0x3053;
+  constexpr EGLint kEglVersion = 0x3054;
+  constexpr EGLint kEglClientApis = 0x308D;
+  auto name = static_cast<EGLint>(core.GetRegister(kR1));
+  const char* value = "";  // EGL_EXTENSIONS and anything unrecognized: no
+                            // extensions implemented, an honest empty
+                            // string, never null (see class doc comment).
+  if (name == kEglVendor) {
+    value = "Zeebulator";
+  } else if (name == kEglVersion) {
+    value = "1.0";
+  } else if (name == kEglClientApis) {
+    value = "OpenGL_ES";
+  }
+  WriteCString(core.GetMemory(), kQueryStringBufferAddr, value);
+  core.SetRegister(kR0, kQueryStringBufferAddr);
 }
 
 void GlHle::EglTerminate(IArmCore& core) {
@@ -485,7 +523,7 @@ uint32_t GlHle::BuildEgl(Memory& memory, HleRuntime& hle, uint32_t vtable_addres
       [this](IArmCore& c) { EglGetDisplay(c); },             // 4  eglGetDisplay
       [this](IArmCore& c) { EglInitialize(c); },             // 5  eglInitialize
       [this](IArmCore& c) { EglTerminate(c); },              // 6  eglTerminate
-      Stub,                                                // 7  eglQueryString
+      [this](IArmCore& c) { EglQueryString(c); },            // 7  eglQueryString
       Stub,                                                // 8  eglGetProcAddress
       Stub,                                                // 9  eglGetConfigs
       [this](IArmCore& c) { EglChooseConfig(c); },           // 10 eglChooseConfig

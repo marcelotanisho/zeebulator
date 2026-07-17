@@ -102,7 +102,18 @@ namespace zeebulator {
 // pointers, no length -- matching `char *strcpy(char *dest, const char
 // *src)` exactly (copies through the null terminator, unbounded).
 //
-// Only these nine table slots are confirmed by real disassembly so
+// A tenth slot, offset 0xe8 (immediately after the bounded-copy slot),
+// is STRSTR: a real call site (`ddragonz.mod` offset 0x1d838 onward,
+// part of the same graphics-init routine documented in TASKS.md Phase
+// 8) calls `eglQueryString(dpy, EGL_EXTENSIONS)` then feeds the result
+// straight into this slot along with a literal extension-name string
+// (`"EGL_QUALCOMM_COLOR_BUFFER"`, read directly out of the real file's
+// bytes at that literal's address) with no null check in between --
+// exactly the standard `if (strstr(exts, "SOME_EXTENSION")) {...}`
+// idiom, matching ANSI `char *strstr(const char *haystack, const char
+// *needle)` precisely.
+//
+// Only these ten table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -147,6 +158,7 @@ class ModRuntime {
   void StrlenImpl(IArmCore& core);
   void StrcpyImpl(IArmCore& core);
   void BoundedStrcpyImpl(IArmCore& core);
+  void StrstrImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);
 

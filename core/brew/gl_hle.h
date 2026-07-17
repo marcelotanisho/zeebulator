@@ -30,7 +30,13 @@ namespace zeebulator {
 //
 // Implemented so far: the EGL lifecycle (get/init/terminate a display,
 // choose a config, create a window surface + context, make current, swap
-// buffers), a small set of core GL state/transform calls (clear,
+// buffers), eglQueryString (real disassembly of Double Dragon --
+// TASKS.md Phase 8 -- shows eglQueryString(EGL_EXTENSIONS)'s result fed
+// straight into a strstr-shaped call with no null check, so unlike most
+// other unimplemented slots this one can't stay a blind Stub; returns
+// honest values -- an empty extensions string, since none are
+// implemented -- never null, matching the real EGL spec's guarantee), a
+// small set of core GL state/transform calls (clear,
 // viewport, matrix stack, translate/rotate/scale, color), and vertex
 // arrays + draw calls (glVertexPointer/glColorPointer/glTexCoordPointer/
 // glNormalPointer, glEnableClientState/glDisableClientState,
@@ -78,6 +84,7 @@ class GlHle {
   void EglGetError(IArmCore& core);
   void EglGetDisplay(IArmCore& core);
   void EglInitialize(IArmCore& core);
+  void EglQueryString(IArmCore& core);
   void EglTerminate(IArmCore& core);
   void EglChooseConfig(IArmCore& core);
   void EglCreateWindowSurface(IArmCore& core);

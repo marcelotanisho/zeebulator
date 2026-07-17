@@ -24,4 +24,16 @@ namespace zeebulator {
 uint32_t BuildGenericStubObject(Memory& memory, HleRuntime& hle, uint32_t vtable_address,
                                  uint32_t object_address, size_t slot_count);
 
+// Same as BuildGenericStubObject, but with one slot replaced by a real
+// implementation. Real disassembly of Double Dragon (TASKS.md Phase 8)
+// shows the object IDisplay::GetDeviceBitmap returns being used for
+// exactly one meaningful thing -- a "QueryInterface"-shaped call at
+// slot 2 (`obj->vtable[2](obj, clsid, &ppo)`, same calling convention
+// as ISHELL_CreateInstance) -- while every other slot is unused. This
+// lets that one slot get a real (if still generic) implementation
+// without guessing the rest of the interface's shape.
+uint32_t BuildStubObjectWithOverride(Memory& memory, HleRuntime& hle, uint32_t vtable_address,
+                                      uint32_t object_address, size_t slot_count,
+                                      size_t override_slot, HleRuntime::HleFunction override_fn);
+
 }  // namespace zeebulator

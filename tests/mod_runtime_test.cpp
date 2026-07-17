@@ -15,6 +15,7 @@ constexpr uint32_t kMemsetSlotOffset = 0x4;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
 constexpr uint32_t kStrcpySlotOffset = 0x8;
 constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
+constexpr uint32_t kStrstrSlotOffset = 0xe8;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
@@ -283,4 +284,60 @@ TEST(ModRuntime, StrcpyCopiesThroughTheNullTerminatorAndReturnsDest) {
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 1), static_cast<uint8_t>(text[1]));
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 2), 0u) << "null terminator copied";
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 3), 0xAAu) << "didn't write past the terminator";
+}
+
+namespace {
+void WriteCString(zeebulator::Memory& memory, uint32_t addr, const char* text) {
+  size_t i = 0;
+  for (; text[i] != '\0'; ++i) {
+    memory.Write8(addr + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
+  }
+  memory.Write8(addr + static_cast<uint32_t>(i), 0);
+}
+}  // namespace
+
+TEST(ModRuntime, StrstrFindsANeedlePresentInTheHaystack) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strstr_fn = cpu.GetMemory().Read32(kTableAddress + kStrstrSlotOffset);
+
+  constexpr uint32_t kHaystack = 0x80300100;
+  constexpr uint32_t kNeedle = 0x80300200;
+  WriteCString(cpu.GetMemory(), kHaystack, "EGL_ARB_foo EGL_QUALCOMM_COLOR_BUFFER EGL_ARB_bar");
+  WriteCString(cpu.GetMemory(), kNeedle, "EGL_QUALCOMM_COLOR_BUFFER");
+
+  EXPECT_EQ(hle.CallArmFunction(strstr_fn, kHaystack, kNeedle), kHaystack + 12);
+}
+
+TEST(ModRuntime, StrstrReturnsNullWhenNeedleIsAbsent) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strstr_fn = cpu.GetMemory().Read32(kTableAddress + kStrstrSlotOffset);
+
+  constexpr uint32_t kHaystack = 0x80300100;
+  constexpr uint32_t kNeedle = 0x80300200;
+  WriteCString(cpu.GetMemory(), kHaystack, "");  // real eglQueryString never returns null, but
+                                                  // may return an empty extensions string
+  WriteCString(cpu.GetMemory(), kNeedle, "EGL_QUALCOMM_COLOR_BUFFER");
+
+  EXPECT_EQ(hle.CallArmFunction(strstr_fn, kHaystack, kNeedle), 0u);
+}
+
+TEST(ModRuntime, StrstrWithEmptyNeedleReturnsHaystack) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strstr_fn = cpu.GetMemory().Read32(kTableAddress + kStrstrSlotOffset);
+
+  constexpr uint32_t kHaystack = 0x80300100;
+  constexpr uint32_t kNeedle = 0x80300200;
+  WriteCString(cpu.GetMemory(), kHaystack, "anything");
+  WriteCString(cpu.GetMemory(), kNeedle, "");
+
+  EXPECT_EQ(hle.CallArmFunction(strstr_fn, kHaystack, kNeedle), kHaystack);
 }

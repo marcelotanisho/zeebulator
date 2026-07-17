@@ -13,6 +13,7 @@ constexpr uint32_t kMemsetSlotOffset = 0x4;
 constexpr uint32_t kStrcpySlotOffset = 0x8;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
 constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
+constexpr uint32_t kStrstrSlotOffset = 0xe8;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
@@ -108,6 +109,35 @@ void ModRuntime::BoundedStrcpyImpl(IArmCore& core) {
   core.SetRegister(kR0, dest);
 }
 
+void ModRuntime::StrstrImpl(IArmCore& core) {
+  // char *strstr(const char *haystack, const char *needle)
+  uint32_t haystack = core.GetRegister(kR0);
+  uint32_t needle = core.GetRegister(kR1);
+  uint32_t needle_len = 0;
+  while (memory_.Read8(needle + needle_len) != 0) ++needle_len;
+  if (needle_len == 0) {
+    core.SetRegister(kR0, haystack);
+    return;
+  }
+  for (uint32_t i = 0;; ++i) {
+    if (memory_.Read8(haystack + i) == 0) {
+      core.SetRegister(kR0, 0);
+      return;
+    }
+    bool match = true;
+    for (uint32_t j = 0; j < needle_len; ++j) {
+      if (memory_.Read8(haystack + i + j) != memory_.Read8(needle + j)) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      core.SetRegister(kR0, haystack + i);
+      return;
+    }
+  }
+}
+
 void ModRuntime::GetAppContextImpl(IArmCore& core) {
   // Written fresh on every call rather than once in Install() so this
   // works regardless of whether SetShellInstance() is called before or
@@ -131,11 +161,13 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t get_uptime_ms_fn = hle_.Register([this](IArmCore& core) { GetUpTimeMsImpl(core); });
   uint32_t get_app_context_fn = hle_.Register([this](IArmCore& core) { GetAppContextImpl(core); });
   uint32_t bounded_strcpy_fn = hle_.Register([this](IArmCore& core) { BoundedStrcpyImpl(core); });
+  uint32_t strstr_fn = hle_.Register([this](IArmCore& core) { StrstrImpl(core); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
   memory_.Write32(table_address + kStrlenSlotOffset, strlen_fn);
   memory_.Write32(table_address + kStrcpySlotOffset, strcpy_fn);
   memory_.Write32(table_address + kBoundedStrcpySlotOffset, bounded_strcpy_fn);
+  memory_.Write32(table_address + kStrstrSlotOffset, strstr_fn);
   memory_.Write32(table_address + kMallocSlotOffset, malloc_fn);
   memory_.Write32(table_address + kFreeSlotOffset, free_fn);
   memory_.Write32(table_address + kGetUpTimeMsSlotOffset, get_uptime_ms_fn);

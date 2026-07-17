@@ -216,9 +216,27 @@ int main(int argc, char** argv) {
   // Same real init routine also calls IDisplay::GetDeviceBitmap and
   // immediately dereferences the result's vtable -- another generic
   // scaffold, since the real IBitmap-shaped interface isn't identified
-  // either.
-  uint32_t device_bitmap_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x8000E000, /*object=*/0x8000F000, /*slot_count=*/20);
+  // either. Real disassembly of a second, deeper call site (0x1d5b8)
+  // shows the returned bitmap's slot 2 gets called in a
+  // "QueryInterface"-shaped way (obj, clsid=0x01001045, &ppo) and the
+  // result immediately Release()'d if null -- so unlike the other
+  // scaffolds so far, this one slot needs a real (if still generic)
+  // implementation, not a blind Stub.
+  uint32_t unknown_0x01001045_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80018000, /*object=*/0x80019000, /*slot_count=*/20);
+  uint32_t device_bitmap_obj = zeebulator::BuildStubObjectWithOverride(
+      cpu.GetMemory(), hle, /*vtable=*/0x8000E000, /*object=*/0x8000F000, /*slot_count=*/20,
+      /*override_slot=*/2,
+      [&cpu, unknown_0x01001045_obj](zeebulator::IArmCore& core) {
+        uint32_t requested_cls = core.GetRegister(zeebulator::kR1);
+        uint32_t ppo = core.GetRegister(zeebulator::kR2);
+        if (requested_cls == 0x01001045) {
+          cpu.GetMemory().Write32(ppo, unknown_0x01001045_obj);
+          core.SetRegister(zeebulator::kR0, 0);
+        } else {
+          core.SetRegister(zeebulator::kR0, 1);
+        }
+      });
   display.SetDeviceBitmapInstance(device_bitmap_obj);
   // Two more unidentified real BREW classes a later init routine requires
   // (found by the same technique: real disassembly of 0x1b2fc showed two
@@ -238,13 +256,53 @@ int main(int argc, char** argv) {
   // reference (0x1d970/0x1d974), not assumed from the nearby-looking
   // 0x0100100x classes above (a first attempt reused those by mistake
   // and was caught because the resulting crash's real disassembly showed
-  // different literal values at those addresses).
-  uint32_t unknown_0x01014bc3_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80014000, /*object=*/0x80015000, /*slot_count=*/40);
-  shell_hle.RegisterInstance(0x01014bc3, unknown_0x01014bc3_obj);
-  uint32_t unknown_0x01014bc4_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80016000, /*object=*/0x80017000, /*slot_count=*/40);
-  shell_hle.RegisterInstance(0x01014bc4, unknown_0x01014bc4_obj);
+  // different literal values at those addresses). These turned out to be
+  // real, already-implemented classes: extracted the real BREW OpenGL ES
+  // extension SDK (`research/docs/sdk_installer_extract/ZeeboSDKPackage-1.2.4/
+  // OpenGLES_Extension_...zip`, an MSI -- unpacked its embedded cabinet
+  // with `7z`/`cabextract`) and found its real `AEEGL.h`: `#define
+  // AEECLSID_GL 0x01014bc3` / `#define AEECLSID_EGL 0x01014bc4`, exactly
+  // matching. `GlHle` (built in an earlier phase, previously wired up
+  // directly without going through `CreateInstance`) already implements
+  // both real interfaces, so those replace the generic scaffolds here.
+  uint32_t gl_obj = gl_hle.BuildGl(cpu.GetMemory(), hle, /*vtable=*/0x80007000, /*object=*/0x80008000);
+  shell_hle.RegisterInstance(/*AEECLSID_GL=*/0x01014bc3, gl_obj);
+  uint32_t egl_obj = gl_hle.BuildEgl(cpu.GetMemory(), hle, /*vtable=*/0x80009000, /*object=*/0x8000A000);
+  shell_hle.RegisterInstance(/*AEECLSID_EGL=*/0x01014bc4, egl_obj);
+  // A still-deeper gate (0x1b71c, a joystick/gamepad-init routine gating
+  // the same "memory insufficient" state) calls
+  // ISHELL_CreateInstance(shell, ClsId=0x0106c411, ...) then
+  // IHID_GetConnectedDevices(pIHID, AEEUID_HID_Joystick_Device, ...) --
+  // both literals confirmed for real: 0x0106c411 = AEECLSID_HID and
+  // 0x0106c3fd = AEEUID_HID_Joystick_Device both appear, named exactly,
+  // in the real BREW SDK sample source bundled in this repo
+  // (research/samples/conftest_source/conftest/GamepadMgr.c and the
+  // extracted AEEIHID.h under research/docs/sdk_installer_extract/
+  // sdk_installer_cab/), which also confirms GetConnectedDevices is real
+  // vtable slot 7 (INHERIT_IQI's 3 slots + CreateDevice/GetDeviceInfo/
+  // GetNextConnectEvent/RegisterForConnectEvents/GetConnectedDevices).
+  // We have no real joystick hardware to enumerate, so honestly
+  // reporting zero connected devices (not a guess -- it's the true
+  // answer here) is enough to satisfy this gate.
+  uint32_t hid_obj = zeebulator::BuildStubObjectWithOverride(
+      cpu.GetMemory(), hle, /*vtable=*/0x8001C000, /*object=*/0x8001D000, /*slot_count=*/10,
+      /*override_slot=*/7,
+      [](zeebulator::IArmCore& core) {
+        // AEEResult GetConnectedDevices(IHID*, int nDeviceType,
+        //   int *pnDevHandles, int pnDevHandlesLen, int *pnDevHandlesLenReq)
+        uint32_t num_handles_req_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
+        if (num_handles_req_addr != 0) {
+          core.GetMemory().Write32(num_handles_req_addr, 0);
+        }
+        core.SetRegister(zeebulator::kR0, 0);  // AEE_SUCCESS
+      });
+  shell_hle.RegisterInstance(/*AEECLSID_HID=*/0x0106c411, hid_obj);
+  // A second class this same routine requires next, if a device were
+  // found -- not yet identified (only reachable with >=1 connected
+  // joystick, which we don't have), so a generic scaffold covers it.
+  uint32_t unknown_0x01041207_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x8001E000, /*object=*/0x8001F000, /*slot_count=*/20);
+  shell_hle.RegisterInstance(0x01041207, unknown_0x01041207_obj);
   // Real code fetches "the current app's IShell"/"IDisplay" from an
   // ambient context (the static-base table's offset-0xc0 slot) in many
   // places, not just via the pIShell argument explicitly passed to
@@ -253,8 +311,6 @@ int main(int argc, char** argv) {
   mod_runtime.SetDisplayInstance(display_obj);
   file_hle.Build(/*file_mgr_vtable=*/0x80004000, /*file_mgr_object=*/0x80005000,
                   /*file_vtable=*/0x80006000);
-  gl_hle.BuildGl(cpu.GetMemory(), hle, /*vtable=*/0x80007000, /*object=*/0x80008000);
-  gl_hle.BuildEgl(cpu.GetMemory(), hle, /*vtable=*/0x80009000, /*object=*/0x8000A000);
   media_hle.Build(/*vtable=*/0x8000B000);
 
   auto& mem = cpu.GetMemory();

@@ -321,6 +321,19 @@ TEST(GlHle, EglGetErrorReturnsSuccessSentinel) {
   EXPECT_EQ(f.hle.CallArmFunction(f.EglSlot(3)), 0x3000u);
 }
 
+TEST(GlHle, EglQueryStringNeverReturnsNull) {
+  Fixture f;
+  for (uint32_t name : {0x3053u, 0x3054u, 0x3055u, 0x308Du, 0xDEADu}) {
+    EXPECT_NE(f.hle.CallArmFunction(f.EglSlot(7), 0, name), 0u) << "name " << name;
+  }
+}
+
+TEST(GlHle, EglQueryStringExtensionsIsEmptySinceNoneAreImplemented) {
+  Fixture f;
+  uint32_t addr = f.hle.CallArmFunction(f.EglSlot(7), 0, /*EGL_EXTENSIONS=*/0x3055);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(addr), 0u) << "empty string: first byte is the terminator";
+}
+
 TEST(GlHle, DrawArraysGathersByteVerticesAndNormalizesUnsignedByteColors) {
   Fixture f;
   uint32_t vertex_addr = kScratch + 0x200;
