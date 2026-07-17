@@ -20,6 +20,7 @@
 #include "core/brew/idisplay.h"
 #include "core/brew/ishell.h"
 #include "core/brew/media_hle.h"
+#include "core/brew/mod_runtime.h"
 #include "core/brew/virtual_filesystem.h"
 #include "core/cpu/arm_interpreter.h"
 #include "core/loader/ggz.h"
@@ -149,6 +150,13 @@ int main(int argc, char** argv) {
   zeebulator::LoadMod(cpu, mod_data, kBase);
   auto mod_size = static_cast<uint32_t>(mod_data.size());
 
+  // Real compiled .mod code (ARM RVCT ROPI convention) expects a
+  // "static base" pointer at kBase-4 -- see core/brew/mod_runtime.h and
+  // TASKS.md Phase 8 for how this was found via real disassembly.
+  zeebulator::ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
+                                      /*heap_size=*/0x00100000);
+  mod_runtime.Install(kBase, /*table_address=*/0x80280000);
+
   uint32_t shell =
       zeebulator::BuildIShell(cpu.GetMemory(), hle, /*vtable=*/0x80000000, /*object=*/0x80001000);
   uint32_t display_obj =
@@ -197,7 +205,10 @@ int main(int argc, char** argv) {
     if (create_result.wandered_outside_module || create_result.exceeded_step_budget ||
         !handle_event_fn) {
       std::printf(
-          "CreateInstance did not produce a trustworthy HandleEvent pointer -- stopping.\n");
+          "CreateInstance did not produce a trustworthy HandleEvent pointer -- stopping. "
+          "(returned %u, *ppObj=0x%08x, wandered=%d, exceeded=%d)\n",
+          create_result.r0, handle_event_fn, create_result.wandered_outside_module,
+          create_result.exceeded_step_budget);
       return 1;
     }
     std::printf("CreateInstance OK, HandleEvent=0x%08x\n", handle_event_fn);

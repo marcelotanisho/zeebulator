@@ -947,6 +947,42 @@ playable start-to-finish at full speed, standalone build.
       segment at `moduleBase - 4`, per the real ROPI convention — this is a
       loader/runtime-support gap, not an HLE API gap, so it's tracked here
       rather than under a specific interface.
+      **Static-base fix implemented**: `core/brew/mod_runtime.{h,cpp}`
+      (`ModRuntime`). Confirmed the exact table layout needed by reading
+      the real bundled SDK reference source `AEEModGen.c` (found under
+      `research/docs/sdk_installer_extract/`): `AEEMod_Load` calls the
+      standard helper `AEEStaticMod_New(sizeof(AEEMod), pIShell, ph,
+      ppMod, NULL, NULL)`, which does
+      `MALLOC(nSize + sizeof(IModuleVtbl))` — and `IModuleVtbl` is exactly
+      4 function pointers (`AddRef`/`Release`/`CreateInstance`/
+      `FreeResources`, 16 bytes), matching the disassembly's `add r0, r5,
+      #16` immediately before the indirect call through table offset
+      `0x68`. Cross-checked the PC-relative literal at file offset
+      `0x220c` in the real `ddragonz.mod` directly (`r0 = pc(0x2188) +
+      0xffffde78 = 0x00000000`), confirming the computed address is
+      exactly the module's own load base — i.e. the table pointer really
+      does live at `moduleBase - 4` for any load address, as the ROPI
+      convention requires. `ModRuntime::Install()` writes a table pointer
+      there and populates only that one confirmed slot (offset `0x68`)
+      with an HLE trap implementing a simple bump-allocator `MALLOC`; all
+      other table offsets remain intentionally unmapped (unconfirmed).
+      5 new tests (`tests/mod_runtime_test.cpp`): table pointer placement,
+      a real allocation call through the HLE trap, non-overlapping
+      successive allocations, 4-byte alignment, and out-of-heap-space
+      returning NULL.
+      **Verified against the real game**: reran `zeebulator_game_probe`
+      against the real `ddragonz.mod`/`data.ggz`/`sound.ggz`.
+      `AEEMod_Load` now succeeds *legitimately* — no
+      wandered-outside-module warning, a real module pointer
+      (`0x80300000`, the heap's first real allocation) rather than the
+      old false-positive `0x00000001`. Execution now reaches
+      `IModule::CreateInstance(ClsId=274754)` and runs real, in-bounds
+      module code to completion, but that call itself returns a genuine
+      `EFAILED` (1) without writing an object pointer — a new, different,
+      and deeper real gap than the loader issue this fix closes. Not yet
+      investigated (would need disassembling `CreateInstance`'s real
+      body, the same way `AEEMod_Load`'s was): tracked as the next concrete
+      step, not the same one above anymore.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

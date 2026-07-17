@@ -27,6 +27,7 @@ add_executable(zeebulator_tests
   mixer_test.cpp
   media_hle_test.cpp
   midi_test.cpp
+  mod_runtime_test.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)

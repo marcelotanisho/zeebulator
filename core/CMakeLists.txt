@@ -33,6 +33,8 @@ add_library(zeebulator_core STATIC
   brew/file_hle.h
   brew/media_hle.cpp
   brew/media_hle.h
+  brew/mod_runtime.cpp
+  brew/mod_runtime.h
   brew/gl_types.h
   brew/gl_backend.h
   brew/gl_hle.cpp
