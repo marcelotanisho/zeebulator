@@ -1306,10 +1306,36 @@ playable start-to-finish at full speed, standalone build.
       letter, meaning the six real HUD strings likely use lowercase
       and/or punctuation the current font doesn't cover yet. Expanding
       the font's coverage (lowercase, common punctuation) would likely
-      make the real text legible; not done this pass -- tracked as the
-      next concrete step, alongside root-causing the new key-input gap
-      and further exploring which key codes map to which real game
-      actions.
+      make the real text legible; not done this pass.
+      **Root-caused the key-input gap**: traced the right-arrow-mapped
+      code path with full instruction tracing and found **two** more
+      real static-base slots, both hit only by that specific jump-table
+      branch (not the up/down/left/digit paths already tested clean):
+        - Offset `0x0` (the table's very first word, never read by
+          anything up to this point) is **MEMCPY** -- a real call site
+          (`ddragonz.mod` offset `0x223b4`) reads it with a bare
+          `ldr r3, [r0]` (no displacement) and calls `(dest, src, n=36)`,
+          sitting naturally right before `MEMSET` at offset `0x4`.
+        - Offset `0x8` is **STRCPY** -- the same offset flagged as
+          "strcpy-shaped but unconfirmed" several rounds ago. A real
+          call site (`ddragonz.mod` offset `0x1a3e0` onward) passes just
+          `(dest, src)`, no length, matching unbounded
+          `char *strcpy(char*, const char*)` exactly.
+      Both implemented in `ModRuntime` (`MemcpyImpl`/`StrcpyImpl`) with
+      2 new tests each behavior confirms (exact-range copy, stops at the
+      null terminator, returns `dest`).
+      **Reran against the real game**: sent all 14 mapped keys (4 arrows
+      + digits 0-9, 28 key-down/key-up events total) -- every single one
+      now dispatches cleanly through real app code with zero exceptions
+      and zero wandering. The key-input path is fully clean for the
+      first time. Static-base table slots confirmed so far: `0x0`
+      (MEMCPY), `0x4` (MEMSET), `0x8` (STRCPY), `0x14` (STRLEN), `0x68`
+      (MALLOC), `0x6c` (FREE), `0xb0` (GETUPTIMEMS), `0xc0`
+      (GETAPPCONTEXT), `0xe4` (bounded copy) -- nine confirmed slots
+      total. Tracked as the next concrete step: expanding `font5x7` for
+      legible real text, and continuing to exercise more of the game's
+      real logic (deeper ticks, more key combinations, sound) to see
+      what the next gap turns out to be.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

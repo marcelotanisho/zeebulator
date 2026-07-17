@@ -10,8 +10,10 @@ using zeebulator::HleRuntime;
 using zeebulator::ModRuntime;
 
 namespace {
+constexpr uint32_t kMemcpySlotOffset = 0x0;
 constexpr uint32_t kMemsetSlotOffset = 0x4;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
+constexpr uint32_t kStrcpySlotOffset = 0x8;
 constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
@@ -236,4 +238,49 @@ TEST(ModRuntime, BoundedStrcpyNeverExceedsCap) {
   hle.CallArmFunction(bounded_strcpy_fn, kSrc, /*n=*/10, kDest, /*cap=*/1);
   EXPECT_EQ(cpu.GetMemory().Read8(kDest), 0xAB);
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 1), 0x99) << "copied past the cap";
+}
+
+TEST(ModRuntime, MemcpyCopiesExactlyTheRequestedRangeAndReturnsDest) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t memcpy_fn = cpu.GetMemory().Read32(kTableAddress + kMemcpySlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  constexpr uint32_t kDest = 0x80300200;
+  for (uint32_t i = 0; i < 4; ++i) {
+    cpu.GetMemory().Write8(kSrc + i, static_cast<uint8_t>(0x10 + i));
+  }
+  cpu.GetMemory().Write8(kDest - 1, 0xAA);  // sentinel just before the range
+  cpu.GetMemory().Write8(kDest + 4, 0xAA);  // sentinel just after the range
+
+  EXPECT_EQ(hle.CallArmFunction(memcpy_fn, kDest, kSrc, /*n=*/4), kDest);
+  for (uint32_t i = 0; i < 4; ++i) {
+    EXPECT_EQ(cpu.GetMemory().Read8(kDest + i), static_cast<uint8_t>(0x10 + i)) << "byte " << i;
+  }
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest - 1), 0xAA) << "wrote before the requested range";
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 4), 0xAA) << "wrote past the requested range";
+}
+
+TEST(ModRuntime, StrcpyCopiesThroughTheNullTerminatorAndReturnsDest) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strcpy_fn = cpu.GetMemory().Read32(kTableAddress + kStrcpySlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  constexpr uint32_t kDest = 0x80300200;
+  const char* text = "hi";
+  cpu.GetMemory().Write8(kSrc + 0, 'h');
+  cpu.GetMemory().Write8(kSrc + 1, 'i');
+  cpu.GetMemory().Write8(kSrc + 2, 0);
+  cpu.GetMemory().Write8(kDest + 3, 0xAA);  // sentinel just past the null terminator
+
+  EXPECT_EQ(hle.CallArmFunction(strcpy_fn, kDest, kSrc), kDest);
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 0), static_cast<uint8_t>(text[0]));
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 1), static_cast<uint8_t>(text[1]));
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 2), 0u) << "null terminator copied";
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 3), 0xAAu) << "didn't write past the terminator";
 }

@@ -87,7 +87,22 @@ namespace zeebulator {
 // the calling convention alone, so it's implemented as exactly that:
 // `n = min(strlen_plus_one, cap); memcpy(dest, src, n)`.
 //
-// Only these seven table slots are confirmed by real disassembly so
+// An eighth slot, offset 0x0 (the table's very first word), is MEMCPY:
+// found while tracing a real key-input event (evt 0x101, TASKS.md Phase
+// 8) -- a real call site (`ddragonz.mod` offset 0x223b4) reads offset 0
+// specifically (`ldr r3, [r0]`, no displacement) and calls it with
+// `(dest, src, n=36)`, the classic `memcpy(dest, src, n)` shape,
+// matching MEMSET's placement at the very next slot (0x4).
+//
+// A ninth slot, offset 0x8, is STRCPY: also found while tracing a real
+// key-input event (a different jump-table branch than the one that
+// found MEMCPY -- see TASKS.md Phase 8). A real call site
+// (`ddragonz.mod` offset 0x1a3e0 onward, tail-called `ldr r2,[r0,#8]`
+// off the same table) passes just `(dest=r5+45, src=r9)` -- two
+// pointers, no length -- matching `char *strcpy(char *dest, const char
+// *src)` exactly (copies through the null terminator, unbounded).
+//
+// Only these nine table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -127,8 +142,10 @@ class ModRuntime {
 
  private:
   void MallocImpl(IArmCore& core);
+  void MemcpyImpl(IArmCore& core);
   void MemsetImpl(IArmCore& core);
   void StrlenImpl(IArmCore& core);
+  void StrcpyImpl(IArmCore& core);
   void BoundedStrcpyImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);

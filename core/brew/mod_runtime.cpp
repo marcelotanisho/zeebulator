@@ -8,7 +8,9 @@ namespace {
 // Offsets within the static-base table where real disassembly (see
 // mod_runtime.h) shows the MALLOC/FREE/GetAppContext function pointers
 // living.
+constexpr uint32_t kMemcpySlotOffset = 0x0;
 constexpr uint32_t kMemsetSlotOffset = 0x4;
+constexpr uint32_t kStrcpySlotOffset = 0x8;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
 constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
 constexpr uint32_t kMallocSlotOffset = 0x68;
@@ -45,6 +47,17 @@ void ModRuntime::MallocImpl(IArmCore& core) {
   core.SetRegister(kR0, result);
 }
 
+void ModRuntime::MemcpyImpl(IArmCore& core) {
+  // void *memcpy(void *dest, const void *src, size_t n)
+  uint32_t dest = core.GetRegister(kR0);
+  uint32_t src = core.GetRegister(kR1);
+  uint32_t count = core.GetRegister(kR2);
+  for (uint32_t i = 0; i < count; ++i) {
+    memory_.Write8(dest + i, memory_.Read8(src + i));
+  }
+  core.SetRegister(kR0, dest);  // memcpy returns its first argument
+}
+
 void ModRuntime::MemsetImpl(IArmCore& core) {
   // void *memset(void *s, int c, size_t n)
   uint32_t dest = core.GetRegister(kR0);
@@ -64,6 +77,20 @@ void ModRuntime::StrlenImpl(IArmCore& core) {
     ++len;
   }
   core.SetRegister(kR0, len);
+}
+
+void ModRuntime::StrcpyImpl(IArmCore& core) {
+  // char *strcpy(char *dest, const char *src)
+  uint32_t dest = core.GetRegister(kR0);
+  uint32_t src = core.GetRegister(kR1);
+  uint32_t i = 0;
+  for (;;) {
+    uint8_t byte = memory_.Read8(src + i);
+    memory_.Write8(dest + i, byte);
+    if (byte == 0) break;
+    ++i;
+  }
+  core.SetRegister(kR0, dest);  // strcpy returns its first argument
 }
 
 void ModRuntime::BoundedStrcpyImpl(IArmCore& core) {
@@ -95,15 +122,19 @@ void ModRuntime::GetUpTimeMsImpl(IArmCore& core) { core.SetRegister(kR0, uptime_
 void ModRuntime::Tick(uint32_t elapsed_ms) { uptime_ms_ += elapsed_ms; }
 
 void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
+  uint32_t memcpy_fn = hle_.Register([this](IArmCore& core) { MemcpyImpl(core); });
   uint32_t memset_fn = hle_.Register([this](IArmCore& core) { MemsetImpl(core); });
   uint32_t strlen_fn = hle_.Register([this](IArmCore& core) { StrlenImpl(core); });
+  uint32_t strcpy_fn = hle_.Register([this](IArmCore& core) { StrcpyImpl(core); });
   uint32_t malloc_fn = hle_.Register([this](IArmCore& core) { MallocImpl(core); });
   uint32_t free_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t get_uptime_ms_fn = hle_.Register([this](IArmCore& core) { GetUpTimeMsImpl(core); });
   uint32_t get_app_context_fn = hle_.Register([this](IArmCore& core) { GetAppContextImpl(core); });
   uint32_t bounded_strcpy_fn = hle_.Register([this](IArmCore& core) { BoundedStrcpyImpl(core); });
+  memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
   memory_.Write32(table_address + kStrlenSlotOffset, strlen_fn);
+  memory_.Write32(table_address + kStrcpySlotOffset, strcpy_fn);
   memory_.Write32(table_address + kBoundedStrcpySlotOffset, bounded_strcpy_fn);
   memory_.Write32(table_address + kMallocSlotOffset, malloc_fn);
   memory_.Write32(table_address + kFreeSlotOffset, free_fn);
