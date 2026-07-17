@@ -1130,14 +1130,26 @@ playable start-to-finish at full speed, standalone build.
       real, every frame, and runs measurably deeper each time a slot gets
       mapped -- 14 real steps before `SetTimer` existed at all, 41 after
       `GETUPTIMEMS`, 153 after `MEMSET`. The real per-tick game logic
-      currently stops on a **new, different** class of gap: a call
-      through a NULL interface pointer read from deep inside the
-      applet's own struct (offset `+0x164`), not a missing static-base
-      slot this time -- something upstream in this same tick was
-      supposed to populate that field (a cached sub-interface pointer,
-      by the looks of the 2-level vtable-call shape reading it) and
-      silently didn't. Not yet root-caused. Tracked as the next concrete
-      step.
+      currently stops on a **new, different** class of gap, traced down
+      to a specific real function this time (`ddragonz.mod` offset
+      `0x23a18`, called with `r0 = &applet[0x140]`, an *embedded*
+      sub-object living inside the applet's own struct, not a separately
+      `MALLOC`'d one): it copies a couple of fields from a template
+      object cached at `applet[0x140]+12`, then reads `*(applet[0x140])`
+      -- expecting the embedded sub-object's own vtable pointer to
+      *already* be populated -- and calls vtable slot 18 (offset `0x48`)
+      on it. That memory was never written by anything in the traced
+      execution (no static-base call touches it, and our own `MALLOC`
+      doesn't zero-fill), so it reads back 0 and the call jumps through
+      NULL. This isn't a missing runtime-library slot -- it's most likely
+      a real `str <compile-time-vtable-address>, [applet+0x140]`
+      "placement new" that should have happened earlier, inside
+      `HandleEvent(EVT_APP_START)`'s own real (non-HLE) logic, which
+      wasn't traced at per-instruction granularity this session (only
+      its one real HLE call was). Root-causing this means tracing
+      `HandleEvent`'s full internal control flow, not just another
+      library-call mapping -- a different, larger kind of investigation
+      than the last several fixes. Not yet started.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
