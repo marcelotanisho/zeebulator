@@ -1034,6 +1034,62 @@ playable start-to-finish at full speed, standalone build.
       like it needs its own systematic pass (identifying each offset's
       real function one at a time against the reference SDK source, the
       same way `MALLOC`/`FREE` were confirmed), not a single quick fix.
+      **Scanned the whole binary instead of tracing one call site at a
+      time**: wrote a one-off script (`arm-none-eabi-objdump` output fed
+      through a small Python pattern-match for "read static base, then
+      index the result") to find every distinct offset `ddragonz.mod`
+      actually dereferences off this table. Real, bounded result — not
+      "dozens", nine distinct offsets total: `0x4`, `0x8`, `0x14`, `0x68`
+      (`MALLOC`), `0x6c` (`FREE`), `0xb0`, `0xc0`, `0xe8`, `0x13c`. Offset
+      `0xc0` dominates by far (138 of the real call sites). Checked three
+      independent `0xc0` call sites and found byte-for-byte identical
+      code shape at all three: call the slot with no argument, read
+      offset `+12` from the result, dereference that once more to reach
+      a vtable, and call vtable slot 2 (`CreateInstance`) on it — i.e.
+      `ISHELL_CreateInstance(pIShell, ClsId, ppObj)` where `pIShell` comes
+      from an ambient "current app context" instead of being passed in
+      explicitly. This is the real mechanism behind `AEEStdLib` helper
+      macros that don't take an explicit `IShell*` argument.
+      **Implemented**: `core/brew/mod_runtime.{h,cpp}` gained
+      `SetShellInstance()` and a `GetAppContext` trap at offset `0xc0`
+      that returns a small context struct with the real `IShell` pointer
+      at field `+12` (written fresh on every call, so call order with
+      `SetShellInstance()` doesn't matter). `ModRuntime`'s constructor
+      gained a `context_address` parameter for where that struct lives.
+      4 new tests in `tests/mod_runtime_test.cpp` (FREE doesn't crash,
+      `GetAppContext` returns the registered shell pointer at the
+      confirmed offset, both call orderings of `SetShellInstance()`).
+      **A second, unrelated bug found and fixed in `tools/game_probe.cpp`
+      itself** (not an emulation gap): `*ppObj` from `IModule::CreateInstance`
+      is the `IApplet*` object itself, not a callable `HandleEvent`
+      pointer — real `HandleEvent` is vtable slot 2 of *that* object
+      (`AddRef=0, Release=1, HandleEvent=2`, confirmed against the real
+      `AEEAppGen.c` reference source's `IAppletVtbl` init order), the same
+      double-indirection already used for `IModule::CreateInstance`
+      itself just above it. The tool was also passing `0` instead of the
+      real applet pointer as `HandleEvent`'s own `po` ("this") argument.
+      Both fixed.
+      **Full result — first complete, successful BREW app lifecycle for a
+      real commercial game module**: reran `zeebulator_game_probe`
+      against the real `ddragonz.mod`/`data.ggz`/`sound.ggz`.
+      `AEEMod_Load` → `IModule::CreateInstance` →
+      `IApplet::HandleEvent(EVT_APP_START)` all complete with **no**
+      wandered-outside-module warning and **no** `UnimplementedInstruction`
+      — `HandleEvent` returns real `TRUE` (1), meaning the real compiled
+      app reports it successfully handled its own startup event. Captured
+      a real screenshot of the live SDL window afterward (`xwd` +
+      `ffmpeg`, same verification rigor as Phase 5): solid black, which is
+      the *correct*, expected result here, not a failure — nothing has
+      driven a draw call yet, since only the one `EVT_APP_START` event was
+      ever delivered and no per-frame/timer event pump exists yet.
+      **Honest scope**: this is real, verified initialization success —
+      not yet "playable" (PRD/Phase 8's actual exit criterion). Real
+      gameplay would need at minimum: a `SetTimer`/timer-tick mechanism
+      (currently `IShell::SetTimer` is a blind stub), likely
+      `EVT_APP_ACTIVATE` and other lifecycle events real BREW sends after
+      `EVT_APP_START`, and probably several of the six still-unmapped
+      static-base offsets found by the scan above (`0x4`, `0x8`, `0x14`,
+      `0xb0`, `0xe8`, `0x13c`) as deeper game logic starts executing.
       Tracked as the next concrete step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)

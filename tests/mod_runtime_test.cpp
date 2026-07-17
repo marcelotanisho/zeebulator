@@ -11,69 +11,108 @@ using zeebulator::ModRuntime;
 
 namespace {
 constexpr uint32_t kMallocSlotOffset = 0x68;
+constexpr uint32_t kFreeSlotOffset = 0x6c;
+constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
+constexpr uint32_t kAppContextShellOffset = 12;
+constexpr uint32_t kTableAddress = 0x80280000;
+constexpr uint32_t kContextAddress = 0x80280200;
+constexpr uint32_t kHeapRegion = 0x80300000;
+constexpr uint32_t kModuleBase = 0x00100000;
 }  // namespace
 
 TEST(ModRuntime, InstallWritesTablePointerAtModuleBaseMinusFour) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
-  ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                          /*heap_size=*/0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
 
-  mod_runtime.Install(/*module_base=*/0x00100000, /*table_address=*/0x80280000);
+  mod_runtime.Install(kModuleBase, kTableAddress);
 
-  EXPECT_EQ(cpu.GetMemory().Read32(0x00100000 - 4), 0x80280000u);
+  EXPECT_EQ(cpu.GetMemory().Read32(kModuleBase - 4), kTableAddress);
 }
 
 TEST(ModRuntime, MallocSlotReturnsAddressWithinHeapRegion) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
-  ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                          /*heap_size=*/0x1000);
-  mod_runtime.Install(/*module_base=*/0x00100000, /*table_address=*/0x80280000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
 
-  uint32_t malloc_fn = cpu.GetMemory().Read32(0x80280000 + kMallocSlotOffset);
+  uint32_t malloc_fn = cpu.GetMemory().Read32(kTableAddress + kMallocSlotOffset);
   uint32_t result = hle.CallArmFunction(malloc_fn, /*r0=*/36);
-  EXPECT_EQ(result, 0x80300000u);
+  EXPECT_EQ(result, kHeapRegion);
 }
 
 TEST(ModRuntime, SuccessiveAllocationsDoNotOverlap) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
-  ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                          /*heap_size=*/0x1000);
-  mod_runtime.Install(/*module_base=*/0x00100000, /*table_address=*/0x80280000);
-  uint32_t malloc_fn = cpu.GetMemory().Read32(0x80280000 + kMallocSlotOffset);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t malloc_fn = cpu.GetMemory().Read32(kTableAddress + kMallocSlotOffset);
 
   uint32_t first = hle.CallArmFunction(malloc_fn, /*r0=*/36);
   uint32_t second = hle.CallArmFunction(malloc_fn, /*r0=*/20);
-  EXPECT_EQ(first, 0x80300000u);
-  EXPECT_EQ(second, 0x80300000u + 36u);
+  EXPECT_EQ(first, kHeapRegion);
+  EXPECT_EQ(second, kHeapRegion + 36u);
 }
 
 TEST(ModRuntime, AllocationsAreWordAligned) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
-  ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                          /*heap_size=*/0x1000);
-  mod_runtime.Install(/*module_base=*/0x00100000, /*table_address=*/0x80280000);
-  uint32_t malloc_fn = cpu.GetMemory().Read32(0x80280000 + kMallocSlotOffset);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t malloc_fn = cpu.GetMemory().Read32(kTableAddress + kMallocSlotOffset);
 
   uint32_t first = hle.CallArmFunction(malloc_fn, /*r0=*/1);   // rounds up to 4
   uint32_t second = hle.CallArmFunction(malloc_fn, /*r0=*/1);  // should start right after
-  EXPECT_EQ(first, 0x80300000u);
-  EXPECT_EQ(second, 0x80300000u + 4u);
+  EXPECT_EQ(first, kHeapRegion);
+  EXPECT_EQ(second, kHeapRegion + 4u);
 }
 
 TEST(ModRuntime, ReturnsNullWhenHeapIsExhausted) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
-  ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                          /*heap_size=*/32);
-  mod_runtime.Install(/*module_base=*/0x00100000, /*table_address=*/0x80280000);
-  uint32_t malloc_fn = cpu.GetMemory().Read32(0x80280000 + kMallocSlotOffset);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/32, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t malloc_fn = cpu.GetMemory().Read32(kTableAddress + kMallocSlotOffset);
 
   uint32_t first = hle.CallArmFunction(malloc_fn, /*r0=*/32);
   uint32_t second = hle.CallArmFunction(malloc_fn, /*r0=*/4);
-  EXPECT_EQ(first, 0x80300000u);
+  EXPECT_EQ(first, kHeapRegion);
   EXPECT_EQ(second, 0u);
+}
+
+TEST(ModRuntime, FreeSlotDoesNotCrash) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+
+  uint32_t free_fn = cpu.GetMemory().Read32(kTableAddress + kFreeSlotOffset);
+  EXPECT_NO_FATAL_FAILURE(hle.CallArmFunction(free_fn, /*ptr=*/kHeapRegion));
+}
+
+TEST(ModRuntime, GetAppContextSlotReturnsShellInstanceAtConfirmedOffset) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  constexpr uint32_t kShellPtr = 0x80001000;
+  mod_runtime.SetShellInstance(kShellPtr);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+
+  uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
+  uint32_t context = hle.CallArmFunction(get_app_context_fn);
+  EXPECT_EQ(context, kContextAddress);
+  EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextShellOffset), kShellPtr);
+}
+
+TEST(ModRuntime, SetShellInstanceCanBeCalledAfterInstall) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  constexpr uint32_t kShellPtr = 0x80001000;
+  mod_runtime.SetShellInstance(kShellPtr);
+
+  uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
+  uint32_t context = hle.CallArmFunction(get_app_context_fn);
+  EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextShellOffset), kShellPtr);
 }

@@ -27,9 +27,24 @@ namespace zeebulator {
 // a function pointer from there and calls it with one pointer argument,
 // matching the reference source's `FREE(pme)` exactly.
 //
-// Only these two table slots are confirmed by real disassembly so far.
-// Every other offset is left unmapped -- a real .mod hitting one would
-// fetch from unwritten memory, which tools/game_probe.cpp's
+// A third slot, offset 0xc0, is by far the most heavily used (138
+// distinct real call sites in ddragonz.mod alone, found by scanning the
+// whole binary for the "read static base, index table" instruction
+// pattern -- see TASKS.md Phase 8). Every site follows an identical
+// shape: call this slot with no meaningful argument, twice in a row
+// (compiler doesn't common-subexpression-eliminate it, so it's genuinely
+// called twice), read offset+12 from the returned pointer both times,
+// dereference that once more to reach a vtable, and call vtable slot 2
+// (CreateInstance) on it. That's exactly the shape of
+// `ISHELL_CreateInstance(pIShell, ClsId, ppObj)` where `pIShell` is
+// fetched from an ambient "current app context" rather than passed in
+// explicitly -- the mechanism real AEEStdLib helper macros that don't
+// take an IShell parameter rely on internally. `SetShellInstance()`
+// supplies the real pointer this slot should expose.
+//
+// Only these three table slots are confirmed by real disassembly so
+// far. Every other offset is left unmapped -- a real .mod hitting one
+// would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
 // loudly rather than silently misbehave.
 class ModRuntime {
@@ -37,22 +52,33 @@ class ModRuntime {
   // `heap_region`/`heap_size` bound a simple bump allocator the MALLOC
   // slot hands memory out from. FREE is a no-op (leaks) -- consistent
   // with having no free-list, which is fine for a single game-session
-  // emulator run.
-  ModRuntime(Memory& memory, HleRuntime& hle, uint32_t heap_region, uint32_t heap_size);
+  // emulator run. `context_address` is where the small "app context"
+  // struct the offset-0xc0 slot returns is stored; must not overlap the
+  // module, the heap region, or any other memory region in use.
+  ModRuntime(Memory& memory, HleRuntime& hle, uint32_t heap_region, uint32_t heap_size,
+             uint32_t context_address);
+
+  // Sets the IShell object pointer the offset-0xc0 "get app context"
+  // slot should expose at the confirmed field offset (+12). Safe to call
+  // before or after Install().
+  void SetShellInstance(uint32_t shell_ptr);
 
   // Writes `table_address` at `module_base - 4` and populates the
-  // table's one known slot. Must be called after the module itself has
+  // table's known slots. Must be called after the module itself has
   // been loaded at `module_base`; `table_address` must not overlap the
   // module or any other memory region in use.
   void Install(uint32_t module_base, uint32_t table_address);
 
  private:
   void MallocImpl(IArmCore& core);
+  void GetAppContextImpl(IArmCore& core);
 
   Memory& memory_;
   HleRuntime& hle_;
   uint32_t heap_cursor_;
   uint32_t heap_end_;
+  uint32_t context_address_;
+  uint32_t shell_ptr_ = 0;
 };
 
 }  // namespace zeebulator

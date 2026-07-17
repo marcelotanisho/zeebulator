@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
   // "static base" pointer at kBase-4 -- see core/brew/mod_runtime.h and
   // TASKS.md Phase 8 for how this was found via real disassembly.
   zeebulator::ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                                      /*heap_size=*/0x00100000);
+                                      /*heap_size=*/0x00100000, /*context_address=*/0x80280200);
   mod_runtime.Install(kBase, /*table_address=*/0x80280000);
 
   uint32_t display_obj =
@@ -173,6 +173,11 @@ int main(int argc, char** argv) {
   zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
   shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
   uint32_t shell = shell_hle.Build(/*vtable=*/0x80000000, /*object=*/0x80001000);
+  // Real code fetches "the current app's IShell" from an ambient context
+  // (the static-base table's offset-0xc0 slot) in many places, not just
+  // via the pIShell argument explicitly passed to AEEMod_Load/
+  // CreateInstance -- see core/brew/mod_runtime.h.
+  mod_runtime.SetShellInstance(shell);
   file_hle.Build(/*file_mgr_vtable=*/0x80004000, /*file_mgr_object=*/0x80005000,
                   /*file_vtable=*/0x80006000);
   gl_hle.BuildGl(cpu.GetMemory(), hle, /*vtable=*/0x80007000, /*object=*/0x80008000);
@@ -213,17 +218,24 @@ int main(int argc, char** argv) {
     constexpr uint32_t kPpObjAddr = 0x00090010;
     auto create_result = CallArmFunctionChecked(
         cpu, kTrapBase, kBase, mod_size, create_instance_fn, module_ptr, shell, cls_id, kPpObjAddr);
-    uint32_t handle_event_fn = mem.Read32(kPpObjAddr);
+    // *ppObj is the IApplet* itself, not a function pointer -- HandleEvent
+    // is slot 2 of *its* vtable (AddRef=0, Release=1, HandleEvent=2, per
+    // the real AEEAppGen.c reference source's IAppletVtbl init order).
+    // Same double-indirection already used above for IModule::CreateInstance.
+    uint32_t applet_ptr = mem.Read32(kPpObjAddr);
+    uint32_t applet_vtable = mem.Read32(applet_ptr);
+    uint32_t handle_event_fn = mem.Read32(applet_vtable + 2 * 4);
     if (create_result.wandered_outside_module || create_result.exceeded_step_budget ||
-        !handle_event_fn) {
+        !applet_ptr) {
       std::printf(
-          "CreateInstance did not produce a trustworthy HandleEvent pointer -- stopping. "
+          "CreateInstance did not produce a trustworthy applet pointer -- stopping. "
           "(returned %u, *ppObj=0x%08x, wandered=%d, exceeded=%d)\n",
-          create_result.r0, handle_event_fn, create_result.wandered_outside_module,
+          create_result.r0, applet_ptr, create_result.wandered_outside_module,
           create_result.exceeded_step_budget);
       return 1;
     }
-    std::printf("CreateInstance OK, HandleEvent=0x%08x\n", handle_event_fn);
+    std::printf("CreateInstance OK, applet=0x%08x HandleEvent=0x%08x\n", applet_ptr,
+                handle_event_fn);
 
     // Real AEEAppStart layout, verified against the real AEEAppStart.h/
     // AEERect.h (NOT the same as our own hello_brew/hello_gl test
@@ -244,8 +256,9 @@ int main(int argc, char** argv) {
     stage = "HandleEvent(EVT_APP_START)";
     constexpr uint32_t kEvtAppStart = 0;  // real value, verified against AEEEvent.h
     std::printf("Calling HandleEvent(EVT_APP_START)...\n");
+    // boolean HandleEvent(IApplet *po, AEEEvent evt, uint16 wParam, uint32 dwParam)
     auto handle_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn,
-                                                 0, kEvtAppStart, 0, kAppStartAddr);
+                                                 applet_ptr, kEvtAppStart, 0, kAppStartAddr);
     if (handle_result.wandered_outside_module || handle_result.exceeded_step_budget) {
       std::printf("HandleEvent(EVT_APP_START) did not complete trustworthily -- stopping.\n");
       return 1;
