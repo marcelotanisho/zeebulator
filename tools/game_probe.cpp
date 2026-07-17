@@ -3,7 +3,7 @@
 // HLE interface implemented so far (IShell, IDisplay, IFile/IFileMgr,
 // IGL/IEGL, IMedia), to see how far real execution actually gets and
 // exactly which gap it hits next -- the "iteratively debug against the
-// real game" approach TASKS.md Phase 8 describes. Real-file validation
+// real game" approach documented in PHASE8_LOG.md. Real-file validation
 // only: takes paths at runtime, never embeds/bundles game content (see
 // CONTRIBUTING.md's clean-room policy).
 
@@ -57,7 +57,7 @@ void MergeGgzInto(zeebulator::VirtualFilesystem& vfs, const char* path) {
 // memory -- is never real progress. Without this check, our interpreter
 // silently decodes an all-zero word as a harmless "ANDEQ r0,r0,r0" and
 // keeps going; concretely, this is exactly what happened probing Double
-// Dragon's real AEEMod_Load (see TASKS.md Phase 8): a missing loader
+// Dragon's real AEEMod_Load (see PHASE8_LOG.md): a missing loader
 // "static base" pointer caused an indirect call through a null function
 // pointer to jump to address 0, and stepping through zeroed memory from
 // there happened to walk (262,237 harmless no-op steps later) right back
@@ -111,7 +111,7 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       std::printf(
           "warning: pc=0x%08x left the loaded module's range (0x%08x-0x%08x) after %llu "
           "steps -- likely a missing loader/runtime-support gap, not real progress (see "
-          "TASKS.md Phase 8)\n",
+          "PHASE8_LOG.md)\n",
           pc, mod_base, mod_base + mod_size, static_cast<unsigned long long>(steps));
       result.wandered_outside_module = true;  // only warn once per call
     }
@@ -124,7 +124,7 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
 // Maps a subset of SDL keys to real BREW AVK-family key codes for
 // exploratory input testing. The exact AVK_* enum values aren't
 // confirmed against a real header this session -- what IS confirmed via
-// real disassembly (TASKS.md Phase 8) is that Double Dragon's own
+// real disassembly (PHASE8_LOG.md) is that Double Dragon's own
 // HandleEvent treats wParam values in [0xe021, 0xe021+22] as key codes,
 // converting them to a bitmask via a jump table. This maps number keys
 // 0-9 to that range's first 10 offsets (0xe021..0xe02a) and arrow keys
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
 
   // Real compiled .mod code (ARM RVCT ROPI convention) expects a
   // "static base" pointer at kBase-4 -- see core/brew/mod_runtime.h and
-  // TASKS.md Phase 8 for how this was found via real disassembly.
+  // PHASE8_LOG.md for how this was found via real disassembly.
   zeebulator::ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
                                       /*heap_size=*/0x00100000, /*context_address=*/0x80280200);
   mod_runtime.Install(kBase, /*table_address=*/0x80280000);
@@ -199,13 +199,13 @@ int main(int argc, char** argv) {
       display.Build(cpu.GetMemory(), hle, /*vtable=*/0x80002000, /*object=*/0x80003000);
   // Real compiled app code obtains IDisplay through
   // ISHELL_CreateInstance(AEECLSID_DISPLAY, ...), not directly -- found
-  // via real disassembly of AEEApplet_New's call chain (TASKS.md Phase 8).
+  // via real disassembly of AEEApplet_New's call chain (PHASE8_LOG.md).
   zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
   shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
   // ClsId 0x01002001: a real BREW class Double Dragon's own graphics-init
   // routine requires (ISHELL_CreateInstance failing for it is the
   // confirmed root cause of the "memory insufficient" dead end -- see
-  // TASKS.md Phase 8). Its real interface isn't identified yet, so this
+  // PHASE8_LOG.md). Its real interface isn't identified yet, so this
   // is a generic scaffold (see scaffold_object.h) sized to cover the
   // highest slot (33) real disassembly shows the game calling on it.
   uint32_t unknown_graphics_obj = zeebulator::BuildGenericStubObject(
@@ -403,7 +403,7 @@ int main(int argc, char** argv) {
 
     // Real AEEAppStart layout, verified against the real AEEAppStart.h/
     // AEERect.h (NOT the same as our own hello_brew/hello_gl test
-    // fixtures' simplified struct -- see TASKS.md Phase 8):
+    // fixtures' simplified struct -- see PHASE8_LOG.md):
     //   int error; AEECLSID clsApp; IDisplay *pDisplay;
     //   struct { int16 x, y, dx, dy; } rc;  // NOT int -- half the size
     //   const char *pszArgs;                // a field our fixtures lack entirely
@@ -448,7 +448,7 @@ int main(int argc, char** argv) {
           // boolean HandleEvent(IApplet *po, AEEEvent evt, uint16 wParam, uint32 dwParam)
           // evt 0x101/0x102 confirmed via real disassembly of Double
           // Dragon's own event dispatcher -- see SdlKeyToAvk's comment
-          // and TASKS.md Phase 8.
+          // and PHASE8_LOG.md.
           constexpr uint32_t kEvtKeyDown = 0x101;
           constexpr uint32_t kEvtKeyUp = 0x102;
           uint32_t evt = (event.type == SDL_KEYDOWN) ? kEvtKeyDown : kEvtKeyUp;

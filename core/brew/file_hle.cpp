@@ -104,7 +104,7 @@ void FileHle::GetFreeSpaceImpl(IArmCore& core) {
   // free bytes directly, optionally also writing total capacity.
   // Reports a plausible simulated user-data quota (1 MiB); not a
   // measured real device value -- confirmed real disassembly
-  // (TASKS.md Phase 8) shows Double Dragon's save routine treating 0
+  // (PHASE8_LOG.md) shows Double Dragon's save routine treating 0
   // (the previous blind-Stub behavior) as "storage unusable" and
   // aborting, so this must be a believable nonzero amount, not just
   // "not zero".

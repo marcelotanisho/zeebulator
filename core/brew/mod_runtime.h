@@ -8,7 +8,7 @@
 namespace zeebulator {
 
 // Wires up the ARM RVCT "ROPI" (Read-Only Position Independent) static-
-// base convention real compiled .mod code expects. See TASKS.md Phase 8
+// base convention real compiled .mod code expects. See PHASE8_LOG.md
 // for how this was found: real disassembly of Double Dragon's real
 // ddragonz.mod (arm-none-eabi-objdump, not manual hex decoding) shows
 // AEEStaticMod_New -- the standard AEEModGen.c helper every module's
@@ -23,14 +23,14 @@ namespace zeebulator {
 //
 // A second slot, offset 0x6c (immediately after MALLOC), is FREE: real
 // disassembly of AEEApplet_New's cleanup path (called when
-// ISHELL_CreateInstance(AEECLSID_DISPLAY) fails, TASKS.md Phase 8) reads
+// ISHELL_CreateInstance(AEECLSID_DISPLAY) fails, see PHASE8_LOG.md) reads
 // a function pointer from there and calls it with one pointer argument,
 // matching the reference source's `FREE(pme)` exactly.
 //
 // A third slot, offset 0xc0, is by far the most heavily used (138
 // distinct real call sites in ddragonz.mod alone, found by scanning the
 // whole binary for the "read static base, index table" instruction
-// pattern -- see TASKS.md Phase 8). Every site follows an identical
+// pattern -- see PHASE8_LOG.md). Every site follows an identical
 // shape: call this slot with no meaningful argument, twice in a row
 // (compiler doesn't common-subexpression-eliminate it, so it's genuinely
 // called twice), read offset+12 from the returned pointer both times,
@@ -96,7 +96,7 @@ namespace zeebulator {
 //
 // A ninth slot, offset 0x8, is STRCPY: also found while tracing a real
 // key-input event (a different jump-table branch than the one that
-// found MEMCPY -- see TASKS.md Phase 8). A real call site
+// found MEMCPY -- see PHASE8_LOG.md). A real call site
 // (`ddragonz.mod` offset 0x1a3e0 onward, tail-called `ldr r2,[r0,#8]`
 // off the same table) passes just `(dest=r5+45, src=r9)` -- two
 // pointers, no length -- matching `char *strcpy(char *dest, const char
@@ -115,7 +115,7 @@ namespace zeebulator {
 //
 // An eleventh slot, offset 0x13c, is a sprintf-family formatter: a real
 // call site (`ddragonz.mod` offset 0x23d0c, part of the per-tick loop
-// -- see TASKS.md Phase 8) calls it with `(dest=a stack buffer,
+// -- see PHASE8_LOG.md) calls it with `(dest=a stack buffer,
 // fmt=a real literal string, ppArgs=&(a stack slot holding a pointer to
 // a second stack buffer))`; reading the format string directly out of
 // the real file's bytes at that literal's address gives `"ERROR

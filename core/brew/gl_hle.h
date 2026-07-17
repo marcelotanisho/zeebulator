@@ -31,7 +31,7 @@ namespace zeebulator {
 // Implemented so far: the EGL lifecycle (get/init/terminate a display,
 // choose a config, create a window surface + context, make current, swap
 // buffers), eglQueryString (real disassembly of Double Dragon --
-// TASKS.md Phase 8 -- shows eglQueryString(EGL_EXTENSIONS)'s result fed
+// see PHASE8_LOG.md -- shows eglQueryString(EGL_EXTENSIONS)'s result fed
 // straight into a strstr-shaped call with no null check, so unlike most
 // other unimplemented slots this one can't stay a blind Stub; returns
 // honest values -- an empty extensions string, since none are

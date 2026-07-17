@@ -21,7 +21,7 @@ namespace zeebulator {
 // uppercase since the font doesn't have a separate lowercase set. Uses
 // the last color SetColor() set instead of a hardcoded white, so text
 // reflects real games' actual color choices (confirmed real games set
-// one -- see TASKS.md Phase 8).
+// one -- see PHASE8_LOG.md).
 //
 // DrawRect/SetColor treat RGBVAL as the common real-BREW 0x00RRGGBB
 // packing (`MAKE_RGB(r,g,b)`, per the real AEEIDisplay.h reference doc
@@ -39,7 +39,7 @@ class IDisplayHle {
                  uint32_t object_address);
 
   // The IBitmap* GetDeviceBitmap() should hand back. Real disassembly
-  // (TASKS.md Phase 8) shows Double Dragon dereferencing this result's
+  // (PHASE8_LOG.md) shows Double Dragon dereferencing this result's
   // vtable directly, so leaving it unset (0) is fatal -- must be set to
   // a real interface object (see BuildGenericStubObject) before the app
   // can call GetDeviceBitmap without crashing.

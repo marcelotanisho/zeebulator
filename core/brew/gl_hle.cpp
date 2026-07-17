@@ -30,7 +30,7 @@ void WriteEGLintIfNonNull(Memory& memory, uint32_t addr, EGLint value) {
 
 // Scratch space for eglQueryString's return value -- real callers only
 // ever read the string immediately after the call (confirmed via real
-// disassembly of Double Dragon, TASKS.md Phase 8: fed straight into a
+// disassembly of Double Dragon, see PHASE8_LOG.md: fed straight into a
 // strstr-shaped call), so a single reused buffer is enough.
 constexpr uint32_t kQueryStringBufferAddr = 0x8001B000;
 
@@ -70,7 +70,7 @@ void GlHle::EglQueryString(IArmCore& core) {
   // (ignored), R1 is name. Real EGL 1.x values (confirmed against the
   // real BREW OpenGL ES extension SDK headers, extracted from
   // research/docs/sdk_installer_extract/ZeeboSDKPackage-1.2.4/
-  // OpenGLES_Extension_...zip -- see TASKS.md Phase 8).
+  // OpenGLES_Extension_...zip -- see PHASE8_LOG.md).
   constexpr EGLint kEglVendor = 0x3053;
   constexpr EGLint kEglVersion = 0x3054;
   constexpr EGLint kEglClientApis = 0x308D;

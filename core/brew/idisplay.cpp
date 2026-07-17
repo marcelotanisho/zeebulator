@@ -84,7 +84,7 @@ void IDisplayHle::DrawRect(IArmCore& core) {
   int x0 = 0, y0 = 0, x1 = width_, y1 = height_;
   if (rect_addr != 0) {
     // Real AEERect: { int16 x, y, dx, dy; } -- confirmed against real
-    // AEEAppStart.h/AEERect.h, see TASKS.md Phase 8.
+    // AEEAppStart.h/AEERect.h, see PHASE8_LOG.md.
     auto& mem = core.GetMemory();
     x0 = static_cast<int16_t>(mem.Read16(rect_addr + 0));
     y0 = static_cast<int16_t>(mem.Read16(rect_addr + 2));
@@ -112,7 +112,7 @@ void IDisplayHle::SetColor(IArmCore& core) {
 
 void IDisplayHle::GetDeviceBitmap(IArmCore& core) {
   // int GetDeviceBitmap(IDisplay *pIDisplay, IBitmap **ppBitmap)
-  // po is R0 (unused), ppBitmap R1. Real disassembly (TASKS.md Phase 8)
+  // po is R0 (unused), ppBitmap R1. Real disassembly (PHASE8_LOG.md)
   // immediately dereferences *ppBitmap's vtable, so this must hand back
   // a real (if generic) interface object, not a null/unset pointer.
   uint32_t pp_bitmap = core.GetRegister(kR1);
@@ -132,7 +132,7 @@ uint32_t IDisplayHle::Build(Memory& memory, HleRuntime& hle,
   // Phase 3). Originally only the first 13 slots (through DrawFrame)
   // were built, on the assumption that was the full pre-BREW-MP
   // interface -- that assumption was wrong: real disassembly of Double
-  // Dragon (TASKS.md Phase 8) shows it calling slot 18 (SetClipRect)
+  // Dragon (PHASE8_LOG.md) shows it calling slot 18 (SetClipRect)
   // directly, so the real Zeebo IDisplay includes the later slots too.
   // All 26 real slots are present now; only AddRef/Release/DrawText/
   // Update have real behavior so far -- extend individual stubs as

@@ -9,7 +9,7 @@ namespace zeebulator {
 // copied from a third-party font table, consistent with this project's
 // clean-room policy (CONTRIBUTING.md). Covers enough of printable ASCII
 // to render real BREW HUD/menu text legibly instead of the placeholder
-// solid blocks IDisplayHle::DrawText used before (see TASKS.md Phase 8).
+// solid blocks IDisplayHle::DrawText used before (see PHASE8_LOG.md).
 //
 // Each glyph is 7 rows of 5 bits; bit 4 is the leftmost column, bit 0
 // the rightmost. Characters outside the covered set (lowercase,

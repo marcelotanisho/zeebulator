@@ -364,7 +364,7 @@ TEST(ModRuntime, SprintfFormatsARealConfirmedErrorCodeMessage) {
   constexpr uint32_t kFmt = 0x80300200;
   constexpr uint32_t kArgs = 0x80300300;
   constexpr uint32_t kArgsCursor = 0x80300400;
-  WriteCString(cpu.GetMemory(), kFmt, "ERROR CODE:%d");  // real string, TASKS.md Phase 8
+  WriteCString(cpu.GetMemory(), kFmt, "ERROR CODE:%d");  // real string, see PHASE8_LOG.md
   cpu.GetMemory().Write32(kArgs, 5);
   cpu.GetMemory().Write32(kArgsCursor, kArgs);
 

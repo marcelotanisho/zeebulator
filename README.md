@@ -39,6 +39,7 @@ Build options (all default `ON`):
 - [PRD.md](PRD.md) — goals, scope, milestones
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component design, directory layout, technology choices
 - [TASKS.md](TASKS.md) — phased task breakdown and current progress
+- [PHASE8_LOG.md](PHASE8_LOG.md) — detailed investigation log for Phase 8's real-game bring-up (Double Dragon)
 - [CONTRIBUTING.md](CONTRIBUTING.md) — clean-room policy (read before contributing) and dev setup
 
 ## Legal

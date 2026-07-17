@@ -143,7 +143,7 @@ void ModRuntime::StrstrImpl(IArmCore& core) {
 
 void ModRuntime::SprintfImpl(IArmCore& core) {
   // Real signature and behavior inferred from the calling convention
-  // plus real string content (TASKS.md Phase 8): a real call site
+  // plus real string content (PHASE8_LOG.md): a real call site
   // (`ddragonz.mod` offset 0x23d0c) formats the real literal string
   // "ERROR CODE:%d" (found directly in the file's own bytes at the
   // literal's address) into a stack buffer, immediately measured with

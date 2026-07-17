@@ -10,7 +10,7 @@ namespace zeebulator {
 
 // Builds a generic BREW interface object with `slot_count` vtable slots,
 // every one of which just sets r0=0 and returns. Real disassembly of
-// Double Dragon (TASKS.md Phase 8) shows it calling
+// Double Dragon (PHASE8_LOG.md) shows it calling
 // ISHELL_CreateInstance for real BREW classes we haven't identified
 // (e.g. ClsId 0x01002001) and then unconditionally invoking specific
 // vtable slots on the result (e.g. slot 33) with no way to know the
@@ -25,7 +25,7 @@ uint32_t BuildGenericStubObject(Memory& memory, HleRuntime& hle, uint32_t vtable
                                  uint32_t object_address, size_t slot_count);
 
 // Same as BuildGenericStubObject, but with one slot replaced by a real
-// implementation. Real disassembly of Double Dragon (TASKS.md Phase 8)
+// implementation. Real disassembly of Double Dragon (PHASE8_LOG.md)
 // shows the object IDisplay::GetDeviceBitmap returns being used for
 // exactly one meaningful thing -- a "QueryInterface"-shaped call at
 // slot 2 (`obj->vtable[2](obj, clsid, &ppo)`, same calling convention

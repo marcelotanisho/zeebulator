@@ -24,7 +24,7 @@ namespace zeebulator {
 // supports real save-game style read/write/create against a separate,
 // in-memory "user data" store (see writable_files_) -- confirmed real
 // disassembly of Double Dragon's own save/load routine (`ddragonz.mod`
-// offset `0x9f3c`, called from `0x237c4`, TASKS.md Phase 8) does
+// offset `0x9f3c`, called from `0x237c4`, see PHASE8_LOG.md) does
 // exactly `IFILEMGR_Test("./udata/ddz.sav")`, then on failure
 // `IFILEMGR_GetFreeSpace()` (checked against a minimum), then
 // `IFILEMGR_OpenFile(..., _OFM_CREATE)` -- a real "load save, or create
