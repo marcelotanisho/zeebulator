@@ -92,6 +92,8 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       break;
     }
     uint32_t pc = cpu.GetRegister(zeebulator::kPC);
+    bool in_module = pc >= mod_base && pc < mod_base + mod_size;
+    bool in_trap_range = pc >= trap_base;
     if (trace) {
       std::printf("[%4llu] pc=0x%08x instr=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x\n",
                   static_cast<unsigned long long>(steps), pc, cpu.GetMemory().Read32(pc),
@@ -99,8 +101,6 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
                   cpu.GetRegister(zeebulator::kR2), cpu.GetRegister(zeebulator::kR3),
                   cpu.GetRegister(zeebulator::kR4));
     }
-    bool in_module = pc >= mod_base && pc < mod_base + mod_size;
-    bool in_trap_range = pc >= trap_base;
     if (!in_module && !in_trap_range && !result.wandered_outside_module) {
       std::printf(
           "warning: pc=0x%08x left the loaded module's range (0x%08x-0x%08x) after %llu "
@@ -273,12 +273,35 @@ int main(int argc, char** argv) {
   std::printf("Reached the event loop with no unhandled instruction! Window will stay open.\n");
   bool running = true;
   SDL_Event event;
+  constexpr uint32_t kTickMs = 16;
   while (running) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) running = false;
     }
-    mixer.Mix(backend, static_cast<size_t>(kAudioSampleRate * 16 / 1000));
-    SDL_Delay(16);
+    // Real BREW timers are one-shot -- real game code re-arms its own via
+    // ISHELL_SetTimer from inside the callback (see core/brew/ishell.h).
+    // Driving these is what actually runs the game's per-frame logic;
+    // nothing calls into the module otherwise from here on.
+    mod_runtime.Tick(kTickMs);
+    for (const auto& timer : shell_hle.Tick(kTickMs)) {
+      try {
+        auto tick_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, timer.callback,
+                                                   timer.user_data, 0, 0, 0);
+        if (tick_result.wandered_outside_module || tick_result.exceeded_step_budget) {
+          std::printf("timer callback did not complete trustworthily -- stopping.\n");
+          running = false;
+          break;
+        }
+      } catch (const std::exception& e) {
+        std::printf("timer callback threw: %s (pc=0x%08x, offset 0x%08x from mod base)\n",
+                    e.what(), cpu.GetRegister(zeebulator::kPC),
+                    cpu.GetRegister(zeebulator::kPC) - kBase);
+        running = false;
+        break;
+      }
+    }
+    mixer.Mix(backend, static_cast<size_t>(kAudioSampleRate * kTickMs / 1000));
+    SDL_Delay(kTickMs);
   }
 
   SDL_DestroyRenderer(renderer);

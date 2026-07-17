@@ -99,6 +99,68 @@ TEST(IShellHle, CreateInstanceReturnsARegisteredInstance) {
   EXPECT_EQ(cpu.GetMemory().Read32(kPpObjAddr), kDisplayObj);
 }
 
+TEST(IShellHle, SetTimerThenTickFiresAfterElapsedTimeReachesDeadline) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t set_timer = cpu.GetMemory().Read32(kVtableAddr + 11 * 4);
+  constexpr uint32_t kCallback = 0x00102000;
+  constexpr uint32_t kUserData = 0x80300024;
+  // int SetTimer(IShell *ps, uint32 dwCount, PFNNOTIFY pfnNotify, void *pUser)
+  EXPECT_EQ(hle.CallArmFunction(set_timer, kObjectAddr, /*dwCount=*/33, kCallback, kUserData), 0u);
+
+  EXPECT_TRUE(shell_hle.Tick(20).empty()) << "shouldn't fire before its deadline";
+  auto expired = shell_hle.Tick(13);
+  ASSERT_EQ(expired.size(), 1u);
+  EXPECT_EQ(expired[0].callback, kCallback);
+  EXPECT_EQ(expired[0].user_data, kUserData);
+  EXPECT_TRUE(shell_hle.Tick(1000).empty()) << "one-shot timers don't recur on their own";
+}
+
+TEST(IShellHle, SetTimerAgainWithSameCallbackReschedulesRatherThanDuplicates) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t set_timer = cpu.GetMemory().Read32(kVtableAddr + 11 * 4);
+  constexpr uint32_t kCallback = 0x00102000;
+  constexpr uint32_t kUserData = 0x80300024;
+  hle.CallArmFunction(set_timer, kObjectAddr, /*dwCount=*/33, kCallback, kUserData);
+  hle.CallArmFunction(set_timer, kObjectAddr, /*dwCount=*/33, kCallback, kUserData);
+
+  EXPECT_EQ(shell_hle.Tick(33).size(), 1u) << "re-arming shouldn't create a second pending timer";
+}
+
+TEST(IShellHle, CancelTimerRemovesAMatchingPendingTimer) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t set_timer = cpu.GetMemory().Read32(kVtableAddr + 11 * 4);
+  uint32_t cancel_timer = cpu.GetMemory().Read32(kVtableAddr + 12 * 4);
+  constexpr uint32_t kCallback = 0x00102000;
+  constexpr uint32_t kUserData = 0x80300024;
+  hle.CallArmFunction(set_timer, kObjectAddr, /*dwCount=*/33, kCallback, kUserData);
+
+  // int CancelTimer(IShell *ps, PFNNOTIFY pfnNotify, void *pUser)
+  EXPECT_EQ(hle.CallArmFunction(cancel_timer, kObjectAddr, kCallback, kUserData), 0u);
+  EXPECT_TRUE(shell_hle.Tick(1000).empty());
+}
+
+TEST(IShellHle, CancelTimerFailsForNoMatchingTimer) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t cancel_timer = cpu.GetMemory().Read32(kVtableAddr + 12 * 4);
+  EXPECT_EQ(hle.CallArmFunction(cancel_timer, kObjectAddr, /*pfn=*/0x1234, /*pUser=*/0x5678), 1u);
+}
+
 TEST(IDisplayHle, DrawTextThenUpdatePushesCorrectFrame) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

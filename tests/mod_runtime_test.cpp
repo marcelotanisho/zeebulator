@@ -10,8 +10,10 @@ using zeebulator::HleRuntime;
 using zeebulator::ModRuntime;
 
 namespace {
+constexpr uint32_t kMemsetSlotOffset = 0x4;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
+constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
 constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kTableAddress = 0x80280000;
@@ -115,4 +117,37 @@ TEST(ModRuntime, SetShellInstanceCanBeCalledAfterInstall) {
   uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
   uint32_t context = hle.CallArmFunction(get_app_context_fn);
   EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextShellOffset), kShellPtr);
+}
+
+TEST(ModRuntime, GetUpTimeMsStartsAtZeroAndAdvancesWithTick) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t get_uptime_ms_fn = cpu.GetMemory().Read32(kTableAddress + kGetUpTimeMsSlotOffset);
+
+  EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 0u);
+  mod_runtime.Tick(16);
+  mod_runtime.Tick(16);
+  EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 32u);
+}
+
+TEST(ModRuntime, MemsetFillsExactlyTheRequestedRangeAndReturnsDest) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t memset_fn = cpu.GetMemory().Read32(kTableAddress + kMemsetSlotOffset);
+
+  constexpr uint32_t kDest = 0x80300100;
+  cpu.GetMemory().Write8(kDest - 1, 0xAA);  // sentinel just before the range
+  cpu.GetMemory().Write8(kDest + 10, 0xAA);  // sentinel just after the range
+  // void *memset(void *s, int c, size_t n)
+  EXPECT_EQ(hle.CallArmFunction(memset_fn, kDest, /*c=*/0x42, /*n=*/10), kDest);
+
+  for (uint32_t i = 0; i < 10; ++i) {
+    EXPECT_EQ(cpu.GetMemory().Read8(kDest + i), 0x42) << "byte " << i;
+  }
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest - 1), 0xAA) << "wrote before the requested range";
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 10), 0xAA) << "wrote past the requested range";
 }

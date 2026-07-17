@@ -33,6 +33,54 @@ void IShellHle::CreateInstanceImpl(IArmCore& core) {
   core.SetRegister(kR0, 0);  // SUCCESS
 }
 
+void IShellHle::SetTimerImpl(IArmCore& core) {
+  // int SetTimer(IShell *ps, uint32 dwCount, PFNNOTIFY pfnNotify, void *pUser)
+  uint32_t ms = core.GetRegister(kR1);
+  uint32_t callback = core.GetRegister(kR2);
+  uint32_t user_data = core.GetRegister(kR3);
+  // Re-registering the same (callback, user_data) pair reschedules it
+  // rather than creating a duplicate -- matches the real self-rearming
+  // timer pattern (see class doc comment) where the callback calls
+  // SetTimer again with the same identity every time it fires.
+  for (auto& timer : timers_) {
+    if (timer.callback == callback && timer.user_data == user_data) {
+      timer.remaining_ms = ms;
+      core.SetRegister(kR0, 0);  // SUCCESS
+      return;
+    }
+  }
+  timers_.push_back(PendingTimer{ms, callback, user_data});
+  core.SetRegister(kR0, 0);  // SUCCESS
+}
+
+void IShellHle::CancelTimerImpl(IArmCore& core) {
+  // int CancelTimer(IShell *ps, PFNNOTIFY pfnNotify, void *pUser)
+  uint32_t callback = core.GetRegister(kR1);
+  uint32_t user_data = core.GetRegister(kR2);
+  for (auto it = timers_.begin(); it != timers_.end(); ++it) {
+    if (it->callback == callback && it->user_data == user_data) {
+      timers_.erase(it);
+      core.SetRegister(kR0, 0);  // SUCCESS
+      return;
+    }
+  }
+  core.SetRegister(kR0, 1);  // EFAILED-ish: no matching timer
+}
+
+std::vector<IShellHle::ExpiredTimer> IShellHle::Tick(uint32_t elapsed_ms) {
+  std::vector<ExpiredTimer> expired;
+  for (auto it = timers_.begin(); it != timers_.end();) {
+    if (elapsed_ms >= it->remaining_ms) {
+      expired.push_back(ExpiredTimer{it->callback, it->user_data});
+      it = timers_.erase(it);
+    } else {
+      it->remaining_ms -= elapsed_ms;
+      ++it;
+    }
+  }
+  return expired;
+}
+
 uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
   // Order matches AEEIShell.h's INHERIT_IShell macro exactly (verified
   // directly against real Qualcomm source -- see TASKS.md Phase 3), up
@@ -52,8 +100,8 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       Stub,  // 8  ActiveApplet
       Stub,  // 9  EnumAppletInit
       Stub,  // 10 EnumNextApplet
-      Stub,  // 11 SetTimer
-      Stub,  // 12 CancelTimer
+      [this](IArmCore& c) { SetTimerImpl(c); },     // 11 SetTimer
+      [this](IArmCore& c) { CancelTimerImpl(c); },  // 12 CancelTimer
       Stub,  // 13 GetTimerExpiration
       Stub,  // 14 CreateDialog
       Stub,  // 15 GetActiveDialog

@@ -1090,7 +1090,54 @@ playable start-to-finish at full speed, standalone build.
       `EVT_APP_START`, and probably several of the six still-unmapped
       static-base offsets found by the scan above (`0x4`, `0x8`, `0x14`,
       `0xb0`, `0xe8`, `0x13c`) as deeper game logic starts executing.
-      Tracked as the next concrete step.
+      **Implemented the real per-frame game loop**: traced
+      `HandleEvent(EVT_APP_START)`'s one real HLE call and found it's
+      `ISHELL_SetTimer(shell, 33, callback=0x1239dc, pUser=applet_ptr)` —
+      the real game registering its own tick callback, exactly the
+      standard "self-rearming `SetTimer`" BREW game-loop pattern
+      confirmed against a real bundled SDK sample
+      (`research/samples/conftest_source/conftest/conftest.c`'s
+      `conftest_TimerNotify`, which re-arms itself via `ISHELL_SetTimer`
+      as its own last action -- real BREW timers are one-shot, not
+      repeating). `IShell::SetTimer`/`CancelTimer` (vtable slots 11/12)
+      are now real: `IShellHle` tracks pending timers and exposes
+      `Tick(elapsed_ms)`, which the frontend calls once per loop
+      iteration and drives any newly-expired callback through
+      `CallArmFunctionChecked`. 4 new `IShellHle` tests.
+      **Mapped two more static-base slots this way, real disassembly at
+      each step, not guesses**:
+        - Offset `0xb0` (4 real call sites) is `GETUPTIMEMS`: called
+          twice with no argument around a chunk of work, with
+          `second_result - first_result` used immediately after as an
+          elapsed-ms delta (`sub r1, r0, r7` in the real timer-callback
+          disassembly) -- the standard elapsed-time-measurement idiom.
+          `ModRuntime::Tick()` now advances a millisecond counter this
+          slot returns.
+        - Offset `0x4` (10 real call sites, the single most common after
+          `0xc0`) is `MEMSET`: a real call site
+          (`ddragonz.mod` file offset `0x1f9b0`) disassembles to exactly
+          `memset(r4+46, 0, 10)` -- `r0`=dest, `r1`=fill value, `r2`=byte
+          count, matching ANSI `memset` precisely. Real ROPI-compiled
+          code apparently routes even plain C library calls through this
+          table, not just AEE/BREW-specific ones -- worth remembering
+          when mapping the remaining offsets (`0x8`, `0x14`, `0xe8`,
+          `0x13c`; `0x8`'s one real call site disassembles to a very
+          `strcpy`-shaped 2-argument call, `strcpy(dest, src)`, but
+          wasn't fully confirmed/implemented this pass).
+      2 new tests total for these (`ModRuntime.GetUpTimeMsStartsAtZeroAndAdvancesWithTick`,
+      `ModRuntime.MemsetFillsExactlyTheRequestedRangeAndReturnsDest`).
+      **Reran against the real game**: the timer callback now fires for
+      real, every frame, and runs measurably deeper each time a slot gets
+      mapped -- 14 real steps before `SetTimer` existed at all, 41 after
+      `GETUPTIMEMS`, 153 after `MEMSET`. The real per-tick game logic
+      currently stops on a **new, different** class of gap: a call
+      through a NULL interface pointer read from deep inside the
+      applet's own struct (offset `+0x164`), not a missing static-base
+      slot this time -- something upstream in this same tick was
+      supposed to populate that field (a cached sub-interface pointer,
+      by the looks of the 2-level vtable-call shape reading it) and
+      silently didn't. Not yet root-caused. Tracked as the next concrete
+      step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

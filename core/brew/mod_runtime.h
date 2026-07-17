@@ -42,7 +42,25 @@ namespace zeebulator {
 // take an IShell parameter rely on internally. `SetShellInstance()`
 // supplies the real pointer this slot should expose.
 //
-// Only these three table slots are confirmed by real disassembly so
+// A fourth slot, offset 0xb0 (4 real call sites, far rarer than 0xc0),
+// is GETUPTIMEMS: called with no argument, twice, around a chunk of
+// per-tick work, with `second_result - first_result` used immediately
+// after as an elapsed-time delta (`sub r1, r0, r7` in the real
+// disassembly of Double Dragon's timer-tick callback, TASKS.md Phase
+// 8) -- the standard real BREW pattern for measuring elapsed
+// milliseconds around a piece of work. `Tick()` advances the millisecond
+// counter this slot returns.
+//
+// A fifth slot, offset 0x4 (the very first slot after the table's own
+// base, and one of the most frequently hit), is MEMSET: real
+// disassembly of a real call site (`ddragonz.mod` offset 0x1f9b0) shows
+// exactly `memset(r4+46, 0, 10)` -- r0=dest, r1=0 (the fill value),
+// r2=10 (the byte count), matching ANSI `void *memset(void*, int,
+// size_t)` precisely. Real ROPI-compiled code apparently routes even
+// plain C library calls through this table, not just AEE/BREW-specific
+// ones.
+//
+// Only these five table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -63,6 +81,12 @@ class ModRuntime {
   // before or after Install().
   void SetShellInstance(uint32_t shell_ptr);
 
+  // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot
+  // returns. Deterministic and tick-driven (not a real wall-clock read)
+  // to match how the rest of the emulator's timing works (see
+  // IShellHle::Tick).
+  void Tick(uint32_t elapsed_ms);
+
   // Writes `table_address` at `module_base - 4` and populates the
   // table's known slots. Must be called after the module itself has
   // been loaded at `module_base`; `table_address` must not overlap the
@@ -71,7 +95,9 @@ class ModRuntime {
 
  private:
   void MallocImpl(IArmCore& core);
+  void MemsetImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
+  void GetUpTimeMsImpl(IArmCore& core);
 
   Memory& memory_;
   HleRuntime& hle_;
@@ -79,6 +105,7 @@ class ModRuntime {
   uint32_t heap_end_;
   uint32_t context_address_;
   uint32_t shell_ptr_ = 0;
+  uint32_t uptime_ms_ = 0;
 };
 
 }  // namespace zeebulator
