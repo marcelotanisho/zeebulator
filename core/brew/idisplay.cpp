@@ -1,11 +1,22 @@
 #include "core/brew/idisplay.h"
 
+#include <algorithm>
+
 #include "core/brew/interface_object.h"
 
 namespace zeebulator {
 
 namespace {
 void Stub(IArmCore& core) { core.SetRegister(kR0, 0); }
+
+// RGBVAL -> RGB565, assuming the common real-BREW 0x00RRGGBB packing
+// (see idisplay.h doc comment for how confident we are in that layout).
+uint16_t ToRgb565(uint32_t rgbval) {
+  uint32_t r = (rgbval >> 16) & 0xFF;
+  uint32_t g = (rgbval >> 8) & 0xFF;
+  uint32_t b = rgbval & 0xFF;
+  return static_cast<uint16_t>(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
 }  // namespace
 
 IDisplayHle::IDisplayHle(Backend& backend, int width, int height)
@@ -42,11 +53,49 @@ void IDisplayHle::DrawText(IArmCore& core) {
       int px = x + cx;
       int py = y + cy;
       if (px >= 0 && px < width_ && py >= 0 && py < height_) {
-        framebuffer_[static_cast<size_t>(py) * width_ + px] = 0xFFFF;  // white
+        framebuffer_[static_cast<size_t>(py) * width_ + px] = ToRgb565(current_rgbval_);
       }
     }
   }
   core.SetRegister(kR0, 0);  // AEE_SUCCESS
+}
+
+void IDisplayHle::DrawRect(IArmCore& core) {
+  // void DrawRect(iname *po, const AEERect *pRect, RGBVAL clrFrame,
+  //               RGBVAL clrFill, uint32 dwFlags)
+  // po is R0 (unused), pRect R1, clrFrame R2 (border, not drawn -- no
+  // border-rendering support yet), clrFill R3; dwFlags is the 5th,
+  // stack-passed argument (unused).
+  uint32_t rect_addr = core.GetRegister(kR1);
+  uint32_t clr_fill = core.GetRegister(kR3);
+
+  int x0 = 0, y0 = 0, x1 = width_, y1 = height_;
+  if (rect_addr != 0) {
+    // Real AEERect: { int16 x, y, dx, dy; } -- confirmed against real
+    // AEEAppStart.h/AEERect.h, see TASKS.md Phase 8.
+    auto& mem = core.GetMemory();
+    x0 = static_cast<int16_t>(mem.Read16(rect_addr + 0));
+    y0 = static_cast<int16_t>(mem.Read16(rect_addr + 2));
+    x1 = x0 + static_cast<int16_t>(mem.Read16(rect_addr + 4));
+    y1 = y0 + static_cast<int16_t>(mem.Read16(rect_addr + 6));
+  }
+
+  uint16_t color = ToRgb565(clr_fill);
+  for (int y = std::max(y0, 0); y < std::min(y1, height_); ++y) {
+    for (int x = std::max(x0, 0); x < std::min(x1, width_); ++x) {
+      framebuffer_[static_cast<size_t>(y) * width_ + x] = color;
+    }
+  }
+}
+
+void IDisplayHle::SetColor(IArmCore& core) {
+  // RGBVAL SetColor(iname *po, AEEClrItem clr, RGBVAL rgb)
+  // Real BREW tracks a color per AEEClrItem slot (text, background,
+  // frame, ...); this collapses them all into one "current color" DrawText
+  // reads -- a documented simplification, not a confirmed real behavior.
+  uint32_t previous = current_rgbval_;
+  current_rgbval_ = core.GetRegister(kR2);
+  core.SetRegister(kR0, previous);
 }
 
 void IDisplayHle::Update(IArmCore&) {
@@ -72,12 +121,12 @@ uint32_t IDisplayHle::Build(Memory& memory, HleRuntime& hle,
       Stub,                                    // 2  GetFontMetrics
       Stub,                                    // 3  MeasureTextEx
       [this](IArmCore& c) { DrawText(c); },     // 4  DrawText
-      Stub,                                    // 5  DrawRect
+      [this](IArmCore& c) { DrawRect(c); },     // 5  DrawRect
       Stub,                                    // 6  BitBlt
       [this](IArmCore& c) { Update(c); },       // 7  Update
       Stub,                                    // 8  SetAnnunciators
       Stub,                                    // 9  Backlight
-      Stub,                                    // 10 SetColor
+      [this](IArmCore& c) { SetColor(c); },     // 10 SetColor
       Stub,                                    // 11 GetSymbol
       Stub,                                    // 12 DrawFrame
       Stub,                                    // 13 CreateDIBitmap

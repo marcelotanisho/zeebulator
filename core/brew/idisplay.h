@@ -19,7 +19,16 @@ namespace zeebulator {
 // work, out of scope for M0) -- it draws a simple placeholder block
 // sized from the real (x, y, length) arguments, which is enough to prove
 // the whole call path (real compiled ARM code -> vtable dispatch -> HLE
-// -> framebuffer -> Backend) actually works end to end.
+// -> framebuffer -> Backend) actually works end to end. It now uses the
+// last color SetColor() set instead of a hardcoded white, so text is at
+// least visually distinguishable once real games start setting colors
+// (confirmed real games do -- see TASKS.md Phase 8).
+//
+// DrawRect/SetColor treat RGBVAL as the common real-BREW 0x00RRGGBB
+// packing (`MAKE_RGB(r,g,b)`, per the real AEEIDisplay.h reference doc
+// comment) -- this specific bit layout wasn't independently confirmed
+// against a real header this session, unlike the vtable slot order
+// itself, which was.
 class IDisplayHle {
  public:
   IDisplayHle(Backend& backend, int width, int height);
@@ -32,12 +41,15 @@ class IDisplayHle {
 
  private:
   void DrawText(IArmCore& core);
+  void DrawRect(IArmCore& core);
+  void SetColor(IArmCore& core);
   void Update(IArmCore& core);
 
   Backend& backend_;
   int width_;
   int height_;
   std::vector<uint16_t> framebuffer_;  // RGB565, width_ * height_
+  uint32_t current_rgbval_ = 0x00FFFFFF;  // last color SetColor() set (white by default)
 };
 
 }  // namespace zeebulator

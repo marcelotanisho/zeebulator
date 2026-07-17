@@ -199,6 +199,85 @@ TEST(IDisplayHle, DrawTextThenUpdatePushesCorrectFrame) {
   EXPECT_EQ(backend.last_frame[0], 0u) << "untouched pixel stays black";
 }
 
+TEST(IDisplayHle, DrawRectWithNullRectFillsWholeScreen) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  TestBackend backend;
+  IDisplayHle display(backend, 4, 3);
+  uint32_t display_obj = display.Build(cpu.GetMemory(), hle, kVtableAddr, kObjectAddr);
+
+  // void DrawRect(iname *po, const AEERect *pRect, RGBVAL clrFrame, RGBVAL clrFill, uint32 dwFlags)
+  uint32_t draw_rect_sentinel = cpu.GetMemory().Read32(kVtableAddr + 5 * 4);
+  hle.CallArmFunction(draw_rect_sentinel, display_obj, /*pRect=*/0, /*clrFrame=*/0,
+                       /*clrFill=*/0x00FF0000);  // red
+
+  uint32_t update_sentinel = cpu.GetMemory().Read32(kVtableAddr + 7 * 4);
+  hle.CallArmFunction(update_sentinel, display_obj);
+
+  ASSERT_EQ(backend.push_count, 1);
+  for (int i = 0; i < 4 * 3; ++i) {
+    EXPECT_EQ(backend.last_frame[static_cast<size_t>(i)], 0xF800u) << "pixel " << i;  // RGB565 red
+  }
+}
+
+TEST(IDisplayHle, DrawRectWithExplicitRectFillsOnlyThatArea) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  TestBackend backend;
+  IDisplayHle display(backend, 8, 8);
+  uint32_t display_obj = display.Build(cpu.GetMemory(), hle, kVtableAddr, kObjectAddr);
+
+  // Real AEERect: { int16 x, y, dx, dy; }
+  constexpr uint32_t kRectAddr = 0x9000;
+  cpu.GetMemory().Write16(kRectAddr + 0, 2);  // x
+  cpu.GetMemory().Write16(kRectAddr + 2, 1);  // y
+  cpu.GetMemory().Write16(kRectAddr + 4, 3);  // dx
+  cpu.GetMemory().Write16(kRectAddr + 6, 2);  // dy
+
+  uint32_t draw_rect_sentinel = cpu.GetMemory().Read32(kVtableAddr + 5 * 4);
+  hle.CallArmFunction(draw_rect_sentinel, display_obj, kRectAddr, /*clrFrame=*/0,
+                       /*clrFill=*/0x0000FF00);  // green
+
+  uint32_t update_sentinel = cpu.GetMemory().Read32(kVtableAddr + 7 * 4);
+  hle.CallArmFunction(update_sentinel, display_obj);
+
+  ASSERT_EQ(backend.push_count, 1);
+  EXPECT_EQ(backend.last_frame[1 * 8 + 2], 0x07E0u) << "inside the rect";  // RGB565 green
+  EXPECT_EQ(backend.last_frame[1 * 8 + 4], 0x07E0u) << "still inside (x=4 < 2+3)";
+  EXPECT_EQ(backend.last_frame[1 * 8 + 5], 0u) << "outside the rect (x=5 >= 2+3)";
+  EXPECT_EQ(backend.last_frame[0], 0u) << "untouched pixel stays black";
+}
+
+TEST(IDisplayHle, SetColorChangesDrawTextColorAndReturnsPrevious) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  TestBackend backend;
+  IDisplayHle display(backend, 64, 48);
+  uint32_t display_obj = display.Build(cpu.GetMemory(), hle, kVtableAddr, kObjectAddr);
+
+  uint32_t set_color_sentinel = cpu.GetMemory().Read32(kVtableAddr + 10 * 4);
+  // RGBVAL SetColor(iname *po, AEEClrItem clr, RGBVAL rgb)
+  uint32_t previous =
+      hle.CallArmFunction(set_color_sentinel, display_obj, /*clr=*/0, /*rgb=*/0x000000FF);  // blue
+  EXPECT_EQ(previous, 0x00FFFFFFu) << "default color is white before any SetColor call";
+
+  WriteUtf16String(cpu.GetMemory(), 0x3000, "H");
+  cpu.SetRegister(zeebulator::kSP, 0x9000);
+  cpu.GetMemory().Write32(0x9000, 0);  // x
+  cpu.GetMemory().Write32(0x9004, 0);  // y
+  cpu.GetMemory().Write32(0x9008, 0);  // prcBackground
+  cpu.GetMemory().Write32(0x900C, 0);  // dwFlags
+  uint32_t draw_text_sentinel = cpu.GetMemory().Read32(kVtableAddr + 4 * 4);
+  hle.CallArmFunction(draw_text_sentinel, display_obj, /*nFont=*/0, /*pcText=*/0x3000,
+                       /*nChars=*/static_cast<uint32_t>(-1));
+
+  uint32_t update_sentinel = cpu.GetMemory().Read32(kVtableAddr + 7 * 4);
+  hle.CallArmFunction(update_sentinel, display_obj);
+
+  ASSERT_EQ(backend.push_count, 1);
+  EXPECT_EQ(backend.last_frame[0], 0x001Fu) << "drawn glyph uses the newly-set blue color";
+}
+
 TEST(IDisplayHle, ObjectAddressPointsAtVtable) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

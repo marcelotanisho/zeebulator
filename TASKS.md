@@ -1219,11 +1219,47 @@ playable start-to-finish at full speed, standalone build.
       is now genuinely calling into `IDisplay` draw methods every frame
       through the fully-resolved static-base table). This is the first
       point all session where something is visibly different on screen.
+      **Decoded the full steady-state per-tick call sequence**: added a
+      lightweight HLE-call-only trace mode (`hle_trace`, logs just the
+      trap address + registers for real interface calls, not every ARM
+      instruction) to `tools/game_probe.cpp` and captured 10 consecutive
+      ticks. Every tick does the *identical* real sequence: `GETUPTIMEMS`
+      → 4× `MEMSET` (clearing small sub-buffers) → `IDISPLAY_SetClipRect(NULL)`
+      → `IDISPLAY_DrawRect(NULL, clrFrame=0xffffffff, clrFill=0xffffff00)`
+      → `IDISPLAY_SetColor(1, 0x00000000)` → six repetitions of
+      `[STRLEN → bounded-strcpy → IDISPLAY_DrawText]` (six distinct HUD/
+      menu strings) → `ISHELL_SetTimer(..., 100, callback, applet)` to
+      re-arm. `DrawRect` and `SetColor` were still stubs, so the
+      background fill and text color were both silently no-ops.
+      **Implemented both, for real**: `IDisplayHle` gained
+      `DrawRect`/`SetColor`. Treats `RGBVAL` as the common real-BREW
+      `0x00RRGGBB` packing (`MAKE_RGB(r,g,b)`, per the real
+      `AEEIDisplay.h` reference doc comment) -- this specific bit layout
+      wasn't independently confirmed against a real header this session,
+      unlike the vtable slot order itself, which was; documented as an
+      assumption in `idisplay.h`. `DrawRect` fills the given `AEERect`
+      (or the whole screen if `pRect` is `NULL`) with `clrFill`, no
+      border rendering yet. `SetColor` collapses all `AEEClrItem` slots
+      into one "current color" `DrawText` now uses instead of a
+      hardcoded white (a documented simplification). 4 new tests
+      (`IDisplayHle.DrawRectWithNullRectFillsWholeScreen`,
+      `DrawRectWithExplicitRectFillsOnlyThatArea`,
+      `SetColorChangesDrawTextColorAndReturnsPrevious`, plus updated
+      `DrawTextThenUpdatePushesCorrectFrame` coverage).
+      **Reran against the real game**: the screenshot now shows a solid
+      **yellow background with black text** -- not solid-color noise,
+      a plausible, deliberate real UI color scheme, which is a strong
+      positive signal the reverse-engineered `RGBVAL` packing and
+      `AEERect` layout assumptions are correct. This is the first frame
+      all session with real, meaningful visual content.
       Not yet investigated further this session: whether it stays stable
-      indefinitely, what specific `IDisplay`/other calls it's making
-      each frame, and input handling (`EVT_KEY` etc., real BREW event
-      codes `>0x100` per the app's own dispatcher, seen earlier but not
-      driven) are all open. Tracked as the next concrete step.
+      indefinitely, what the six drawn strings actually say (real glyph
+      rendering isn't implemented -- `DrawText` still draws placeholder
+      blocks, not real characters, so the yellow/black screen doesn't
+      show readable text yet), and input handling (`EVT_KEY` etc., real
+      BREW event codes `>0x100` per the app's own dispatcher, seen
+      earlier but not driven) are all open. Tracked as the next concrete
+      step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

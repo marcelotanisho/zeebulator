@@ -74,7 +74,7 @@ struct CallResult {
 CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap_base,
                                    uint32_t mod_base, uint32_t mod_size, uint32_t entry,
                                    uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
-                                   bool trace = false) {
+                                   bool trace = false, bool hle_trace = false) {
   constexpr uint64_t kMaxSteps = 5'000'000;
   cpu.SetRegister(zeebulator::kR0, r0);
   cpu.SetRegister(zeebulator::kR1, r1);
@@ -100,6 +100,11 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
                   cpu.GetRegister(zeebulator::kR0), cpu.GetRegister(zeebulator::kR1),
                   cpu.GetRegister(zeebulator::kR2), cpu.GetRegister(zeebulator::kR3),
                   cpu.GetRegister(zeebulator::kR4));
+    }
+    if (hle_trace && in_trap_range && pc != trap_base) {
+      std::printf("  [hle call] trap=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x\n", pc,
+                  cpu.GetRegister(zeebulator::kR0), cpu.GetRegister(zeebulator::kR1),
+                  cpu.GetRegister(zeebulator::kR2), cpu.GetRegister(zeebulator::kR3));
     }
     if (!in_module && !in_trap_range && !result.wandered_outside_module) {
       std::printf(
@@ -275,6 +280,7 @@ int main(int argc, char** argv) {
   bool running = true;
   SDL_Event event;
   constexpr uint32_t kTickMs = 16;
+  uint64_t tick_count = 0;
   while (running) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) running = false;
@@ -285,9 +291,12 @@ int main(int argc, char** argv) {
     // nothing calls into the module otherwise from here on.
     mod_runtime.Tick(kTickMs);
     for (const auto& timer : shell_hle.Tick(kTickMs)) {
+      bool trace_this_tick = tick_count < 10;
+      if (trace_this_tick) std::printf("--- tick %llu ---\n", static_cast<unsigned long long>(tick_count));
       try {
         auto tick_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, timer.callback,
-                                                   timer.user_data, 0, 0, 0);
+                                                   timer.user_data, 0, 0, 0, /*trace=*/false,
+                                                   /*hle_trace=*/trace_this_tick);
         if (tick_result.wandered_outside_module || tick_result.exceeded_step_budget) {
           std::printf("timer callback did not complete trustworthily -- stopping.\n");
           running = false;
@@ -300,6 +309,7 @@ int main(int argc, char** argv) {
         running = false;
         break;
       }
+      ++tick_count;
     }
     mixer.Mix(backend, static_cast<size_t>(kAudioSampleRate * kTickMs / 1000));
     SDL_Delay(kTickMs);
