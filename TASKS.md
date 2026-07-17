@@ -1705,6 +1705,35 @@ playable start-to-finish at full speed, standalone build.
       still getting wrong upstream) -- tracked as the next concrete
       step, alongside decoding the message's actual text once the
       byte-swapped-string handling is revisited.
+      **Follow-up investigation, no code changes**: added temporary
+      debug prints (removed after use) to `ModRuntime::SprintfImpl`
+      (dump the formatted string), `GlHle::EglSwapBuffers`, and
+      `IDisplayHle::Update` to answer two questions. First: what are the
+      actual values? `"ERROR CODE:6"` and `"LIST COUNT:3"`, redrawn
+      every tick (the same repeating-diagnostic pattern as the earlier
+      "insufficient memory" dialog, just a different message). Traced
+      the error-code field to a confirmed real struct offset
+      (`applet+0x36c4`, found via the real disassembly at
+      `ddragonz.mod` offset `0x10602c`) and found the *only* other real
+      reference to that exact offset in the whole binary is a reset-to-
+      zero at offset `0x1209dc` -- no direct `str` instruction
+      anywhere else constructs that same offset, meaning whatever sets
+      it to `6` does so indirectly (a computed/array-indexed write, or
+      a value copied in from elsewhere) rather than a single obvious
+      missing-HLE-call site like every fix so far this session. This is
+      real application business logic, not an emulator gap -- a
+      meaningfully different (and likely much longer) kind of
+      investigation than closing HLE/runtime-table gaps, so deliberately
+      not pursued further this round. Second: confirmed `IDisplayHle::
+      Update` fires every tick (148 times in one ~8s run) while
+      `GlHle::EglSwapBuffers` never fires at all (0 times) -- ruling out
+      a suspected rendering-pipeline conflict between the software
+      `IDisplay` framebuffer and the real GL context sharing one SDL
+      window (`Sdl2GlBackend::SwapBuffers` really does call
+      `SDL_GL_SwapWindow`, confirmed by reading
+      `frontends/standalone/sdl2_gl_backend.cpp`) -- moot for now since
+      the game hasn't reached real per-frame GL presentation yet, only
+      this diagnostic-overlay loop.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
