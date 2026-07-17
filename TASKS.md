@@ -61,15 +61,40 @@ awareness yet.
         (STRH/LDRH/LDRSB/LDRSH — added during Phase 3, hit by our own
         compiled test app, see below), BX/BLX (branch-and-exchange,
         register form, as long as the target stays in ARM state), the
-        PC-reads-as+8 operand semantics, and the call-out trap hook.
-      - **Deferred, and explicitly rejected via `UnimplementedInstruction`
-        rather than silently mis-executed:** multiply/MLA/long-multiply,
+        PC-reads-as+8 operand semantics, the call-out trap hook, and (added
+        after Phase 6, closing the longest-standing deferred item) multiply/
+        multiply-accumulate: `MUL`/`MLA` and long multiply `UMULL`/`UMLAL`/
+        `SMULL`/`SMLAL`. Correctly propagates carry from the low to the high
+        32-bit word during 64-bit accumulation (verified with a dedicated
+        test — this is exactly the kind of thing a naive "two separate
+        32-bit adds" implementation gets wrong) and sets N/Z from the full
+        64-bit result for the long forms; C/V are left unchanged for S=1,
+        matching the ARM ARM's own "UNPREDICTABLE" carry-flag behavior for
+        these opcodes rather than inventing a specific value. 8 new tests
+        (`tests/cpu_test.cpp`), every hand-encoded instruction word
+        independently generated and cross-checked via a small Python
+        encoder rather than computed by hand, given how easy nibble-level
+        arithmetic is to get subtly wrong (a lesson already learned once in
+        Phase 1's original `BIC` test).
+        **Verified against real Double Dragon code, honestly**: reran
+        `zeebulator_mod_probe` against the real `ddragonz.mod` — execution
+        still stops at exactly the same 23rd instruction as before (falls
+        into the same documented "returns to address 0, executes harmless
+        zeroed no-ops" behavior). That's expected, not a sign multiply
+        didn't help: this probe only exercises the module's tiny entry
+        stub (`AEEMod_Load` and a couple of helper calls), which never
+        needed multiplication — real usage will only show up once Phase 8
+        drives the actual game logic through a real, fuller BREW lifecycle
+        (real `IShell` behavior, real `ClsId`, real `EVT_APP_START` value,
+        none of which exist yet). Implementing this now removes a known,
+        named blocker ahead of that work rather than proving a payoff that
+        genuinely can't be observed yet at this shallow a depth.
+      - **Still deferred, and explicitly rejected via
+        `UnimplementedInstruction` rather than silently mis-executed:**
         swap (SWP/SWPB), MRS/MSR (PSR transfer), SWI, coprocessor
         instructions, LDM/STM's user-bank/exception-return (S=1) variant,
         BX/BLX to a Thumb target, Thumb state entirely. Will be picked up
-        incrementally as real game code needs them — multiply is the next
-        highest-value target (real compiled code will need it constantly;
-        our own test app hasn't needed it yet, but a real game will).
+        incrementally as real game code needs them.
 - [x] Unit tests against known ARMv6 instruction-behavior vectors —
       `tests/cpu_test.cpp`, 27 tests, all hand-encoded real ARM instruction
       words (not synthetic/fake encodings), verified bit-field-by-bit-field
@@ -459,9 +484,10 @@ clean-room fixture, not Qualcomm's) producing a real, correctly-rendered,
 color-interpolated triangle — not just unit tests driving the dispatch
 logic directly. Known gaps deliberately left for when a real game
 actually needs them: texture-combiner/lighting state, `glDrawElements`
-real host-side index buffers (currently de-indexed, see below),
-compressed textures, and — likely the more immediate blocker for any
-real title — the CPU's still-unimplemented multiply instruction.
+real host-side index buffers (currently de-indexed, see below), and
+compressed textures. (The CPU's multiply instruction, flagged here as
+the more likely immediate blocker, was closed out in Phase 1 after
+Phase 6 — see that phase's writeup.)
 
 - [x] **Research: how BREW-era GLES actually reaches the OS — real
       architecture found, materially simpler than originally assumed.**

@@ -432,6 +432,60 @@ void ArmInterpreter::ExecuteHalfwordTransfer(uint32_t instr) {
   }
 }
 
+void ArmInterpreter::ExecuteMultiply(uint32_t instr) {
+  // Shared field across both forms (see Step()'s dispatch for how this
+  // is reached): cond 000000 A S Rd Rn Rs 1001 Rm (short MUL/MLA) or
+  // cond 00001 U A S RdHi RdLo Rs 1001 Rm (long UMULL/UMLAL/SMULL/
+  // SMLAL) -- "Rs" sits at bits[11:8] in both encodings.
+  bool is_long = (instr >> 23) & 1;
+  bool accumulate = (instr >> 21) & 1;
+  bool s = (instr >> 20) & 1;
+  uint32_t rs = (instr >> 8) & 0xF;
+  uint32_t rm = instr & 0xF;
+  uint32_t rm_val = ReadOperandRegister(rm);
+  uint32_t rs_val = ReadOperandRegister(rs);
+
+  if (!is_long) {
+    uint32_t rd = (instr >> 16) & 0xF;
+    uint32_t rn = (instr >> 12) & 0xF;  // accumulate operand, SBZ if !accumulate
+    uint32_t result = rm_val * rs_val;
+    if (accumulate) result += ReadOperandRegister(rn);
+    regs_[rd] = result;
+    if (s) {
+      SetFlag(kCpsrN, (result >> 31) & 1);
+      SetFlag(kCpsrZ, result == 0);
+      // C is UNPREDICTABLE per the ARM ARM for MUL/MLA with S=1 (V is
+      // simply unaffected) -- left unchanged, matching common real-
+      // hardware and emulator behavior, not a gap.
+    }
+    return;
+  }
+
+  bool is_signed = (instr >> 22) & 1;
+  uint32_t rd_hi = (instr >> 16) & 0xF;
+  uint32_t rd_lo = (instr >> 12) & 0xF;
+
+  uint64_t product;
+  if (is_signed) {
+    int64_t signed_product = static_cast<int64_t>(static_cast<int32_t>(rm_val)) *
+                              static_cast<int64_t>(static_cast<int32_t>(rs_val));
+    product = static_cast<uint64_t>(signed_product);
+  } else {
+    product = static_cast<uint64_t>(rm_val) * static_cast<uint64_t>(rs_val);
+  }
+  if (accumulate) {
+    uint64_t acc = (static_cast<uint64_t>(regs_[rd_hi]) << 32) | regs_[rd_lo];
+    product += acc;
+  }
+  regs_[rd_lo] = static_cast<uint32_t>(product);
+  regs_[rd_hi] = static_cast<uint32_t>(product >> 32);
+  if (s) {
+    SetFlag(kCpsrN, (product >> 63) & 1);
+    SetFlag(kCpsrZ, product == 0);
+    // C, V UNPREDICTABLE -- left unchanged, same rationale as above.
+  }
+}
+
 void ArmInterpreter::Step() {
   uint32_t fetch_addr = regs_[kPC];
   if (call_out_size_ != 0 && fetch_addr >= call_out_base_ &&
@@ -475,13 +529,22 @@ void ArmInterpreter::Step() {
       bool is_test_opcode = opcode >= 0x8 && opcode <= 0xB;
       if (bit25 == 0 && bit4 == 1 && bit7 == 1) {
         // Shared bit pattern for multiply/swap (SH=00) and halfword/
-        // signed transfer (SH=01/10/11) -- only the former stays
+        // signed transfer (SH=01/10/11) -- swap (see below) still stays
         // unimplemented.
         uint32_t sh = (instr >> 5) & 0x3;
         if (sh == 0) {
-          throw UnimplementedInstruction("Multiply/swap instruction space");
+          // Multiply-family space, further split by bits[24:23]: 00 =
+          // MUL/MLA, 01 = long multiply (UMULL/UMLAL/SMULL/SMLAL), 10 =
+          // swap (SWP/SWPB, still unimplemented), 11 = reserved.
+          uint32_t bits24_23 = (instr >> 23) & 0x3;
+          if (bits24_23 == 0b00 || bits24_23 == 0b01) {
+            ExecuteMultiply(instr);
+          } else {
+            throw UnimplementedInstruction("Swap (SWP/SWPB) or reserved multiply-space encoding");
+          }
+        } else {
+          ExecuteHalfwordTransfer(instr);
         }
-        ExecuteHalfwordTransfer(instr);
       } else if (is_test_opcode && s_bit == 0) {
         // This opcode range with S=0 is reassigned to the "miscellaneous
         // instructions" space (MRS/MSR/BX/BLX/CLZ/BXJ/...), not a real

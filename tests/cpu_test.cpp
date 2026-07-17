@@ -284,10 +284,101 @@ TEST(Cpu, LdrshSignExtendsNegativeHalfword) {
 
 // --- Unimplemented instruction classes are rejected, not mis-executed ---
 
-TEST(Cpu, MultiplyInstructionIsUnimplemented) {
+TEST(Cpu, SwapInstructionIsUnimplemented) {
   ArmInterpreter cpu;
-  cpu.GetMemory().Write32(0, 0xE0000291);  // MUL R0, R1, R2
+  cpu.GetMemory().Write32(0, 0xE1020091);  // SWP R0, R1, [R2]
   EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
+}
+
+// --- Multiply / multiply-accumulate (MUL/MLA, UMULL/UMLAL/SMULL/SMLAL) ---
+
+TEST(Cpu, MulComputesProduct) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 6);
+  cpu.SetRegister(kR2, 7);
+  cpu.GetMemory().Write32(0, 0xE0000291);  // MUL R0, R1, R2
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 42u);
+}
+
+TEST(Cpu, MulsSetsZeroFlagOnZeroResult) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0);
+  cpu.SetRegister(kR2, 99);
+  cpu.GetMemory().Write32(0, 0xE0100291);  // MULS R0, R1, R2
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0u);
+  EXPECT_TRUE(Flag(cpu, kCpsrZ));
+  EXPECT_FALSE(Flag(cpu, kCpsrN));
+}
+
+TEST(Cpu, MulsSetsNegativeFlagWhenResultBit31Set) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0x10000);
+  cpu.SetRegister(kR2, 0x8001);
+  cpu.GetMemory().Write32(0, 0xE0100291);  // MULS R0, R1, R2
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0x80010000u);
+  EXPECT_TRUE(Flag(cpu, kCpsrN));
+  EXPECT_FALSE(Flag(cpu, kCpsrZ));
+}
+
+TEST(Cpu, MlaAddsAccumulator) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 6);
+  cpu.SetRegister(kR2, 7);
+  cpu.SetRegister(kR3, 100);
+  cpu.GetMemory().Write32(0, 0xE0203291);  // MLA R0, R1, R2, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 142u);  // 6*7 + 100
+}
+
+TEST(Cpu, UmullComputesFullUnsigned64BitProduct) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR2, 0xFFFFFFFFu);  // Rm
+  cpu.SetRegister(kR3, 0xFFFFFFFFu);  // Rs
+  cpu.GetMemory().Write32(0, 0xE0810392);  // UMULL R0, R1, R2, R3 (RdLo=R0, RdHi=R1)
+  cpu.Step();
+  // 0xFFFFFFFF^2 = 0xFFFFFFFE00000001 -- exercises the full 64-bit
+  // width, not just what fits in one 32-bit register.
+  EXPECT_EQ(cpu.GetRegister(kR0), 0x00000001u);
+  EXPECT_EQ(cpu.GetRegister(kR1), 0xFFFFFFFEu);
+}
+
+TEST(Cpu, UmlalAccumulatesWithCarryFromLowToHighWord) {
+  ArmInterpreter cpu;
+  // Pre-existing 64-bit accumulator = 0x00000000FFFFFFFF.
+  cpu.SetRegister(kR0, 0xFFFFFFFFu);  // RdLo
+  cpu.SetRegister(kR1, 0x00000000u);  // RdHi
+  cpu.SetRegister(kR2, 1);            // Rm
+  cpu.SetRegister(kR3, 1);            // Rs
+  cpu.GetMemory().Write32(0, 0xE0A10392);  // UMLAL R0, R1, R2, R3
+  cpu.Step();
+  // 0xFFFFFFFF + (1*1) = 0x100000000 -- the carry must propagate into
+  // RdHi, not just wrap RdLo silently.
+  EXPECT_EQ(cpu.GetRegister(kR0), 0u);
+  EXPECT_EQ(cpu.GetRegister(kR1), 1u);
+}
+
+TEST(Cpu, SmullComputesSignedProductCorrectly) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR2, static_cast<uint32_t>(-5));  // Rm
+  cpu.SetRegister(kR3, 10);                          // Rs
+  cpu.GetMemory().Write32(0, 0xE0C10392);  // SMULL R0, R1, R2, R3
+  cpu.Step();
+  // -5 * 10 = -50 = 0xFFFFFFFFFFFFFFCE as a 64-bit two's-complement value.
+  EXPECT_EQ(cpu.GetRegister(kR0), 0xFFFFFFCEu);
+  EXPECT_EQ(cpu.GetRegister(kR1), 0xFFFFFFFFu);
+}
+
+TEST(Cpu, SmullsSetsNegativeFlagFromBit63) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR2, static_cast<uint32_t>(-5));
+  cpu.SetRegister(kR3, 10);
+  cpu.GetMemory().Write32(0, 0xE0D10392);  // SMULLS R0, R1, R2, R3
+  cpu.Step();
+  EXPECT_TRUE(Flag(cpu, kCpsrN)) << "bit63 of a negative 64-bit result must be reflected in N";
+  EXPECT_FALSE(Flag(cpu, kCpsrZ));
 }
 
 TEST(Cpu, BranchExchangeJumpsToArmTarget) {
