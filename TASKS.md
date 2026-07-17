@@ -447,6 +447,22 @@ its own GGZ-backed assets through real, vtable-order-verified `IFile`/
 Exit criterion: the target test game's 3D/2D rendering appears on screen,
 even if visually imperfect.
 
+**Every task below is done, but the phase's literal exit criterion
+(Double Dragon's own rendering on screen) is intentionally not yet
+attempted — that's Phase 8's job** ("iteratively debug against the real
+game, filling HLE API gaps as they're hit"), same relationship Phase
+3/4's HLE work had to M1. What's actually proven here: the full `IGL`/
+`IEGL` HLE surface needed for basic GLES1.x rendering exists, is real
+vtable-order-verified, is forwarded to a real host OpenGL context, and
+has been validated end-to-end against real compiled ARM code (our own
+clean-room fixture, not Qualcomm's) producing a real, correctly-rendered,
+color-interpolated triangle — not just unit tests driving the dispatch
+logic directly. Known gaps deliberately left for when a real game
+actually needs them: texture-combiner/lighting state, `glDrawElements`
+real host-side index buffers (currently de-indexed, see below),
+compressed textures, and — likely the more immediate blocker for any
+real title — the CPU's still-unimplemented multiply instruction.
+
 - [x] **Research: how BREW-era GLES actually reaches the OS — real
       architecture found, materially simpler than originally assumed.**
       Real Qualcomm sample `.mak` build rules show `EGL_1x.c`/`GLES_1x.c`/
@@ -609,8 +625,64 @@ even if visually imperfect.
       is a stack-passed (5th) argument, and the first version of this code
       never set `SP` before calling it — would have read/written through
       whatever garbage address happened to be left over in memory.
-- [ ] Validate against SDK sample apps that exercise GLES before touching
-      the target commercial game
+- [x] **Validate against a real compiled GLES-exercising app — done via a
+      clean-room fixture, not Qualcomm's actual sample source (same
+      policy as `hello_brew.c`).** Real Qualcomm OGLES sample source
+      (`simple_drawtexture.c` etc.) needs the real `EGL_1x.c`/`GLES_1x.c`
+      wrapper compiled alongside it, which is real Qualcomm source we
+      keep research-only/uncommitted — and more importantly, real samples
+      pull in floating-point math and other complexity likely to hit the
+      still-unimplemented CPU multiply instruction immediately. Instead,
+      wrote `tests/fixtures/hello_gl/hello_gl.c`: our own minimal app,
+      structurally identical to `hello_brew.c`'s `AEEMod_Load` ->
+      `CreateInstance` -> `HandleEvent` lifecycle, but dispatching through
+      the real, verified `IGL`/`IEGL` vtable slot order directly (no
+      floating point anywhere — all fixed-point values are compile-time
+      integer constants — so nothing here depends on soft-float library
+      routines the interpreter doesn't support). It drives the full real
+      EGL lifecycle, sets up an orthographic projection, and draws a
+      single hardcoded red/green/blue triangle via
+      `glVertexPointer`/`glColorPointer`/`glDrawArrays`. Compiled with
+      the same `arm-none-eabi-gcc` toolchain as `hello_brew.c`; objdump
+      confirms every vtable call compiles to a real `blx r3`/`blx r4`
+      (register-form BLX, already implemented) with no `mul`/`mla`
+      anywhere in the function.
+      **New integration test** (`tests/gl_lifecycle_test.cpp`,
+      `GlLifecycle.HelloGlAppDrawsRealTriangleThroughRealVtableDispatch`):
+      loads the real compiled `.bin`, drives it through the real
+      lifecycle exactly like `brew_lifecycle_test.cpp` does, and asserts
+      on every stage a `RecordingGlBackend` observed — matrix
+      mode/ortho/viewport values, the clear color/mask, and the exact
+      triangle vertex positions and normalized colors gathered by real
+      compiled ARM code from real emulated memory. Passed on the first
+      run. 98/98 project tests green.
+      **Also wired into the standalone frontend and screenshot-verified
+      with real host OpenGL** (not just the recording fake): the second
+      window now loads and runs `hello_gl.bin` for real instead of this
+      file hand-driving the EGL/GL calls, and rasterizes a real,
+      correctly color-interpolated RGB triangle via `Sdl2GlBackend`.
+      **Found and fixed a genuine, previously-latent bug in the process,
+      not just in the new code**: `hello_gl.bin` (and, confirmed via the
+      same objdump check, `hello_brew.bin` too, unnoticed until now)
+      isn't actually position-independent the way Phase 2 established
+      `.mod`s should be — `arm-none-eabi-gcc` without `-fPIC`/ROPI flags
+      bakes `&g_module`'s *absolute* link-time address into a literal
+      pool (`ldr r2, [pc, #20]` loading a fixed `.word`) rather than
+      computing it PC-relative. This was invisible before because every
+      existing fixture/test always happened to load its `.mod` at
+      exactly the address it was linked for (`0x00100000`) — this was
+      the first thing in the project to attempt loading a second,
+      independent `.mod` (at a different address, in the same memory
+      space as `hello_brew`), which surfaced it immediately as a `0x0`
+      function pointer three calls deep. A real BREW-compiled `.mod`
+      (RVCT `armcc --apcs /ropi`) is genuinely position-independent and
+      wouldn't have this problem — it's specific to our own gcc-built
+      test-fixture convention, not a real ABI gap — so the fix was to
+      give the GL demo its own independent `ArmInterpreter`/`HleRuntime`
+      (a completely separate address space) rather than trying to make
+      the fixture build truly position-independent, which is not
+      currently needed anywhere else. Worth remembering if a future
+      fixture ever needs genuine load-address independence.
 
 ## Phase 6 — Audio
 Exit criterion: target test game's audio plays back correctly.

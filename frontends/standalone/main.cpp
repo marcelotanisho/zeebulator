@@ -20,6 +20,7 @@
 #include "core/loader/mod.h"
 #include "frontends/standalone/sdl2_gl_backend.h"
 #include "tests/fixtures/hello_brew/entry_offset.h"
+#include "tests/fixtures/hello_gl/entry_offset.h"
 
 namespace {
 
@@ -117,56 +118,77 @@ int main(int argc, char** argv) {
 
   std::printf("Zeebulator: hello_brew booted -- window should show a white block\n");
 
-  // --- Phase 5 GL smoke test -----------------------------------------
-  // Separate window, separate real GL context: proves the IGL/IEGL HLE
-  // vtables actually reach a real host OpenGL context end to end (real
-  // vtable dispatch -> GlHle -> Sdl2GlBackend -> real desktop GL calls ->
-  // a visible pixel), independent of the hello_brew/IDisplay path above.
-  // No compiled ARM binary drives this yet (that's TASKS.md Phase 5's
-  // next item, "validate against SDK sample apps") -- these calls are
-  // made the same way the app-lifecycle calls above are, directly via
-  // HleRuntime::CallArmFunction, exercising the exact same vtable/HLE
-  // dispatch path real compiled code would use.
+  // --- Phase 5 GL demo: real compiled ARM code, not hand-driven calls ---
+  // Separate window, separate real GL context, and (unlike the
+  // hello_brew section above) a separate CPU/memory instance entirely:
+  // proves the IGL/IEGL HLE vtables reach a real host OpenGL context end
+  // to end, through real compiled ARM code exercising the vtable
+  // dispatch itself -- see tests/fixtures/hello_gl/ and TASKS.md Phase
+  // 5's "validate against SDK sample apps" item.
+  //
+  // Why a separate CPU instance, not just a different load address in
+  // the shared one (as first attempted): hello_gl.bin (like hello_brew.c
+  // before it) turns out not to be truly position-independent --
+  // `arm-none-eabi-gcc` without `-fPIC`/ROPI flags bakes `&g_module`'s
+  // *absolute* link-time address (0x001013e8) into a literal pool rather
+  // than computing it PC-relative, confirmed via objdump (`ldr r2, [pc,
+  // #20]` loading a fixed `.word 0x001013e8`). That only ever worked
+  // before because every existing fixture happened to be loaded at
+  // exactly the address it was linked for (0x00100000) -- this demo is
+  // the first thing in the project to actually attempt loading a second,
+  // independent `.mod` alongside another, which surfaced it. A real
+  // BREW-compiled `.mod` (RVCT `armcc --apcs /ropi`) doesn't have this
+  // problem; it's specific to our own gcc-built test-fixture convention,
+  // not a real ABI gap -- worth revisiting if a future fixture needs
+  // true load-address independence, but the easy, correct fix here is to
+  // just give this demo its own CPU/memory space and load hello_gl.bin
+  // at the same 0x00100000 base it was linked for.
+  std::ifstream gl_in(HELLO_GL_FIXTURE_PATH, std::ios::binary);
+  std::vector<uint8_t> gl_mod_data((std::istreambuf_iterator<char>(gl_in)),
+                                    std::istreambuf_iterator<char>());
+
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
   SDL_Window* gl_window =
-      SDL_CreateWindow("Zeebulator - GL smoke test", SDL_WINDOWPOS_CENTERED,
-                        SDL_WINDOWPOS_CENTERED, kWidth, kHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
+      SDL_CreateWindow("Zeebulator - hello_gl", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                        kWidth, kHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
 
+  zeebulator::ArmInterpreter gl_cpu;
+  zeebulator::HleRuntime gl_hle_runtime(gl_cpu, 0xF0000000, 0x10000);
   zeebulator::Sdl2GlBackend gl_backend(gl_window);
   zeebulator::GlHle gl_hle(gl_backend);
-  uint32_t gl_obj = gl_hle.BuildGl(cpu.GetMemory(), hle, /*vtable=*/0x80004000,
-                                    /*object=*/0x80005000);
-  uint32_t egl_obj = gl_hle.BuildEgl(cpu.GetMemory(), hle, /*vtable=*/0x80006000,
-                                      /*object=*/0x80007000);
-  (void)gl_obj;
+  uint32_t gl_obj = gl_hle.BuildGl(gl_cpu.GetMemory(), gl_hle_runtime, /*vtable=*/0x80000000,
+                                    /*object=*/0x80001000);
+  uint32_t egl_obj = gl_hle.BuildEgl(gl_cpu.GetMemory(), gl_hle_runtime, /*vtable=*/0x80002000,
+                                      /*object=*/0x80003000);
 
-  auto EglSlot = [&](uint32_t slot) { return mem.Read32(0x80006000 + slot * 4); };
-  auto GlSlot = [&](uint32_t slot) { return mem.Read32(0x80004000 + slot * 4); };
+  constexpr uint32_t kGlBase = 0x00100000;  // hello_gl.bin's own link base
+  zeebulator::LoadMod(gl_cpu, gl_mod_data, kGlBase);
+  uint32_t gl_entry = kGlBase + kHelloGlAeeModLoadOffset;
 
-  uint32_t egl_display = hle.CallArmFunction(EglSlot(4), 0);              // eglGetDisplay
-  hle.CallArmFunction(EglSlot(5), egl_display, 0, 0);                     // eglInitialize
-  uint32_t configs_out = 0x00091000, num_config_out = 0x00091004;
-  uint32_t stack_args = 0x00091008;
-  cpu.SetRegister(zeebulator::kSP, stack_args);
-  mem.Write32(stack_args, num_config_out);  // eglChooseConfig's 5th arg (num_config*)
-  hle.CallArmFunction(EglSlot(10), egl_display, 0, configs_out, 1);       // eglChooseConfig
-  uint32_t config = mem.Read32(configs_out);
-  uint32_t surface =
-      hle.CallArmFunction(EglSlot(12), egl_display, config, 0, 0);       // eglCreateWindowSurface
-  uint32_t context =
-      hle.CallArmFunction(EglSlot(17), egl_display, config, 0, 0);       // eglCreateContext
-  hle.CallArmFunction(EglSlot(19), egl_display, surface, surface, context);  // eglMakeCurrent
+  constexpr uint32_t kGlPpModAddr = 0x00090000;
+  gl_hle_runtime.CallArmFunction(gl_entry, /*pIShell=*/0, /*ph=*/0, /*ppMod=*/kGlPpModAddr);
+  auto& gl_mem = gl_cpu.GetMemory();
+  uint32_t gl_module_ptr = gl_mem.Read32(kGlPpModAddr);
+  uint32_t gl_module_vtable = gl_mem.Read32(gl_module_ptr);
+  uint32_t gl_create_instance_fn = gl_mem.Read32(gl_module_vtable + 2 * 4);
 
-  // Distinct teal clear color -- unambiguous against both black (no-op)
-  // and white (the hello_brew window's block) in a screenshot.
-  constexpr uint32_t kFixedOne = 1u << 16;
-  hle.CallArmFunction(GlSlot(8), 0, kFixedOne / 2, kFixedOne / 2, kFixedOne);  // glClearColorx
-  hle.CallArmFunction(GlSlot(7), 0x4000);                                     // glClear(GL_COLOR_BUFFER_BIT)
-  hle.CallArmFunction(EglSlot(26), egl_display, surface);                     // eglSwapBuffers
+  constexpr uint32_t kGlPpObjAddr = 0x00090010;
+  gl_hle_runtime.CallArmFunction(gl_create_instance_fn, gl_module_ptr, /*pIShell=*/0,
+                                  /*ClsId=*/0x5678, kGlPpObjAddr);
+  uint32_t gl_handle_event_fn = gl_mem.Read32(kGlPpObjAddr);
+
+  // GlDemoParams { IGL *pIGL; IEGL *pIEGL; } -- see hello_gl.c.
+  constexpr uint32_t kGlParamsAddr = 0x00090020;
+  gl_mem.Write32(kGlParamsAddr + 0, gl_obj);
+  gl_mem.Write32(kGlParamsAddr + 4, egl_obj);
+
+  constexpr uint32_t kTestEvtGlDemo = 2;  // matches hello_gl.c's own constant
+  gl_hle_runtime.CallArmFunction(gl_handle_event_fn, /*pMe=*/0, kTestEvtGlDemo, /*wParam=*/0,
+                                  kGlParamsAddr);
 
   std::printf(
-      "Zeebulator: GL smoke test done -- second window should show a solid teal fill\n");
-  (void)egl_obj;
+      "Zeebulator: hello_gl booted -- second window should show a real "
+      "red/green/blue triangle\n");
 
   bool running = true;
   SDL_Event event;

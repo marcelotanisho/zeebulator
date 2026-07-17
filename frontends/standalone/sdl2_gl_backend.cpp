@@ -1,5 +1,7 @@
 #include "frontends/standalone/sdl2_gl_backend.h"
 
+#include <cstdio>
+
 #if defined(_WIN32)
 #include <windows.h>
 #include <GL/gl.h>
@@ -18,7 +20,10 @@ Sdl2GlBackend::~Sdl2GlBackend() { DestroyContext(); }
 bool Sdl2GlBackend::CreateContext() {
   if (gl_context_ != nullptr) return true;
   gl_context_ = SDL_GL_CreateContext(window_);
-  if (gl_context_ == nullptr) return false;
+  if (gl_context_ == nullptr) {
+    std::fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
+    return false;
+  }
   SDL_GL_MakeCurrent(window_, gl_context_);
   return true;
 }

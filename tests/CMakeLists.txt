@@ -22,6 +22,7 @@ add_executable(zeebulator_tests
   virtual_filesystem_test.cpp
   file_hle_test.cpp
   gl_hle_test.cpp
+  gl_lifecycle_test.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)
