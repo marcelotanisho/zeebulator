@@ -1557,6 +1557,44 @@ playable start-to-finish at full speed, standalone build.
       value and its downstream consumption, not verifying one, so
       deliberately stopped here rather than fabricate behavior. Tracked
       as the next concrete step.
+      **Follow-up research pass, no behavior changes**: went back
+      through two more bundled-but-previously-unopened real resources --
+      `research/docs/sdk_installer_extract/ZeeboSDKPackage-1.2.4/
+      samples.zip` (a *second*, larger real OGLES sample set beyond the
+      already-extracted `MSM7500_OGLES_...` one -- turned out to be the
+      same samples, but worth the check) and
+      `ZeeboDeveloperGuide0.97.pdf` (readable via `pdftotext`, not yet
+      read this session). Two payoffs, both corroborating rather than
+      contradicting earlier scaffolds (no code changes needed, comments
+      updated for the next reader):
+      - `simple_drawtexture.c` (a real bundled sample) does exactly
+        `IDISPLAY_GetDeviceBitmap(...)` then
+        `IBITMAP_QueryInterface(pIBitmapDDB, AEECLSID_DIB,
+        (void**)&pDIB)`, then casts `pDIB` straight to
+        `NativeWindowType` for `eglCreateWindowSurface` -- matching, in
+        both call shape *and* downstream use, exactly what Double
+        Dragon's own disassembly showed for the still-unidentified
+        `0x01001045` scaffold. Strongly suggests `0x01001045 ==
+        AEECLSID_DIB`, though (unlike `AEECLSID_GL`/`EGL`/`HID`) the
+        numeric literal itself isn't in any bundled header, so this is
+        circumstantial, not confirmed.
+      - The dev guide's own IHID walkthrough creates
+        `AEECLSID_SignalCBFactory` immediately after `AEECLSID_HID`, to
+        back IHID's connect/button-event `ISignal` callbacks -- the same
+        order Double Dragon's disassembly showed for the still-
+        unidentified `0x01041207`. Same caveat: matching order, not a
+        confirmed literal. Also caught and fixed a wrong comment while
+        cross-checking this: `0x01041207` is NOT gated on finding a real
+        joystick (`GetConnectedDevices`'s own success/fail, not its
+        device count, controls whether it's reached) -- it fires
+        unconditionally in this run, and was already being scaffolded
+        correctly; only the explanatory comment was wrong.
+      Also confirmed `IFont`/`ISprite` are real, Zeebo-supported
+      interfaces (per the dev guide's feature table) -- plausible
+      candidates for what `0x01001003`'s family is *for*, but with no
+      numeric ID or call-shape example anywhere in the bundled
+      materials, using that to implement slot 2's real behavior would
+      still be guessing, not verifying -- left as-is.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

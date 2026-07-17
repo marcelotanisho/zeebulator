@@ -221,7 +221,19 @@ int main(int argc, char** argv) {
   // "QueryInterface"-shaped way (obj, clsid=0x01001045, &ppo) and the
   // result immediately Release()'d if null -- so unlike the other
   // scaffolds so far, this one slot needs a real (if still generic)
-  // implementation, not a blind Stub.
+  // implementation, not a blind Stub. clsid=0x01001045 is very likely
+  // real AEECLSID_DIB: a real bundled BREW OGLES sample
+  // (simple_drawtexture.c, under research/docs/sdk_installer_extract/
+  // ZeeboSDKPackage-1.2.4/samples.zip) does exactly this same call --
+  // `IBITMAP_QueryInterface(pIBitmapDDB, AEECLSID_DIB, (void**)&pDIB)`
+  // right after `IDISPLAY_GetDeviceBitmap` -- then casts the result
+  // straight to `NativeWindowType` for `eglCreateWindowSurface`, which
+  // is exactly how the scaffold below gets used one call site over.
+  // The numeric ClsId itself isn't in any bundled header (only the
+  // matching call shape + matching downstream use), so this is strong
+  // circumstantial evidence, not a confirmed literal match like
+  // AEECLSID_GL/EGL/HID above -- doesn't change any behavior either way
+  // since the scaffold is generic regardless of the class's real name.
   uint32_t unknown_0x01001045_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x80018000, /*object=*/0x80019000, /*slot_count=*/20);
   uint32_t device_bitmap_obj = zeebulator::BuildStubObjectWithOverride(
@@ -297,9 +309,15 @@ int main(int argc, char** argv) {
         core.SetRegister(zeebulator::kR0, 0);  // AEE_SUCCESS
       });
   shell_hle.RegisterInstance(/*AEECLSID_HID=*/0x0106c411, hid_obj);
-  // A second class this same routine requires next, if a device were
-  // found -- not yet identified (only reachable with >=1 connected
-  // joystick, which we don't have), so a generic scaffold covers it.
+  // A second class this same routine unconditionally requires next
+  // (gated on GetConnectedDevices' own success, not on device count --
+  // still reached with zero devices). Very likely AEECLSID_SignalCBFactory:
+  // the bundled ZeeboDeveloperGuide0.97.pdf's own IHID walkthrough
+  // creates exactly this class immediately after AEECLSID_HID, to build
+  // the ISignal objects IHID's connect/button notifications need --
+  // matching call order, but (like AEECLSID_DIB above) not a confirmed
+  // literal match, so still a generic scaffold rather than assumed
+  // real behavior.
   uint32_t unknown_0x01041207_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x8001E000, /*object=*/0x8001F000, /*slot_count=*/20);
   shell_hle.RegisterInstance(0x01041207, unknown_0x01041207_obj);
