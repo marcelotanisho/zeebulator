@@ -192,10 +192,17 @@ TEST(IDisplayHle, DrawTextThenUpdatePushesCorrectFrame) {
   EXPECT_EQ(backend.last_height, 48);
   EXPECT_EQ(backend.last_format, PixelFormat::kRGB565);
 
-  // "HI" is 2 chars, glyph block is 6x8 -> a 12x8 white block at (10,5).
-  EXPECT_EQ(backend.last_frame[5 * 64 + 10], 0xFFFF) << "inside the drawn block";
-  EXPECT_EQ(backend.last_frame[5 * 64 + 21], 0xFFFF) << "still inside (x=21 < 10+12)";
-  EXPECT_EQ(backend.last_frame[5 * 64 + 23], 0u) << "outside the drawn block (x=23 >= 10+12)";
+  // "HI" is 2 real 5x7 glyphs on 6x8 cells starting at (10,5): H at
+  // x=[10,14], I at x=[16,20], with a 1px blank spacing column at x=15.
+  auto Px = [&](int x, int y) { return backend.last_frame[static_cast<size_t>(y) * 64 + x]; };
+  EXPECT_EQ(Px(10, 5), 0xFFFFu) << "H top-left corner is set (H's top row is #...#)";
+  EXPECT_EQ(Px(12, 5), 0u) << "H top-middle is clear (H's top row is #...#)";
+  EXPECT_EQ(Px(10, 8), 0xFFFFu) << "H's crossbar row is set across the glyph";
+  EXPECT_EQ(Px(12, 8), 0xFFFFu) << "H's crossbar row is set across the glyph";
+  EXPECT_EQ(Px(15, 5), 0u) << "1px spacing column between glyphs stays clear";
+  EXPECT_EQ(Px(16, 5), 0xFFFFu) << "I's top row is full (#####)";
+  EXPECT_EQ(Px(18, 8), 0xFFFFu) << "I's centered stem is set on the crossbar row";
+  EXPECT_EQ(Px(16, 8), 0u) << "I's stem is centered, not on the left edge";
   EXPECT_EQ(backend.last_frame[0], 0u) << "untouched pixel stays black";
 }
 

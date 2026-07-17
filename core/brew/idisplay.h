@@ -15,14 +15,13 @@ namespace zeebulator {
 // slot order verified directly against Qualcomm's own AEEIDisplay.h --
 // see TASKS.md Phase 3.
 //
-// DrawText does not rasterize real glyphs yet (that's font/graphics
-// work, out of scope for M0) -- it draws a simple placeholder block
-// sized from the real (x, y, length) arguments, which is enough to prove
-// the whole call path (real compiled ARM code -> vtable dispatch -> HLE
-// -> framebuffer -> Backend) actually works end to end. It now uses the
-// last color SetColor() set instead of a hardcoded white, so text is at
-// least visually distinguishable once real games start setting colors
-// (confirmed real games do -- see TASKS.md Phase 8).
+// DrawText rasterizes real glyphs using the small self-authored 5x7
+// bitmap font in font5x7.h (uppercase Latin letters, digits, space;
+// anything else falls back to a small box) -- lowercase is folded to
+// uppercase since the font doesn't have a separate lowercase set. Uses
+// the last color SetColor() set instead of a hardcoded white, so text
+// reflects real games' actual color choices (confirmed real games set
+// one -- see TASKS.md Phase 8).
 //
 // DrawRect/SetColor treat RGBVAL as the common real-BREW 0x00RRGGBB
 // packing (`MAKE_RGB(r,g,b)`, per the real AEEIDisplay.h reference doc

@@ -1285,9 +1285,31 @@ playable start-to-finish at full speed, standalone build.
       cleanly by `game_probe`'s own exception handling (prints and
       continues) rather than crashing the tool, confirming that
       safety net holds up under real, unplanned input too. Not yet
-      root-caused. Tracked as the next concrete step, alongside real
-      glyph rendering (needed to make any of this visually legible) and
-      further exploring which key codes map to which real game actions.
+      root-caused.
+      **Implemented real glyph rendering**: `core/brew/font5x7.{h,cpp}`,
+      a small, self-authored 5x7 bitmap font (uppercase Latin letters,
+      digits, space; anything else falls back to a small box) --
+      hand-designed for this project, not extracted from any real game
+      or copied from a third-party font table, consistent with
+      `CONTRIBUTING.md`'s clean-room policy. `IDisplayHle::DrawText` now
+      rasterizes real per-character glyphs (folding lowercase to
+      uppercase, since the font only has one case) instead of a solid
+      placeholder block. Updated the two existing `DrawText` tests
+      (`IDisplayHle.DrawTextThenUpdatePushesCorrectFrame`,
+      `BrewLifecycle.HelloBrewAppDrawsTextAndUpdatesScreen`) to check
+      real glyph-shaped pixel patterns instead of solid-block bounds,
+      and added 5 new `Font5x7` unit tests.
+      **Reran against the real game**: the screenshot now shows
+      genuinely distinct per-character shapes for the first time (not a
+      solid block) -- real, verifiable progress -- but most of the
+      drawn characters fall back to the generic box rather than a real
+      letter, meaning the six real HUD strings likely use lowercase
+      and/or punctuation the current font doesn't cover yet. Expanding
+      the font's coverage (lowercase, common punctuation) would likely
+      make the real text legible; not done this pass -- tracked as the
+      next concrete step, alongside root-causing the new key-input gap
+      and further exploring which key codes map to which real game
+      actions.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

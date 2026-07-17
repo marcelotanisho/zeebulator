@@ -116,9 +116,11 @@ TEST(BrewLifecycle, HelloBrewAppDrawsTextAndUpdatesScreen) {
   ASSERT_EQ(backend.push_count, 1) << "HandleEvent should have called IDISPLAY_Update once";
   EXPECT_EQ(backend.last_width, 64);
   EXPECT_EQ(backend.last_height, 48);
-  // hello_brew.c draws "Hello" (5 chars) at (10, 10); DrawText's
-  // placeholder glyph block is 6x8 px/char -> a 30x8 white block there.
-  EXPECT_EQ(backend.last_frame[10 * 64 + 10], 0xFFFFu) << "inside the drawn block";
-  EXPECT_EQ(backend.last_frame[10 * 64 + 39], 0xFFFFu) << "still inside (x=39 < 10+30)";
-  EXPECT_EQ(backend.last_frame[10 * 64 + 41], 0u) << "outside the drawn block";
+  // hello_brew.c draws "Hello" (5 chars, lowercase folded to uppercase
+  // by DrawText -- font5x7 only has uppercase) at (10, 10) on 6x8 cells:
+  // H=[10,14] E=[16,20] L=[22,26] L=[28,32] O=[34,38].
+  EXPECT_EQ(backend.last_frame[10 * 64 + 10], 0xFFFFu) << "H's top-left corner (top row #...#)";
+  EXPECT_EQ(backend.last_frame[10 * 64 + 16], 0xFFFFu) << "E's top-left corner (top row #####)";
+  EXPECT_EQ(backend.last_frame[10 * 64 + 35], 0xFFFFu) << "O's top row is .###. -- middle is set";
+  EXPECT_EQ(backend.last_frame[10 * 64 + 41], 0u) << "outside the drawn text";
 }

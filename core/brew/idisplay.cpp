@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "core/brew/font5x7.h"
 #include "core/brew/interface_object.h"
 
 namespace zeebulator {
@@ -46,14 +47,25 @@ void IDisplayHle::DrawText(IArmCore& core) {
     }
   }
 
+  // 5x7 glyphs on a 6x8 cell (1px spacing right/below each glyph).
   constexpr int kGlyphW = 6;
-  constexpr int kGlyphH = 8;
-  for (int cy = 0; cy < kGlyphH; ++cy) {
-    for (int cx = 0; cx < len * kGlyphW; ++cx) {
-      int px = x + cx;
-      int py = y + cy;
-      if (px >= 0 && px < width_ && py >= 0 && py < height_) {
-        framebuffer_[static_cast<size_t>(py) * width_ + px] = ToRgb565(current_rgbval_);
+  uint16_t color = ToRgb565(current_rgbval_);
+  auto& mem = core.GetMemory();
+  for (int i = 0; i < len; ++i) {
+    uint16_t code_unit = mem.Read16(pc_text + static_cast<uint32_t>(i) * 2);
+    char c = (code_unit < 128) ? static_cast<char>(code_unit) : '\0';
+    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    const uint8_t* glyph = GetGlyph5x7(c);
+    if (glyph == nullptr) continue;  // space: nothing to draw
+    for (int row = 0; row < 7; ++row) {
+      uint8_t bits = glyph[row];
+      for (int col = 0; col < 5; ++col) {
+        if ((bits & (1u << (4 - col))) == 0) continue;
+        int px = x + i * kGlyphW + col;
+        int py = y + row;
+        if (px >= 0 && px < width_ && py >= 0 && py < height_) {
+          framebuffer_[static_cast<size_t>(py) * width_ + px] = color;
+        }
       }
     }
   }
