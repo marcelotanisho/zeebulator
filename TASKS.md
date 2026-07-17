@@ -1667,6 +1667,44 @@ playable start-to-finish at full speed, standalone build.
       as the next concrete step: find what actually jumps to null in
       tick 4 (a fresh instruction trace + objdump, same technique as
       every fix this session, should pin it down directly).
+      **Found and fixed it**: an instruction trace of tick 4 (temporary
+      `trace=true` on that one tick, removed after use) pinned the null
+      jump to `ddragonz.mod` offset `0x23d0c` -- `ldr r3, [r0, #0x13c]`
+      off the static-base table, a **twelfth** table slot never mapped
+      (offsets `0x0`/`0x4`/`0x8`/`0x14`/`0x68`/`0x6c`/`0xb0`/`0xc0`/
+      `0xe4`/`0xe8` were already confirmed; this is `0x13c`). Reading
+      the actual arguments off the trace (not guessing): R1 wasn't a
+      plain integer as the calling convention alone might suggest -- it
+      was itself a real string pointer, and reading that string
+      directly out of the file gave `"ERROR CODE:%d"`. That, plus the
+      call being immediately followed by `STRLEN` on the destination
+      buffer, confirms a `sprintf`-family formatter -- unusual only in
+      that its third argument is `void **ppArgs` (a pointer to an
+      *advancing* args cursor, matching the double indirection at the
+      call site) rather than a plain `va_list`. Implemented as
+      `ModRuntime::SprintfImpl` supporting `%d`/`%u`/`%x`/`%X`/`%s`/`%c`/
+      `%%` (no width/precision/flags -- no evidence any real call needs
+      them yet). 3 new tests in `tests/mod_runtime_test.cpp`, including
+      one that reproduces the exact real confirmed case
+      (`"ERROR CODE:%d"` + arg `5` -> `"ERROR CODE:5"`, and confirms the
+      args cursor advances correctly).
+      **Verified against the real game**: the crash is gone -- the
+      previous ~15-second run (bounded by an external timeout, not a
+      crash) now runs cleanly through many more ticks with zero
+      exceptions, actually calling the new sprintf slot with the real
+      confirmed string and formatting a real error code into it
+      (screenshotted: the display now shows a different, several-line
+      message -- no longer the old "insufficient memory" dialog -- most
+      characters still render as the small unmapped-character fallback
+      box, consistent with the still-unresolved byte-swapped-string
+      quirk documented earlier in Phase 8, now applying to this new
+      string instead). Not yet investigated: *why* the game is
+      formatting an "ERROR CODE" message at all at this point (i.e.
+      what real error condition it detected, and whether it's a
+      legitimate real-hardware error path or something this emulator is
+      still getting wrong upstream) -- tracked as the next concrete
+      step, alongside decoding the message's actual text once the
+      byte-swapped-string handling is revisited.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

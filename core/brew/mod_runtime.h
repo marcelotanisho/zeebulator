@@ -113,7 +113,20 @@ namespace zeebulator {
 // idiom, matching ANSI `char *strstr(const char *haystack, const char
 // *needle)` precisely.
 //
-// Only these ten table slots are confirmed by real disassembly so
+// An eleventh slot, offset 0x13c, is a sprintf-family formatter: a real
+// call site (`ddragonz.mod` offset 0x23d0c, part of the per-tick loop
+// -- see TASKS.md Phase 8) calls it with `(dest=a stack buffer,
+// fmt=a real literal string, ppArgs=&(a stack slot holding a pointer to
+// a second stack buffer))`; reading the format string directly out of
+// the real file's bytes at that literal's address gives `"ERROR
+// CODE:%d"`. The double indirection on the third argument (a pointer to
+// a cursor, not a plain `va_list`) is unlike a standard `vsprintf` --
+// implemented as `int Func(char *dest, const char *fmt, void **ppArgs)`
+// where `*ppArgs` is advanced 4 bytes (this ABI's word size) per
+// consumed argument. See ModRuntime::SprintfImpl for which format
+// directives are supported.
+//
+// Only these eleven table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -159,6 +172,7 @@ class ModRuntime {
   void StrcpyImpl(IArmCore& core);
   void BoundedStrcpyImpl(IArmCore& core);
   void StrstrImpl(IArmCore& core);
+  void SprintfImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);
 

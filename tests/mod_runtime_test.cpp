@@ -16,6 +16,7 @@ constexpr uint32_t kStrlenSlotOffset = 0x14;
 constexpr uint32_t kStrcpySlotOffset = 0x8;
 constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
 constexpr uint32_t kStrstrSlotOffset = 0xe8;
+constexpr uint32_t kSprintfSlotOffset = 0x13c;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
@@ -340,4 +341,75 @@ TEST(ModRuntime, StrstrWithEmptyNeedleReturnsHaystack) {
   WriteCString(cpu.GetMemory(), kNeedle, "");
 
   EXPECT_EQ(hle.CallArmFunction(strstr_fn, kHaystack, kNeedle), kHaystack);
+}
+
+namespace {
+std::string ReadCString(zeebulator::Memory& memory, uint32_t addr) {
+  std::string s;
+  for (uint8_t c = memory.Read8(addr); c != 0; c = memory.Read8(++addr)) {
+    s.push_back(static_cast<char>(c));
+  }
+  return s;
+}
+}  // namespace
+
+TEST(ModRuntime, SprintfFormatsARealConfirmedErrorCodeMessage) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sprintf_fn = cpu.GetMemory().Read32(kTableAddress + kSprintfSlotOffset);
+
+  constexpr uint32_t kDest = 0x80300100;
+  constexpr uint32_t kFmt = 0x80300200;
+  constexpr uint32_t kArgs = 0x80300300;
+  constexpr uint32_t kArgsCursor = 0x80300400;
+  WriteCString(cpu.GetMemory(), kFmt, "ERROR CODE:%d");  // real string, TASKS.md Phase 8
+  cpu.GetMemory().Write32(kArgs, 5);
+  cpu.GetMemory().Write32(kArgsCursor, kArgs);
+
+  uint32_t written = hle.CallArmFunction(sprintf_fn, kDest, kFmt, kArgsCursor);
+  EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "ERROR CODE:5");
+  EXPECT_EQ(written, 12u);
+  EXPECT_EQ(cpu.GetMemory().Read32(kArgsCursor), kArgs + 4) << "cursor advanced past the one arg";
+}
+
+TEST(ModRuntime, SprintfSupportsStringHexCharAndLiteralPercent) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sprintf_fn = cpu.GetMemory().Read32(kTableAddress + kSprintfSlotOffset);
+
+  constexpr uint32_t kDest = 0x80300100;
+  constexpr uint32_t kFmt = 0x80300200;
+  constexpr uint32_t kStr = 0x80300280;
+  constexpr uint32_t kArgs = 0x80300300;
+  constexpr uint32_t kArgsCursor = 0x80300400;
+  WriteCString(cpu.GetMemory(), kFmt, "%s=%x%% [%c]");
+  WriteCString(cpu.GetMemory(), kStr, "hp");
+  cpu.GetMemory().Write32(kArgs + 0, kStr);
+  cpu.GetMemory().Write32(kArgs + 4, 0xFF);
+  cpu.GetMemory().Write32(kArgs + 8, static_cast<uint32_t>('!'));
+  cpu.GetMemory().Write32(kArgsCursor, kArgs);
+
+  hle.CallArmFunction(sprintf_fn, kDest, kFmt, kArgsCursor);
+  EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "hp=ff% [!]");
+}
+
+TEST(ModRuntime, SprintfWithNoDirectivesCopiesTheLiteralTextUnchanged) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sprintf_fn = cpu.GetMemory().Read32(kTableAddress + kSprintfSlotOffset);
+
+  constexpr uint32_t kDest = 0x80300100;
+  constexpr uint32_t kFmt = 0x80300200;
+  constexpr uint32_t kArgsCursor = 0x80300400;
+  WriteCString(cpu.GetMemory(), kFmt, "LOAD ERROR");
+  cpu.GetMemory().Write32(kArgsCursor, 0);
+
+  hle.CallArmFunction(sprintf_fn, kDest, kFmt, kArgsCursor);
+  EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "LOAD ERROR");
 }

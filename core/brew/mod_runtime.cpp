@@ -1,6 +1,8 @@
 #include "core/brew/mod_runtime.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <string>
 
 namespace zeebulator {
 
@@ -14,6 +16,7 @@ constexpr uint32_t kStrcpySlotOffset = 0x8;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
 constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
 constexpr uint32_t kStrstrSlotOffset = 0xe8;
+constexpr uint32_t kSprintfSlotOffset = 0x13c;
 constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
@@ -138,6 +141,86 @@ void ModRuntime::StrstrImpl(IArmCore& core) {
   }
 }
 
+void ModRuntime::SprintfImpl(IArmCore& core) {
+  // Real signature and behavior inferred from the calling convention
+  // plus real string content (TASKS.md Phase 8): a real call site
+  // (`ddragonz.mod` offset 0x23d0c) formats the real literal string
+  // "ERROR CODE:%d" (found directly in the file's own bytes at the
+  // literal's address) into a stack buffer, immediately measured with
+  // STRLEN afterward -- a sprintf-family helper. Signature: int
+  // Func(char *dest, const char *fmt, void **ppArgs) -- ppArgs is a
+  // pointer to an args cursor that gets ADVANCED by 4 bytes (this ABI's
+  // word size) per consumed argument, not a plain va_list, matching the
+  // double indirection at the call site (R2 points at a stack slot that
+  // itself holds the args block's address). Supports the directives
+  // real game code has been observed needing so far: %d, %u, %x/%X,
+  // %s, %c, %% -- no width/precision/flag support (no evidence any real
+  // call needs it yet; extend if one does). Returns the number of
+  // characters written, matching the real sprintf() contract.
+  uint32_t dest = core.GetRegister(kR0);
+  uint32_t fmt = core.GetRegister(kR1);
+  uint32_t args_cursor_addr = core.GetRegister(kR2);
+  uint32_t args = memory_.Read32(args_cursor_addr);
+
+  uint32_t out = dest;
+  for (uint32_t i = 0;; ++i) {
+    uint8_t c = memory_.Read8(fmt + i);
+    if (c == 0) break;
+    if (c != '%') {
+      memory_.Write8(out++, c);
+      continue;
+    }
+    uint8_t spec = memory_.Read8(fmt + i + 1);
+    if (spec == 0) break;  // trailing '%' with nothing after: stop
+    ++i;
+    if (spec == '%') {
+      memory_.Write8(out++, '%');
+      continue;
+    }
+    std::string formatted;
+    switch (spec) {
+      case 'd':
+        formatted = std::to_string(static_cast<int32_t>(memory_.Read32(args)));
+        args += 4;
+        break;
+      case 'u':
+        formatted = std::to_string(memory_.Read32(args));
+        args += 4;
+        break;
+      case 'x':
+      case 'X': {
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), spec == 'x' ? "%x" : "%X", memory_.Read32(args));
+        formatted = buf;
+        args += 4;
+        break;
+      }
+      case 'c':
+        formatted = std::string(1, static_cast<char>(memory_.Read32(args)));
+        args += 4;
+        break;
+      case 's': {
+        uint32_t str_ptr = memory_.Read32(args);
+        args += 4;
+        for (uint32_t j = 0; memory_.Read8(str_ptr + j) != 0; ++j) {
+          formatted.push_back(static_cast<char>(memory_.Read8(str_ptr + j)));
+        }
+        break;
+      }
+      default:
+        // Unknown directive: emit literally rather than silently
+        // dropping it (both the '%' and the spec character).
+        formatted.push_back('%');
+        formatted.push_back(static_cast<char>(spec));
+        break;
+    }
+    for (char ch : formatted) memory_.Write8(out++, static_cast<uint8_t>(ch));
+  }
+  memory_.Write8(out, 0);
+  memory_.Write32(args_cursor_addr, args);
+  core.SetRegister(kR0, out - dest);
+}
+
 void ModRuntime::GetAppContextImpl(IArmCore& core) {
   // Written fresh on every call rather than once in Install() so this
   // works regardless of whether SetShellInstance() is called before or
@@ -162,12 +245,14 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t get_app_context_fn = hle_.Register([this](IArmCore& core) { GetAppContextImpl(core); });
   uint32_t bounded_strcpy_fn = hle_.Register([this](IArmCore& core) { BoundedStrcpyImpl(core); });
   uint32_t strstr_fn = hle_.Register([this](IArmCore& core) { StrstrImpl(core); });
+  uint32_t sprintf_fn = hle_.Register([this](IArmCore& core) { SprintfImpl(core); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
   memory_.Write32(table_address + kStrlenSlotOffset, strlen_fn);
   memory_.Write32(table_address + kStrcpySlotOffset, strcpy_fn);
   memory_.Write32(table_address + kBoundedStrcpySlotOffset, bounded_strcpy_fn);
   memory_.Write32(table_address + kStrstrSlotOffset, strstr_fn);
+  memory_.Write32(table_address + kSprintfSlotOffset, sprintf_fn);
   memory_.Write32(table_address + kMallocSlotOffset, malloc_fn);
   memory_.Write32(table_address + kFreeSlotOffset, free_fn);
   memory_.Write32(table_address + kGetUpTimeMsSlotOffset, get_uptime_ms_fn);
