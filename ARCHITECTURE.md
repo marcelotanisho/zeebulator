@@ -142,21 +142,44 @@ call.
   clean per Design Principle 5.
 
 ### 3.5 Graphics Subsystem
-- Translates `IDisplay` 2D blit operations and OpenGL ES 1.0/1.1
-  fixed-function draw calls into the host's graphics API.
-- v1 target: OpenGL (desktop core-compatible subset), since it's available
-  on all three target OSes and libretro has first-class OpenGL
-  hardware-render support (`retro_hw_render_callback`). Direct3D/Metal
-  backends are a possible future optimization, not a v1 requirement.
-- Because GLES 1.0/1.1 is fixed-function (matrix stack, fixed lighting,
-  texture combiners — no shaders), the translation layer is a state
-  machine, not a shader transpiler: track BREW's GLES state and either (a)
-  call directly into host OpenGL's own (deprecated but present) fixed-function
-  path on desktop GL, or (b) generate small equivalent shaders for a
-  modern-GL-core-profile target. Decide based on target platform GL
-  version availability — macOS's OpenGL support is capped and deprecated,
-  which may force option (b) there regardless of what's simplest on
-  Windows/Linux.
+- Translates `IDisplay` 2D blit operations and OpenGL ES 1.0/1.1 draw calls
+  into the host's graphics API.
+- **Confirmed architecture (Phase 5 research), not the originally-assumed
+  one.** BREW-era OpenGL ES is *not* an OS-provided service reached through
+  `IShell`. Real Qualcomm BREW SDK sample source (`EGL_1x.c`/`GLES_1x.c`/
+  `GLES_ext.c`, statically compiled into every game's own `.mod` per the
+  sample `.mak` build rules) shows that `gl*`/`egl*` calls are thin wrapper
+  functions that dispatch through two real, documented AEE interfaces,
+  **`IGL`** and **`IEGL`**, obtained via global pointers (`gpIGL`/`gpIEGL`)
+  set up once at app startup (`IGL_Init`/`IEGL_Init`). Vtable slot order for
+  both was read directly from the real `AEEGL.h` (extracted from a genuine
+  Qualcomm "OpenGL ES Extension for BREW SDK 4.x" installer, MSI → CAB →
+  source — same clean-room "read the header, never the implementation"
+  method used for `IShell`/`IDisplay`/`IFile`): `AddRef, Release,
+  QueryInterface`, then 77 `gl*` methods for `IGL` (80 slots total), 25
+  `egl*` methods for `IEGL` (28 slots total). Confirmed applicable to the
+  real target game too — Double
+  Dragon's `.mod` contains the strings `eglGetColorBufferQUALCOMM` and
+  `OpenGL.cpp`, consistent with this exact pattern.
+- **Practical consequence**: this project does not need to design or ship
+  its own GLES1.1 fixed-function state machine. `IGL`/`IEGL` HLE objects
+  are built the same way `IShell`/`IDisplay`/`IFile` were (real vtable
+  order, CPU call-out traps), and each implemented slot forwards to a real
+  host OpenGL context — the actual fixed-function transform/lighting/
+  texture-combiner math is the host GL driver's problem, not ours.
+- The one new HLE-layer wrinkle this interface introduces: pointer
+  arguments (`glVertexPointer`, `glTexImage2D`, `glDrawElements`'s index
+  buffer, ...) are emulated ARM addresses, not host pointers, and must be
+  copied out of emulated memory into real host-side buffers at draw/upload
+  time rather than forwarded directly to host GL calls.
+- v1 target: OpenGL (desktop core-compatible/compatibility-profile
+  subset), since it's available on all three target OSes and libretro has
+  first-class OpenGL hardware-render support (`retro_hw_render_callback`).
+  Direct3D/Metal backends are a possible future optimization, not a v1
+  requirement.
+- macOS's OpenGL deprecation (compatibility/fixed-function profile capped
+  and unavailable in modern contexts) remains the flagged cross-platform
+  risk — see §10.
 
 ### 3.6 Audio Subsystem
 - Decodes PCM, IMA-ADPCM, MIDI, and MP3 — the codec set BREW/Zeebo games are

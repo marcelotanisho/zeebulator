@@ -25,6 +25,10 @@ add_library(zeebulator_core STATIC
   brew/virtual_filesystem.h
   brew/file_hle.cpp
   brew/file_hle.h
+  brew/gl_types.h
+  brew/gl_backend.h
+  brew/gl_hle.cpp
+  brew/gl_hle.h
 )
 
 target_include_directories(zeebulator_core PUBLIC ${PROJECT_SOURCE_DIR})

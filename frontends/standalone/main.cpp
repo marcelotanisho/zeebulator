@@ -12,11 +12,13 @@
 #include <fstream>
 #include <vector>
 
+#include "core/brew/gl_hle.h"
 #include "core/brew/hle_runtime.h"
 #include "core/brew/idisplay.h"
 #include "core/brew/ishell.h"
 #include "core/cpu/arm_interpreter.h"
 #include "core/loader/mod.h"
+#include "frontends/standalone/sdl2_gl_backend.h"
 #include "tests/fixtures/hello_brew/entry_offset.h"
 
 namespace {
@@ -115,6 +117,57 @@ int main(int argc, char** argv) {
 
   std::printf("Zeebulator: hello_brew booted -- window should show a white block\n");
 
+  // --- Phase 5 GL smoke test -----------------------------------------
+  // Separate window, separate real GL context: proves the IGL/IEGL HLE
+  // vtables actually reach a real host OpenGL context end to end (real
+  // vtable dispatch -> GlHle -> Sdl2GlBackend -> real desktop GL calls ->
+  // a visible pixel), independent of the hello_brew/IDisplay path above.
+  // No compiled ARM binary drives this yet (that's TASKS.md Phase 5's
+  // next item, "validate against SDK sample apps") -- these calls are
+  // made the same way the app-lifecycle calls above are, directly via
+  // HleRuntime::CallArmFunction, exercising the exact same vtable/HLE
+  // dispatch path real compiled code would use.
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+  SDL_Window* gl_window =
+      SDL_CreateWindow("Zeebulator - GL smoke test", SDL_WINDOWPOS_CENTERED,
+                        SDL_WINDOWPOS_CENTERED, kWidth, kHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
+
+  zeebulator::Sdl2GlBackend gl_backend(gl_window);
+  zeebulator::GlHle gl_hle(gl_backend);
+  uint32_t gl_obj = gl_hle.BuildGl(cpu.GetMemory(), hle, /*vtable=*/0x80004000,
+                                    /*object=*/0x80005000);
+  uint32_t egl_obj = gl_hle.BuildEgl(cpu.GetMemory(), hle, /*vtable=*/0x80006000,
+                                      /*object=*/0x80007000);
+  (void)gl_obj;
+
+  auto EglSlot = [&](uint32_t slot) { return mem.Read32(0x80006000 + slot * 4); };
+  auto GlSlot = [&](uint32_t slot) { return mem.Read32(0x80004000 + slot * 4); };
+
+  uint32_t egl_display = hle.CallArmFunction(EglSlot(4), 0);              // eglGetDisplay
+  hle.CallArmFunction(EglSlot(5), egl_display, 0, 0);                     // eglInitialize
+  uint32_t configs_out = 0x00091000, num_config_out = 0x00091004;
+  uint32_t stack_args = 0x00091008;
+  cpu.SetRegister(zeebulator::kSP, stack_args);
+  mem.Write32(stack_args, num_config_out);  // eglChooseConfig's 5th arg (num_config*)
+  hle.CallArmFunction(EglSlot(10), egl_display, 0, configs_out, 1);       // eglChooseConfig
+  uint32_t config = mem.Read32(configs_out);
+  uint32_t surface =
+      hle.CallArmFunction(EglSlot(12), egl_display, config, 0, 0);       // eglCreateWindowSurface
+  uint32_t context =
+      hle.CallArmFunction(EglSlot(17), egl_display, config, 0, 0);       // eglCreateContext
+  hle.CallArmFunction(EglSlot(19), egl_display, surface, surface, context);  // eglMakeCurrent
+
+  // Distinct teal clear color -- unambiguous against both black (no-op)
+  // and white (the hello_brew window's block) in a screenshot.
+  constexpr uint32_t kFixedOne = 1u << 16;
+  hle.CallArmFunction(GlSlot(8), 0, kFixedOne / 2, kFixedOne / 2, kFixedOne);  // glClearColorx
+  hle.CallArmFunction(GlSlot(7), 0x4000);                                     // glClear(GL_COLOR_BUFFER_BIT)
+  hle.CallArmFunction(EglSlot(26), egl_display, surface);                     // eglSwapBuffers
+
+  std::printf(
+      "Zeebulator: GL smoke test done -- second window should show a solid teal fill\n");
+  (void)egl_obj;
+
   bool running = true;
   SDL_Event event;
   while (running) {
@@ -126,6 +179,7 @@ int main(int argc, char** argv) {
 
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
+  SDL_DestroyWindow(gl_window);
   SDL_Quit();
   return 0;
 }

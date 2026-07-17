@@ -447,11 +447,168 @@ its own GGZ-backed assets through real, vtable-order-verified `IFile`/
 Exit criterion: the target test game's 3D/2D rendering appears on screen,
 even if visually imperfect.
 
-- [ ] Design the GLES1.1 state-machine translation layer (ARCHITECTURE.md §3.5)
-- [ ] Decide fixed-function-passthrough vs. shader-generation approach per
-      platform (macOS forces the latter — architecture §10 risk)
-- [ ] Implement matrix stack, basic lighting, texture combiner translation
-- [ ] Wire into `IDisplay`/graphics-related AEE calls
+- [x] **Research: how BREW-era GLES actually reaches the OS — real
+      architecture found, materially simpler than originally assumed.**
+      Real Qualcomm sample `.mak` build rules show `EGL_1x.c`/`GLES_1x.c`/
+      `GLES_ext.c` (BREW SDK-provided wrapper source) get statically
+      compiled into *every game's own `.mod`* — GLES is not an OS service
+      reached via `IShell`. Those wrappers dispatch `gl*`/`egl*` calls
+      through two real AEE interfaces, **`IGL`** and **`IEGL`**, reached via
+      global pointers (`gpIGL`/`gpIEGL`) set up once at startup. Found and
+      read the real `AEEGL.h` (extracted from a genuine Qualcomm "OpenGL ES
+      Extension for BREW SDK 4.x" installer already present in
+      `research/docs/sdk_installer_extract/ZeeboSDKPackage-1.2.4/` —
+      MSI → CAB → source, same clean-room method as every prior interface:
+      read the real header for the ABI shape only, never copy/commit it).
+      **Verified vtable slot order**: `AddRef, Release, QueryInterface`
+      (confirmed via `INHERIT_IQueryInterface`'s companion access-macro
+      block, same file, same order — same cross-check method used for
+      every other interface), then 77 `gl*` methods for `IGL` (in
+      declaration order, `glActiveTexture` → `glViewport`; 80 slots
+      total), then 25 `egl*` methods for `IEGL` (`eglGetError` →
+      `eglCopyBuffers`; 28 slots total) — counted programmatically
+      against the real header, not eyeballed.
+      Confirmed this applies to the actual target game too: Double
+      Dragon's real `ddragonz.mod` contains the strings
+      `eglGetColorBufferQUALCOMM` and `OpenGL.cpp`, consistent with the
+      same statically-linked-wrapper pattern.
+      **Consequence**: no need to design/ship our own GLES1.1
+      fixed-function state machine (contra the original plan below) — we
+      build `IGL`/`IEGL` HLE objects the same way as `IShell`/`IDisplay`/
+      `IFile` (real vtable order, CPU call-out traps) and forward each
+      implemented slot to a real host OpenGL context; the host GL driver
+      does the actual fixed-function math. New wrinkle vs. prior
+      interfaces: pointer args (`glVertexPointer`, `glTexImage2D`, index
+      buffers) are emulated ARM addresses and must be copied into real
+      host buffers at draw/upload time, not forwarded directly.
+- [x] Build the full `IGL`/`IEGL` HLE vtable scaffold (all 108 slots — 80
+      for `IGL`, 28 for `IEGL` — present at their real offsets,
+      stub-by-default — same pattern as `IShell`). `core/brew/gl_hle.{h,cpp}`.
+      One correctness wrinkle specific to this interface, not present in
+      any prior one: real `IGL`/`IEGL` vtable slots do **not** receive the
+      interface object pointer as an implicit first argument (confirmed
+      from the real access macros, e.g. `#define IGL_glClear(p,a)
+      AEEGETPVTBL(p,IGL)->glClear(a)` — only `a` is forwarded) — so R0
+      holds the first *declared* argument for every `gl*`/`egl*` slot,
+      unlike `IShell`/`IDisplay`/`IFile` where R0 is always `po`. Only the
+      inherited `AddRef`/`Release`/`QueryInterface` slots keep the usual
+      po-in-R0 convention.
+- [x] Implement the EGL lifecycle slice (`eglGetError`, `eglGetDisplay`,
+      `eglInitialize`, `eglTerminate`, `eglChooseConfig`,
+      `eglCreateWindowSurface`, `eglDestroySurface`, `eglCreateContext`,
+      `eglDestroyContext`, `eglMakeCurrent`, `eglSwapBuffers`) — matches
+      the exact call sequence real sample app source uses
+      (`simple_drawtexture.c`'s `InitGLSurface`/`FreeGLSurface`).
+      `EGLDisplay`/`EGLSurface`/`EGLContext`/`EGLConfig` are simulated as
+      small sentinel handles (`GlHle` never talks to a real host EGL
+      implementation); `eglMakeCurrent` triggers exactly one real
+      `GlBackend::CreateContext()` call, verified by a dedicated test
+      (`EglMakeCurrentOnlyCreatesHostContextOnce`).
+- [x] Implement a first core-GL slice (`glClear`, `glClearColorx`,
+      `glViewport`, `glEnable`/`glDisable`, `glMatrixMode`,
+      `glLoadIdentity`, `glOrthox`, `glFrustumx`, `glTranslatex`/
+      `glRotatex`/`glScalex`, `glColor4x`) with `GLfixed`->float
+      marshaling (16.16 fixed point, verified against hand-computed
+      fixed-point values in tests, not just round-tripped), forwarded
+      through a `GlBackend` seam (`core/brew/gl_backend.h`) — real host GL
+      in the frontend (not wired up yet, see below), a recording
+      `FakeGlBackend` in tests, same seam pattern as `Backend`.
+      13 new tests (`tests/gl_hle_test.cpp`), including one that walks the
+      full real EGL call sequence end to end and one that asserts every
+      one of the 108 real vtable slots is present and non-null (not just
+      the dozen with real behavior).
+- [x] Implement vertex-array/draw-call marshaling (`glVertexPointer`/
+      `glColorPointer`/`glTexCoordPointer`/`glNormalPointer`,
+      `glEnableClientState`/`glDisableClientState`, `glDrawArrays`/
+      `glDrawElements`) — the emulated-memory → host-buffer copy step.
+      Array-pointer calls just record (pointer, type, size, stride) —
+      emulated memory is only actually walked at draw-call time, once per
+      enabled array, converting every component to a host float per the
+      real GLES1.x per-type semantics (`GL_BYTE`/`GL_SHORT` cast directly,
+      `GL_FIXED` via the existing 16.16 conversion, `GL_FLOAT`
+      bit-reinterpreted, `GL_UNSIGNED_BYTE` additionally normalized by
+      /255 for color arrays only, matching real `glColorPointer`
+      semantics). `glDrawElements` shares the exact same extraction code
+      as `glDrawArrays`, just keyed by an explicit index list decoded
+      from emulated memory per its `GL_UNSIGNED_BYTE`/`GL_UNSIGNED_SHORT`
+      type — output is equivalent, not indexed rendering on the host side
+      (a documented simplification, not an oversight). `GlBackend` gained
+      one new method, `DrawArrays(mode, GlVertexArrays)`, taking an
+      already-fully-host-native struct — no `GLfixed` or emulated pointers
+      ever reach a `GlBackend` implementation.
+      6 new tests (`tests/gl_hle_test.cpp`): mixed `GL_BYTE`/
+      `GL_UNSIGNED_BYTE` vertex+color gather with correct /255
+      normalization, non-zero stride handling, `glDrawElements` with both
+      `GL_UNSIGNED_BYTE` and `GL_UNSIGNED_SHORT` index types (including a
+      repeated index, proving real gather-not-range semantics), the
+      normal array's fixed 3-component shape (it has no `size` argument
+      in the real API), and `glDisableClientState` actually excluding an
+      array from the next draw. All 90 project tests green.
+- [x] Implement texture upload (`glGenTextures`/`glDeleteTextures`/
+      `glBindTexture`/`glTexParameterx`/`glTexImage2D`) with the same
+      memory-copy approach. `glGenTextures`/`glDeleteTextures` round-trip
+      `GLuint` names through emulated memory but let `GlBackend` own the
+      actual namespace (`GenTextures(n, GLuint*)` fills a host-owned
+      array, which `GlHle` then writes back into the app's buffer) — no
+      separate ID-remapping table needed. `glTexImage2D` computes the
+      real upload size from `(format, type, width, height)` — handling
+      both the common `GL_UNSIGNED_BYTE` case (1 byte/component) and the
+      packed 16-bit types (`GL_UNSIGNED_SHORT_5_6_5`/`_4_4_4_4`/`_5_5_5_1`,
+      always exactly 2 bytes/pixel regardless of format) — then copies
+      exactly that many bytes out of emulated memory into a host buffer
+      before handing `GlBackend::TexImage2D` an already-resolved
+      `GlTextureImage`; a null `pixels` argument (the real, legal "reserve
+      storage now, upload later via glTexSubImage2D" call shape) is
+      preserved as null rather than treated as an error.
+      One correctness detail caught while reading the real spec, not
+      assumed: `glTexParameterx`'s `param` is **not** GLfixed-converted
+      even though it arrives through the same "x"-suffixed fixed-point
+      slot as `glTranslatex`/`glColor4x` — every standard GLES1.x
+      `glTexParameterx` `pname` (`MIN`/`MAG_FILTER`, `WRAP_S`/`WRAP_T`) is
+      enum-valued, and the real spec's convention for enum-valued
+      parameters passed through an "x" function is to forward the raw
+      enum integer unconverted, not scale it by 65536 — verified with a
+      dedicated test asserting `GL_LINEAR` (`0x2601`) arrives at
+      `GlBackend` as exactly `0x2601`, not `0x2601/65536`.
+      7 new tests (`tests/gl_hle_test.cpp`): ID round-tripping for
+      `glGenTextures`/`glDeleteTextures`, raw passthrough for
+      `glBindTexture`/`glTexParameterx`, `GL_RGBA`+`GL_UNSIGNED_BYTE`
+      pixel-byte-exact upload, the null-pixels reserve-storage path, and
+      packed `GL_UNSIGNED_SHORT_5_6_5` sizing (2 bytes/pixel regardless of
+      `GL_RGB`'s 3-component format). All 97 project tests green.
+- [x] Wire a real host OpenGL context into the SDL2 standalone frontend
+      (context creation, `eglSwapBuffers` → actual buffer swap).
+      `frontends/standalone/sdl2_gl_backend.{h,cpp}` (`Sdl2GlBackend`) is a
+      thin, direct forward of every `GlBackend` method to the platform's
+      real OpenGL 1.1 fixed-function entry points — no emulation-specific
+      logic in this file at all, since `GlHle` already did every
+      `GLfixed`/emulated-memory marshaling step before a call reaches
+      here. Uses `find_package(OpenGL REQUIRED)` (`OpenGL::GL`), the
+      standard cross-platform CMake mechanism — ships with the toolchain
+      on Windows/macOS, needed `libgl1-mesa-dev`/`libglu1-mesa-dev` as a
+      one-time local dev-machine install on Linux (same category of
+      build-time-only dependency as Phase 3's X11 headers; I don't have
+      sudo in this environment, so the user ran the install).
+      **Verified with a real, screenshot-confirmed second window**, not
+      just "it compiled": `main.cpp` opens a second `SDL_WINDOW_OPENGL`
+      window alongside the existing `hello_brew` one, builds `IGL`/`IEGL`
+      HLE objects backed by `Sdl2GlBackend`, and drives the exact real EGL
+      call sequence (`eglGetDisplay` → `eglInitialize` →
+      `eglChooseConfig` → `eglCreateWindowSurface` → `eglCreateContext` →
+      `eglMakeCurrent` → `glClearColorx`(teal) → `glClear` →
+      `eglSwapBuffers`) through `HleRuntime::CallArmFunction` — the same
+      real vtable-dispatch path compiled ARM code would use, not a
+      shortcut. Ran the built standalone frontend, used `gnome-screenshot`
+      to independently capture both windows: the new GL window shows a
+      real, solid teal fill (the exact color driven through the vtable
+      chain, confirming real host OpenGL rendering actually happened end
+      to end), and the original `hello_brew` window still shows its
+      correct black-canvas-plus-white-block output, unaffected by the new
+      wiring. One bug caught and fixed while wiring this up, before ever
+      running it: the `eglChooseConfig` call's `num_config` output pointer
+      is a stack-passed (5th) argument, and the first version of this code
+      never set `SP` before calling it — would have read/written through
+      whatever garbage address happened to be left over in memory.
 - [ ] Validate against SDK sample apps that exercise GLES before touching
       the target commercial game
 

@@ -31,6 +31,13 @@ if(ZEEBULATOR_BUILD_STANDALONE)
   set(SDL_SHARED OFF CACHE BOOL "" FORCE)
   set(SDL_STATIC ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(SDL2)
+
+  # System-provided on all three target OSes (opengl32 ships with any
+  # Windows toolchain, the OpenGL framework ships with Xcode/macOS, Linux
+  # needs its distro's GL dev package -- e.g. libgl1-mesa-dev on
+  # Debian/Ubuntu, the same category of build-time-only dependency as the
+  # X11 dev headers SDL2 itself needed, see TASKS.md Phase 3).
+  find_package(OpenGL REQUIRED)
 endif()
 
 add_subdirectory(core)
