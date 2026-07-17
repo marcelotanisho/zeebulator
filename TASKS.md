@@ -979,10 +979,62 @@ playable start-to-finish at full speed, standalone build.
       `IModule::CreateInstance(ClsId=274754)` and runs real, in-bounds
       module code to completion, but that call itself returns a genuine
       `EFAILED` (1) without writing an object pointer — a new, different,
-      and deeper real gap than the loader issue this fix closes. Not yet
-      investigated (would need disassembling `CreateInstance`'s real
-      body, the same way `AEEMod_Load`'s was): tracked as the next concrete
-      step, not the same one above anymore.
+      and deeper real gap than the loader issue this fix closes.
+      **Continued the investigation**: disassembled `CreateInstance`'s
+      real body (`arm-none-eabi-objdump` again, not manual decoding).
+      With the *wrong* guessed `ClsId` (`274754`, the `.mod` file's
+      containing directory name — just a filesystem/distribution
+      convention, it turns out, not the app's real class ID), the real
+      code path legitimately hit a `cmp ClsId, #0x0102f789; bne EFAILED`
+      check and correctly reported failure — a real, trustworthy
+      rejection, not a bug. Cross-checked the literal directly against
+      the raw file bytes at offset `0x738` (`0x0102f789`, exactly the
+      value the disassembly compares against) to be certain. **Rerunning
+      with the real ClsId (`0x0102F789` / `16971657`) gets past that
+      check** and reaches real, deeper application logic: `AEEClsCreateInstance`
+      tail-calls the real, standard SDK helper `AEEApplet_New` (identified
+      by matching disassembly line-by-line against the real reference
+      source `AEEAppGen.c`, also found under
+      `research/docs/sdk_installer_extract/`), which mallocs a real
+      `AEEApplet` struct (via the same confirmed MALLOC slot) and then
+      calls `ISHELL_CreateInstance(pIShell, AEECLSID_DISPLAY, &m_pIDisplay)`
+      — real compiled app code obtains its `IDisplay` through `IShell`,
+      not directly via `EVT_APP_START` as our own `hello_brew`/`hello_gl`
+      SDK fixtures do. `AEECLSID_DISPLAY`'s real value (`0x01001001`) was
+      read directly out of the disassembly (the literal loaded right
+      before the `ISHELL_CreateInstance` call), not guessed.
+      Our `IShell::CreateInstance` was a blind stub returning success
+      without writing `*ppObj` — meaning `m_pIDisplay` stayed `NULL`,
+      which `AEEApplet_New` correctly treats as fatal (matching the real
+      reference source) and tries to clean up via `FREE(pme)` — landing
+      on a **second** unmapped static-base table slot, offset `0x6c`
+      (`FREE`, immediately after `MALLOC` at `0x68`), causing the same
+      jump-through-null-pointer wander as before.
+      **Fixed both**: `core/brew/ishell.{h,cpp}` — `BuildIShell` became
+      the stateful `IShellHle` class with `RegisterInstance(clsId, ptr)`,
+      so callers can register real singleton objects (our already-built
+      `IDisplayHle` instance) for `IShell::CreateInstance` to hand back;
+      an unregistered ClsId now returns real `EFAILED` instead of a lying
+      "success" with an unwritten pointer. `core/brew/mod_runtime.{h,cpp}`
+      gained the `FREE` slot at offset `0x6c` (a no-op trap — consistent
+      with the bump allocator's documented no-free-list limitation).
+      3 new `IShellHle` tests in `tests/brew_test.cpp`.
+      **Reran against the real game**: with all three fixes, `CreateInstance`
+      now gets substantially further — `*ppObj` is written
+      (`0x80300024`, a real, live `AEEApplet` pointer) and it returns real
+      `SUCCESS` (0) — but `tools/game_probe.cpp`'s wandered-outside-module
+      check still (correctly) flags the result as untrustworthy: at real
+      step 168, different real code elsewhere in the module reads *yet
+      another* static-base table offset (`0xc0`), unrelated to
+      `MALLOC`/`FREE`, and jumps through it while still zero/unmapped.
+      This is the same static-base table, but evidently used as a much
+      larger, general-purpose runtime-services jump table (real BREW's
+      `AEEStdLib` helper dispatch is a plausible candidate, based on the
+      calling pattern seen at this new site) — mapping it out fully looks
+      like it needs its own systematic pass (identifying each offset's
+      real function one at a time against the reference SDK source, the
+      same way `MALLOC`/`FREE` were confirmed), not a single quick fix.
+      Tracked as the next concrete step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

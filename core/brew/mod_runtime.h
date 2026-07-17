@@ -21,7 +21,13 @@ namespace zeebulator {
 // function pointers (16 bytes on this ABI), and the disassembly computes
 // r0 = nSize + 16 immediately before that indirect call.
 //
-// Only this one table slot is confirmed by real disassembly so far.
+// A second slot, offset 0x6c (immediately after MALLOC), is FREE: real
+// disassembly of AEEApplet_New's cleanup path (called when
+// ISHELL_CreateInstance(AEECLSID_DISPLAY) fails, TASKS.md Phase 8) reads
+// a function pointer from there and calls it with one pointer argument,
+// matching the reference source's `FREE(pme)` exactly.
+//
+// Only these two table slots are confirmed by real disassembly so far.
 // Every other offset is left unmapped -- a real .mod hitting one would
 // fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -29,8 +35,9 @@ namespace zeebulator {
 class ModRuntime {
  public:
   // `heap_region`/`heap_size` bound a simple bump allocator the MALLOC
-  // slot hands memory out from. No free-list, no Free() -- nothing
-  // confirmed via real disassembly calls a matching free function yet.
+  // slot hands memory out from. FREE is a no-op (leaks) -- consistent
+  // with having no free-list, which is fine for a single game-session
+  // emulator run.
   ModRuntime(Memory& memory, HleRuntime& hle, uint32_t heap_region, uint32_t heap_size);
 
   // Writes `table_address` at `module_base - 4` and populates the

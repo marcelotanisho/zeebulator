@@ -73,7 +73,8 @@ struct CallResult {
 
 CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap_base,
                                    uint32_t mod_base, uint32_t mod_size, uint32_t entry,
-                                   uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3) {
+                                   uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
+                                   bool trace = false) {
   constexpr uint64_t kMaxSteps = 5'000'000;
   cpu.SetRegister(zeebulator::kR0, r0);
   cpu.SetRegister(zeebulator::kR1, r1);
@@ -91,6 +92,13 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       break;
     }
     uint32_t pc = cpu.GetRegister(zeebulator::kPC);
+    if (trace) {
+      std::printf("[%4llu] pc=0x%08x instr=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x\n",
+                  static_cast<unsigned long long>(steps), pc, cpu.GetMemory().Read32(pc),
+                  cpu.GetRegister(zeebulator::kR0), cpu.GetRegister(zeebulator::kR1),
+                  cpu.GetRegister(zeebulator::kR2), cpu.GetRegister(zeebulator::kR3),
+                  cpu.GetRegister(zeebulator::kR4));
+    }
     bool in_module = pc >= mod_base && pc < mod_base + mod_size;
     bool in_trap_range = pc >= trap_base;
     if (!in_module && !in_trap_range && !result.wandered_outside_module) {
@@ -157,10 +165,14 @@ int main(int argc, char** argv) {
                                       /*heap_size=*/0x00100000);
   mod_runtime.Install(kBase, /*table_address=*/0x80280000);
 
-  uint32_t shell =
-      zeebulator::BuildIShell(cpu.GetMemory(), hle, /*vtable=*/0x80000000, /*object=*/0x80001000);
   uint32_t display_obj =
       display.Build(cpu.GetMemory(), hle, /*vtable=*/0x80002000, /*object=*/0x80003000);
+  // Real compiled app code obtains IDisplay through
+  // ISHELL_CreateInstance(AEECLSID_DISPLAY, ...), not directly -- found
+  // via real disassembly of AEEApplet_New's call chain (TASKS.md Phase 8).
+  zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
+  uint32_t shell = shell_hle.Build(/*vtable=*/0x80000000, /*object=*/0x80001000);
   file_hle.Build(/*file_mgr_vtable=*/0x80004000, /*file_mgr_object=*/0x80005000,
                   /*file_vtable=*/0x80006000);
   gl_hle.BuildGl(cpu.GetMemory(), hle, /*vtable=*/0x80007000, /*object=*/0x80008000);

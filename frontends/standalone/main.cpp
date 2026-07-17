@@ -60,10 +60,12 @@ int main(int argc, char** argv) {
   constexpr uint32_t kBase = 0x00100000;
   zeebulator::LoadMod(cpu, mod_data, kBase);
 
-  uint32_t shell = zeebulator::BuildIShell(cpu.GetMemory(), hle, /*vtable=*/0x80000000,
-                                            /*object=*/0x80001000);
   uint32_t display_obj =
       display.Build(cpu.GetMemory(), hle, /*vtable=*/0x80002000, /*object=*/0x80003000);
+  zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
+  uint32_t shell =
+      shell_hle.Build(/*vtable=*/0x80000000, /*object=*/0x80001000);
 
   uint32_t entry = kBase + kHelloBrewAeeModLoadOffset;
 

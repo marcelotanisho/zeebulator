@@ -3,9 +3,11 @@
 namespace zeebulator {
 
 namespace {
-// Offset within the static-base table where real disassembly (see
-// mod_runtime.h) shows the MALLOC-equivalent function pointer living.
+// Offsets within the static-base table where real disassembly (see
+// mod_runtime.h) shows the MALLOC/FREE-equivalent function pointers
+// living.
 constexpr uint32_t kMallocSlotOffset = 0x68;
+constexpr uint32_t kFreeSlotOffset = 0x6c;
 }  // namespace
 
 ModRuntime::ModRuntime(Memory& memory, HleRuntime& hle, uint32_t heap_region, uint32_t heap_size)
@@ -25,7 +27,9 @@ void ModRuntime::MallocImpl(IArmCore& core) {
 
 void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t malloc_fn = hle_.Register([this](IArmCore& core) { MallocImpl(core); });
+  uint32_t free_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   memory_.Write32(table_address + kMallocSlotOffset, malloc_fn);
+  memory_.Write32(table_address + kFreeSlotOffset, free_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 

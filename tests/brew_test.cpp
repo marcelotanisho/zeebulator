@@ -12,6 +12,7 @@ using zeebulator::ArmInterpreter;
 using zeebulator::Backend;
 using zeebulator::HleRuntime;
 using zeebulator::IDisplayHle;
+using zeebulator::IShellHle;
 using zeebulator::PixelFormat;
 using zeebulator::ZPadState;
 
@@ -58,15 +59,44 @@ void WriteUtf16String(zeebulator::Memory& mem, uint32_t addr,
 TEST(IShellHle, AllStubbedMethodsReturnZeroWithoutCrashing) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);
-  uint32_t shell = zeebulator::BuildIShell(cpu.GetMemory(), hle, kVtableAddr,
-                                            kObjectAddr);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  uint32_t shell = shell_hle.Build(kVtableAddr, kObjectAddr);
   EXPECT_EQ(shell, kObjectAddr);
 
-  // AddRef = slot 0, Release = slot 1, CreateInstance = slot 2.
-  for (uint32_t slot : {0u, 1u, 2u}) {
+  // AddRef = slot 0, Release = slot 1 -- CreateInstance (slot 2) has real
+  // behavior now, tested separately below.
+  for (uint32_t slot : {0u, 1u}) {
     uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + slot * 4);
     EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr), 0u);
   }
+}
+
+TEST(IShellHle, CreateInstanceReturnsFailedForAnUnregisteredClass) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 2 * 4);
+  constexpr uint32_t kPpObjAddr = 0x90000;
+  cpu.GetMemory().Write32(kPpObjAddr, 0xDEADBEEF);
+  // int CreateInstance(IShell *po, AEECLSID cls, void **ppo)
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, /*cls=*/0x1234, kPpObjAddr), 1u);
+}
+
+TEST(IShellHle, CreateInstanceReturnsARegisteredInstance) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  constexpr uint32_t kClsId = 0x01001001;  // AEECLSID_DISPLAY
+  constexpr uint32_t kDisplayObj = 0x80003000;
+  shell_hle.RegisterInstance(kClsId, kDisplayObj);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 2 * 4);
+  constexpr uint32_t kPpObjAddr = 0x90000;
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, kClsId, kPpObjAddr), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read32(kPpObjAddr), kDisplayObj);
 }
 
 TEST(IDisplayHle, DrawTextThenUpdatePushesCorrectFrame) {
