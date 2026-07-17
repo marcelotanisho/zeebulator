@@ -904,34 +904,45 @@ playable start-to-finish at full speed, standalone build.
       evidence) — are all real, tested, working HLE now.
       **Not yet playable**: the game is currently stuck redrawing a
       diagnostic overlay (`"ERROR CODE:6"` / `"LIST COUNT:3"`) every
-      tick. Two real gaps behind this are now fixed: (1) the game opens
-      its own packed resource archive as a raw file
-      (`IFILEMGR_OpenFile("sound.ggz")`), which the dev tool's
+      tick — confirmed persistent, not transient (unchanged across 10
+      real ticks in a fresh trace). Reconciled what the diagnostic
+      actually means: `"LIST COUNT"` is the per-tick state machine's
+      own step counter, not a resource-list position — a dead end for
+      narrowing the search that way. Four real gaps found and fixed so
+      far: (1) the game opens its own packed resource archive as a raw
+      file (`IFILEMGR_OpenFile("sound.ggz")`), which the dev tool's
       `VirtualFilesystem` never exposed (only each archive's
       *decompressed entries*, not its own raw bytes); (2) a real,
       foundational bug in `FileHle::SeekImpl` — it returned the
       resulting file position instead of `AEE_SUCCESS`/`AEE_EFAILED`
       (confirmed backwards against the real `AEEFile.h` contract),
-      silently breaking any real seek to a nonzero position. Both fixed
-      and verified against the real game: `OpenFile` succeeds with the
-      real 1.9 MB file size, and a real resource-loading routine's two
-      real `Seek` calls (to a GGZ header entry, then to the resource's
-      real data offset) both now succeed correctly where they
-      previously failed. The diagnostic loop still persists past both
-      fixes, for a third, narrower reason: the same routine reads real
-      resource content through `applet[0x128+12]` (a shared loader
-      struct's field, confirmed via direct trace evidence, not a
-      per-subsystem field as first suspected), still wired to an old
-      unidentified generic scaffold (class `0x01001014`, found
-      alongside `AEECLSID_FILEMGR` at the very first `CreateInstance`
-      gate this session but never resolved) instead of a real `IFile`-
-      shaped object. Its exact real identity remains unconfirmed after
-      searching this repo's bundled real Qualcomm "QX Engine" SDK
-      extraction (a real pack-file reader whose own format doesn't
-      match our GGZ format, ruled out with evidence) — deliberately
-      not guessed further, since a wrong implementation risks trading
-      a clean, diagnosable failure for silent data corruption. See
-      `PHASE8_LOG.md`'s final entries for the full trace.
+      silently breaking any real seek to a nonzero position; (3) class
+      `0x01001014` (found alongside `AEECLSID_FILEMGR` at the very
+      first `CreateInstance` gate this session, real identity still
+      unconfirmed) implemented as `FileHle::BuildLastOpenedFileProxy`
+      — an evidence-grounded proxy whose `Read` always forwards to
+      whichever file was most recently opened, rather than the old
+      blind scaffold that silently read 0 bytes every time; (4) the
+      emulated heap (arbitrarily sized at 1MB) bumped to 16MB after
+      real disassembly showed the resource loader legitimately
+      exhausting it via real per-item `MALLOC` calls. With all four
+      fixes, the loader now gets through dozens of real resources
+      (previously 0–1) before still ultimately failing — traced the
+      new failure to the real, final (74th of 74) entry in
+      `sound.ggz`'s own GGZ table: its declared decompressed size
+      (1034 bytes) doesn't fit in the real file's remaining bytes
+      (505) after that entry's offset, because the real game code
+      reads raw, undecompressed bytes directly off disk and keeps
+      pulling from whatever comes *after* the current entry to satisfy
+      its requested total — which only works because every other
+      entry has more archive data after it. Independently verified
+      (Python `zlib`) that those exact 505 real bytes are a complete,
+      valid gzip stream decompressing cleanly to exactly 1034 bytes —
+      not truncation or a parsing bug on our end. Open question: does
+      real hardware's original `sound.ggz` have more trailing data, or
+      does real game code have an unfound recovery path for exactly
+      this last-entry case? See `PHASE8_LOG.md`'s final entries for
+      the full trace and reasoning.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

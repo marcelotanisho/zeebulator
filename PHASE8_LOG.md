@@ -992,3 +992,101 @@ than guessed -- a wrong implementation here risks trading "reads 0
 bytes, harmlessly" for "reads garbage bytes, corrupts real game state
 in a way that's much harder to notice or diagnose than the current
 clean failure."
+
+**Pushed past the deferral above and implemented class `0x01001014`'s
+real behavior.** Every piece of real evidence gathered so far pointed
+at the same shape: the object is created once, never explicitly bound
+to a file, and its `Read` is always called immediately after the
+game's own loader opens/seeks the file it actually wants through a
+*separate* `IFileMgr` object. Modeled that directly:
+`FileHle::BuildLastOpenedFileProxy` returns an object whose `Read`
+(slot 3) forwards to whichever file `OpenFileImpl` most recently
+returned, re-resolved on every call rather than fixed at construction.
+Documented in both `file_hle.h` and the registration site in
+`game_probe.cpp` as a deliberate, evidence-grounded implementation --
+not a confirmed-correct one -- since no real header or SDK sample
+found in this repo's bundled materials names the class. **Verified
+against the real game** (live trace): items that previously read 0
+bytes through the old blind scaffold now read real byte data.
+**Also found and fixed a second, independent real bug in the same
+pass: the emulated heap was exhausted partway through the resource
+list.** `ModRuntime`'s heap was sized at 1MB arbitrarily, never
+measured against real needs. The resource loader `MALLOC`s a real,
+sizeable audio buffer (tens of KB to just over 1KB, varies per item)
+for every one of the real list's entries in a tight loop; 1MB runs out
+partway through and MALLOC legitimately returns real NULL, which real
+game code has no path to recover from. Bumped to 16MB in
+`game_probe.cpp` (a generous but not unreasonable amount of app heap
+for a 2009-era dedicated gaming device) -- verified via live trace
+that MALLOC no longer fails across a full run. Both fixes committed
+together (`cb52c00`), with 3 new proxy tests
+(`LastOpenedFileProxy*` in `tests/file_hle_test.cpp`) alongside the
+existing Seek-contract tests.
+
+**With both fixes in place, the loader gets *much* further -- dozens
+of real resources load successfully -- but `ERROR CODE:6`/`LIST
+COUNT:3` still eventually appears, now after processing far more
+items than before.** Re-traced tick 3 in full (instruction trace grew
+from ~3,300 lines pre-fix to ~13,500 lines post-fix) and followed the
+new failure back to its exact cause. First, a side discovery that
+corrects an earlier assumption in this log: `"LIST COUNT:3"` is *not*
+a count of which resource-list item failed -- it's the per-tick state
+machine's own step counter (the 12-case jump table at `0x1c1ec`
+documented earlier), incrementing once per real tick regardless of
+which resource failed or why. The dispatcher reports one hardcoded
+generic failure code for the whole case (`case 2`), so this diagnostic
+was never going to distinguish "item 3 failed" from "item 63 failed"
+in the first place -- a dead end for narrowing the search that way,
+reconciled now rather than chased further.
+Second, and more useful: counted exactly 63 successful
+`MALLOC`+`Read` cycles in the tick-3 trace before the new failure, and
+found the specific real `Seek` immediately preceding it targets header
+offset `584` -- i.e. `73 * 8`, the **74th and last** entry in
+`sound.ggz`'s real 74-entry GGZ table (the file's own "loaded 74
+entries" banner, printed at every run's startup, was hiding in plain
+sight the whole time). That entry's real header bytes (read directly
+out of the real file, confirmed independently with a small Python
+script rather than trusted from the trace alone) declare
+`offset=1927592, size=1034`; the real file is exactly `1928097` bytes
+long, leaving only `505` bytes after that offset -- **529 bytes short
+of the declared 1034**. Decompressing those exact 505 real bytes as
+gzip (`zlib.decompressobj(16+zlib.MAX_WBITS)`) succeeds cleanly,
+produces exactly 1034 bytes of output, and consumes the stream with
+zero leftover bytes and `eof=True` -- i.e. this is a **complete,
+valid, correctly-terminated gzip stream**, not truncation or a parsing
+bug on our end. `size` in the GGZ header is the *decompressed* length
+(matching this repo's own `ggz.h` documentation), but the real game
+code at `0x1bfd0`/`0x739c` is reading `size` **raw, undecompressed
+bytes directly off disk** in a loop that keeps requesting more
+whenever a read comes up short of the running total -- which happens
+to work for every other entry only because there's always more file
+data *after* it (the next entries' compressed streams) to keep
+pulling from until the requested total is reached, entry boundaries be
+damned. The very last entry has nothing after it, so the read
+genuinely, correctly comes up short (`505` then `0`), and `0x1bfd0`'s
+own final `expected == actual` check (`1034 != 505`) fails -- exactly
+matching the observed trace (`ldr r0,[r4,#0x14]; cmp r0,r5` at
+`0x1c0a0`/`0x1c0a4`, branch taken to the fail path).
+**Also confirmed this is a genuinely persistent failure, not
+transient**: reran with `hle_trace` (no full instruction trace) across
+10 real ticks and saw `"LIST COUNT:3"`/`"ERROR CODE:6"` printed
+identically, unchanged, every single tick -- ruling out an earlier
+open question about whether the state machine might recover on a
+later tick.
+**Not yet resolved**: whether real hardware's original `sound.ggz`
+genuinely has more trailing data after this last entry (making our
+copy of the asset the actual gap, not the emulator), or whether real
+game code is expected to legitimately fail exactly this way for the
+list's last slot and recover through a path not yet traced (a retry,
+a skip, or a "give up gracefully and continue to gameplay anyway" that
+our own state-machine driving hasn't reached or doesn't implement).
+Tracked as the next concrete step -- continuing the investigation
+rather than switching to something else, per direction.
+Side note for future invocations: this round's investigation began
+with a wrong assumption that the `.mod`'s containing folder name
+(`274754`) was Double Dragon's real `IModule::CreateInstance` `ClsId`
+-- it isn't (that was already corrected earlier in this very log, see
+the `0x0102F789`/`16971657` entry above); re-confirmed directly
+against the real compiled literal at file offset `0x738` before
+re-running. `tools/game_probe.cpp` always takes the real ClsId as its
+4th CLI argument, `16971657`, not the folder name.
