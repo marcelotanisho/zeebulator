@@ -38,17 +38,26 @@ class IDisplayHle {
   uint32_t Build(Memory& memory, HleRuntime& hle, uint32_t vtable_address,
                  uint32_t object_address);
 
+  // The IBitmap* GetDeviceBitmap() should hand back. Real disassembly
+  // (TASKS.md Phase 8) shows Double Dragon dereferencing this result's
+  // vtable directly, so leaving it unset (0) is fatal -- must be set to
+  // a real interface object (see BuildGenericStubObject) before the app
+  // can call GetDeviceBitmap without crashing.
+  void SetDeviceBitmapInstance(uint32_t bitmap_ptr) { device_bitmap_ptr_ = bitmap_ptr; }
+
  private:
   void DrawText(IArmCore& core);
   void DrawRect(IArmCore& core);
   void SetColor(IArmCore& core);
   void Update(IArmCore& core);
+  void GetDeviceBitmap(IArmCore& core);
 
   Backend& backend_;
   int width_;
   int height_;
   std::vector<uint16_t> framebuffer_;  // RGB565, width_ * height_
   uint32_t current_rgbval_ = 0x00FFFFFF;  // last color SetColor() set (white by default)
+  uint32_t device_bitmap_ptr_ = 0;
 };
 
 }  // namespace zeebulator

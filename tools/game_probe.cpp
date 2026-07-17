@@ -21,6 +21,7 @@
 #include "core/brew/ishell.h"
 #include "core/brew/media_hle.h"
 #include "core/brew/mod_runtime.h"
+#include "core/brew/scaffold_object.h"
 #include "core/brew/virtual_filesystem.h"
 #include "core/cpu/arm_interpreter.h"
 #include "core/loader/ggz.h"
@@ -201,7 +202,49 @@ int main(int argc, char** argv) {
   // via real disassembly of AEEApplet_New's call chain (TASKS.md Phase 8).
   zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
   shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
+  // ClsId 0x01002001: a real BREW class Double Dragon's own graphics-init
+  // routine requires (ISHELL_CreateInstance failing for it is the
+  // confirmed root cause of the "memory insufficient" dead end -- see
+  // TASKS.md Phase 8). Its real interface isn't identified yet, so this
+  // is a generic scaffold (see scaffold_object.h) sized to cover the
+  // highest slot (33) real disassembly shows the game calling on it.
+  uint32_t unknown_graphics_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x8000C000, /*object=*/0x8000D000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(/*unidentified, real ClsId from disassembly=*/0x01002001,
+                              unknown_graphics_obj);
   uint32_t shell = shell_hle.Build(/*vtable=*/0x80000000, /*object=*/0x80001000);
+  // Same real init routine also calls IDisplay::GetDeviceBitmap and
+  // immediately dereferences the result's vtable -- another generic
+  // scaffold, since the real IBitmap-shaped interface isn't identified
+  // either.
+  uint32_t device_bitmap_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x8000E000, /*object=*/0x8000F000, /*slot_count=*/20);
+  display.SetDeviceBitmapInstance(device_bitmap_obj);
+  // Two more unidentified real BREW classes a later init routine requires
+  // (found by the same technique: real disassembly of 0x1b2fc showed two
+  // more ISHELL_CreateInstance calls gating the same "memory
+  // insufficient" state -- see TASKS.md Phase 8). Neither is dereferenced
+  // within that routine itself, so a generic scaffold is enough to clear
+  // this specific gate; extend if/when real code calls a method on one.
+  uint32_t unknown_0x01001003_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80010000, /*object=*/0x80011000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x01001003, unknown_0x01001003_obj);
+  uint32_t unknown_0x01001014_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80012000, /*object=*/0x80013000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x01001014, unknown_0x01001014_obj);
+  // A still-deeper gate (0x1d5b8, reached only after the fixes above)
+  // requires two more classes -- confirmed via real objdump directly on
+  // the literal pool addresses its own `ldr r1,[pc,#N]` instructions
+  // reference (0x1d970/0x1d974), not assumed from the nearby-looking
+  // 0x0100100x classes above (a first attempt reused those by mistake
+  // and was caught because the resulting crash's real disassembly showed
+  // different literal values at those addresses).
+  uint32_t unknown_0x01014bc3_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80014000, /*object=*/0x80015000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x01014bc3, unknown_0x01014bc3_obj);
+  uint32_t unknown_0x01014bc4_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80016000, /*object=*/0x80017000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x01014bc4, unknown_0x01014bc4_obj);
   // Real code fetches "the current app's IShell"/"IDisplay" from an
   // ambient context (the static-base table's offset-0xc0 slot) in many
   // places, not just via the pIShell argument explicitly passed to

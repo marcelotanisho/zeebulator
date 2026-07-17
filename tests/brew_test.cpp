@@ -285,6 +285,23 @@ TEST(IDisplayHle, SetColorChangesDrawTextColorAndReturnsPrevious) {
   EXPECT_EQ(backend.last_frame[0], 0x001Fu) << "drawn glyph uses the newly-set blue color";
 }
 
+TEST(IDisplayHle, GetDeviceBitmapWritesTheRegisteredInstanceAndReturnsSuccess) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  TestBackend backend;
+  IDisplayHle display(backend, 64, 48);
+  uint32_t display_obj = display.Build(cpu.GetMemory(), hle, kVtableAddr, kObjectAddr);
+  constexpr uint32_t kBitmapObj = 0x8000F000;
+  display.SetDeviceBitmapInstance(kBitmapObj);
+
+  // int GetDeviceBitmap(IDisplay *pIDisplay, IBitmap **ppBitmap)
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 16 * 4);
+  constexpr uint32_t kPpBitmapAddr = 0x9000;
+  cpu.GetMemory().Write32(kPpBitmapAddr, 0xDEADBEEF);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, display_obj, kPpBitmapAddr), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read32(kPpBitmapAddr), kBitmapObj);
+}
+
 TEST(IDisplayHle, ObjectAddressPointsAtVtable) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

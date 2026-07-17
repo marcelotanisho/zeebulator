@@ -29,6 +29,7 @@ add_executable(zeebulator_tests
   midi_test.cpp
   mod_runtime_test.cpp
   font5x7_test.cpp
+  scaffold_object_test.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)

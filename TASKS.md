@@ -1373,6 +1373,66 @@ playable start-to-finish at full speed, standalone build.
       as the next concrete step: identify (or reference-implement a
       shape for) class `0x01002001`, alongside expanding `font5x7` for
       legible real text now that we know what it's mostly needed for.
+      **Cleared the `0x01002001` gate with a deliberately generic
+      scaffold, not a guessed real interface**: added
+      `core/brew/scaffold_object.h/.cpp`
+      (`BuildGenericStubObject(memory, hle, vtable, object, slot_count)`
+      -- every slot just returns 0, no assumed shape) plus
+      `IDisplayHle::GetDeviceBitmap`/`SetDeviceBitmapInstance` (real
+      disassembly of `0x1b5c0` showed the game immediately dereferencing
+      `GetDeviceBitmap`'s result's vtable, so leaving it unwritten --
+      the previous blind `Stub` behavior -- was a second, independent
+      crash risk beyond the `CreateInstance` failure). `tools/game_probe.cpp`
+      now registers a 40-slot scaffold for `0x01002001` (sized to cover
+      the highest slot, 33, the disassembly shows being called) and a
+      20-slot scaffold as the device bitmap. 2 new tests
+      (`tests/scaffold_object_test.cpp`: object-header/vtable wiring,
+      every slot callable and returns 0;
+      `IDisplayHle.GetDeviceBitmapWritesTheRegisteredInstanceAndReturnsSuccess`
+      in `tests/brew_test.cpp`). **Verified against the real game**: the
+      `applet+0x24` state variable (read via a temporary debug print,
+      removed after use) now reads `0` instead of `1` past this specific
+      gate -- confirmed via `arm-none-eabi-objdump` that the caller
+      (`0x1b154`) now sees a nonzero (success) return from `0x1b5c0`.
+      **The chain goes deeper**: the *same* real disassembly technique
+      applied to `0x1b5c0`'s caller (`ddragonz.mod` offset `0x1b060`,
+      the applet's broader graphics-init routine) shows it gates
+      `applet+0x24` on **seven** sequential subsystem-init calls, not
+      just the one already found -- two (`0x96f0`, `0x1aea0`) confirmed
+      unconditionally successful in this binary, `0x1b5c0` now fixed,
+      and three more real gates found and fixed this round:
+      - `0x1b2fc`: two more `ISHELL_CreateInstance` calls, for classes
+        `0x01001003` and `0x01001014` (confirmed via direct objdump on
+        the literal-pool addresses `0x1b394`/`0x1b398`). Neither result
+        is dereferenced inside that function itself, so generic
+        40-slot scaffolds (registered in `game_probe.cpp`) were enough.
+      - `0x1d5b8`: two *more* `CreateInstance` calls, for classes
+        `0x01014bc3` and `0x01014bc4`. **A real mistake caught and
+        fixed in the same round**: a first attempt reused the
+        `0x0100100x`-family class IDs from the `0x1b2fc` gate on the
+        assumption they'd repeat -- wrong, and caught immediately
+        because the resulting run showed a genuine crash
+        (`pc=0x00000000`, "wandered outside module") instead of a clean
+        pass/fail, since the real code's own error-cleanup path (at
+        `0x1d940`) dereferences a still-null local when
+        `CreateInstance` legitimately fails for an unregistered class --
+        a real bug in *our* registration, not the emulator. Re-checked
+        directly against `objdump` output for the exact literal-pool
+        addresses (`0x1d970`/`0x1d974`) the function's own
+        `ldr r1,[pc,#N]` instructions reference, found the real values
+        (`0x01014bc3`/`0x01014bc4`), and registering scaffolds for
+        *those* fixed it: the run now reaches `CreateInstance OK` and
+        the event loop with **no crash**, though `0x1d5b8` itself still
+        legitimately returns failure (state becomes `3`, not `1` --
+        a different failure code, i.e. a different dialog/behavior than
+        the "insufficient memory" one, not yet decoded) for a deeper
+        reason: a real in-module helper (`0x23e58`) that indirects
+        through a global pointer chain (not through the `IDisplay*`
+        argument it's nominally called with) to reach some other
+        object's vtable slot 4, and returns NULL. Not yet understood
+        well enough to fix without guessing -- tracked as the next
+        concrete step, alongside decoding what "state = 3" actually
+        displays.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

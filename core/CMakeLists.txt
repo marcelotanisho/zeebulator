@@ -23,6 +23,8 @@ add_library(zeebulator_core STATIC
   brew/hle_runtime.h
   brew/interface_object.cpp
   brew/interface_object.h
+  brew/scaffold_object.cpp
+  brew/scaffold_object.h
   brew/ishell.cpp
   brew/ishell.h
   brew/idisplay.cpp

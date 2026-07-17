@@ -110,6 +110,16 @@ void IDisplayHle::SetColor(IArmCore& core) {
   core.SetRegister(kR0, previous);
 }
 
+void IDisplayHle::GetDeviceBitmap(IArmCore& core) {
+  // int GetDeviceBitmap(IDisplay *pIDisplay, IBitmap **ppBitmap)
+  // po is R0 (unused), ppBitmap R1. Real disassembly (TASKS.md Phase 8)
+  // immediately dereferences *ppBitmap's vtable, so this must hand back
+  // a real (if generic) interface object, not a null/unset pointer.
+  uint32_t pp_bitmap = core.GetRegister(kR1);
+  core.GetMemory().Write32(pp_bitmap, device_bitmap_ptr_);
+  core.SetRegister(kR0, 0);  // AEE_SUCCESS
+}
+
 void IDisplayHle::Update(IArmCore&) {
   backend_.PushVideoFrame(framebuffer_.data(), width_, height_,
                            PixelFormat::kRGB565);
@@ -144,7 +154,7 @@ uint32_t IDisplayHle::Build(Memory& memory, HleRuntime& hle,
       Stub,                                    // 13 CreateDIBitmap
       Stub,                                    // 14 SetDestination
       Stub,                                    // 15 GetDestination
-      Stub,                                    // 16 GetDeviceBitmap
+      [this](IArmCore& c) { GetDeviceBitmap(c); },  // 16 GetDeviceBitmap
       Stub,                                    // 17 SetFont
       Stub,                                    // 18 SetClipRect
       Stub,                                    // 19 GetClipRect
