@@ -105,26 +105,68 @@ TEST(FileHle, ReadReturnsCorrectBytesAndAdvancesPosition) {
   EXPECT_EQ(f.cpu.GetMemory().Read8(dest + 1), 'o');
 }
 
-TEST(FileHle, SeekStartCurrentEndAllWorkCorrectly) {
+TEST(FileHle, SeekReturnsSuccessNotThePositionAndActuallyMoves) {
+  // Real IFILE_Seek() returns AEE_SUCCESS(0)/AEE_EFAILED(1), not the
+  // resulting position -- confirmed against the real AEEFile.h contract
+  // (see PHASE8_LOG.md for how a wrong assumption here, returning the
+  // position, was caught: Double Dragon's own real code checks Seek's
+  // result against 0, so any nonzero real position was misread as a
+  // failure).
   Fixture f;
   WriteCString(f.cpu.GetMemory(), kScratch, "bar.bin");  // 8 bytes: 1..8
   uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
   ASSERT_NE(handle, 0u);
 
   // _SEEK_START = 0
-  uint32_t pos = f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 0, 3);
-  EXPECT_EQ(pos, 3u);
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 0, 3), 0u);
   uint32_t dest = kScratch + 0x100;
   f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), handle, dest, 1);
   EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 4) << "byte at index 3 (0-based) is value 4";
 
   // _SEEK_CURRENT = 2 (position is now 4 after that read)
-  pos = f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 2, 2);
-  EXPECT_EQ(pos, 6u);
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 2, 2), 0u);
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileRead), handle, dest, 1);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 7) << "position should now be 6 (4+2)";
 
   // _SEEK_END = 1
-  pos = f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 1, 0);
-  EXPECT_EQ(pos, 8u) << "file is 8 bytes";
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, 1, 0), 0u);
+}
+
+TEST(FileHle, SeekCurrentWithZeroDistanceTellsThePosition) {
+  // The one real documented exception: _SEEK_CURRENT with moveDistance
+  // 0 acts as "tell" and returns the current position.
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "bar.bin");  // 8 bytes
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  ASSERT_NE(handle, 0u);
+
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_START=*/0, 5);
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_CURRENT=*/2, 0), 5u);
+}
+
+TEST(FileHle, SeekOutOfBoundsFailsOnAReadOnlyFile) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "bar.bin");  // 8 bytes
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  ASSERT_NE(handle, 0u);
+
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_START=*/0, 9), 1u)
+      << "past EOF on a read-only file must fail";
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_START=*/0, -1), 1u)
+      << "before the start must fail";
+}
+
+TEST(FileHle, SeekPastEofOnAWritableFileExtendsItInsteadOfFailing) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  constexpr uint32_t kOfmCreate = 4;
+  uint32_t handle =
+      f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  ASSERT_NE(handle, 0u);
+
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_START=*/0, 10), 0u);
+  EXPECT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_CURRENT=*/2, 0), 10u)
+      << "file grew to reach the seek target";
 }
 
 TEST(FileHle, TwoOpenFilesHaveIndependentPositions) {

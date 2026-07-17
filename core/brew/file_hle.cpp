@@ -189,27 +189,57 @@ void FileHle::FileGetInfoImpl(IArmCore& core) {
 }
 
 void FileHle::SeekImpl(IArmCore& core) {
-  // int32 Seek(IFile* pIFile, FileSeekType seek, int32 position)
-  // FileSeekType: _SEEK_START=0, _SEEK_END=1, _SEEK_CURRENT=2
+  // int32 Seek(IFile* pIFile, FileSeekType seek, int32 moveDistance)
+  // FileSeekType: _SEEK_START=0, _SEEK_END=1, _SEEK_CURRENT=2 (confirmed
+  // against the real AEEFile.h enum). Real return value (also confirmed
+  // against AEEFile.h's own documented contract -- NOT the resulting
+  // position, a wrong assumption this class shipped with until real
+  // disassembly of Double Dragon caught it, see PHASE8_LOG.md): plain
+  // AEE_SUCCESS(0)/AEE_EFAILED(1), except the specific special case of
+  // _SEEK_CURRENT with moveDistance==0 ("tell"), which returns the
+  // current position. Real semantics: a read-only file fails the seek
+  // if the target is outside [0, size]; a writable file only fails if
+  // the target is negative, and seeking past EOF extends the file.
+  constexpr uint32_t kSeekStart = 0;
+  constexpr uint32_t kSeekCurrent = 2;
+  constexpr uint32_t kAeeSuccess = 0;
+  constexpr uint32_t kAeeEfailed = 1;
   auto it = open_files_.find(core.GetRegister(kR0));
   if (it == open_files_.end()) {
-    core.SetRegister(kR0, static_cast<uint32_t>(-1));
+    core.SetRegister(kR0, kAeeEfailed);
     return;
   }
   OpenFile& f = it->second;
   uint32_t seek_type = core.GetRegister(kR1);
-  auto position = static_cast<int32_t>(core.GetRegister(kR2));
+  auto move_distance = static_cast<int32_t>(core.GetRegister(kR2));
+
+  if (seek_type == kSeekCurrent && move_distance == 0) {
+    core.SetRegister(kR0, f.position);  // tell operation
+    return;
+  }
 
   int64_t base;
   switch (seek_type) {
-    case 0: base = 0; break;                                     // _SEEK_START
-    case 1: base = static_cast<int64_t>(f.data->size()); break;   // _SEEK_END
-    default: base = static_cast<int64_t>(f.position); break;      // _SEEK_CURRENT
+    case kSeekStart: base = 0; break;
+    default: base = static_cast<int64_t>(f.position); break;  // _SEEK_CURRENT
+    case 1: base = static_cast<int64_t>(f.data->size()); break;  // _SEEK_END
   }
-  int64_t new_pos = base + position;
-  new_pos = std::clamp<int64_t>(new_pos, 0, static_cast<int64_t>(f.data->size()));
+  int64_t new_pos = base + move_distance;
+
+  if (f.mutable_data != nullptr) {
+    if (new_pos < 0) {
+      core.SetRegister(kR0, kAeeEfailed);
+      return;
+    }
+    if (new_pos > static_cast<int64_t>(f.mutable_data->size())) {
+      f.mutable_data->resize(static_cast<size_t>(new_pos));
+    }
+  } else if (new_pos < 0 || new_pos > static_cast<int64_t>(f.data->size())) {
+    core.SetRegister(kR0, kAeeEfailed);
+    return;
+  }
   f.position = static_cast<uint32_t>(new_pos);
-  core.SetRegister(kR0, f.position);
+  core.SetRegister(kR0, kAeeSuccess);
 }
 
 uint32_t FileHle::Build(uint32_t file_mgr_vtable_address, uint32_t file_mgr_object_address,

@@ -901,3 +901,52 @@ differently from entry 0, what `0x1bfd0` actually validates, what
 would need substantially more disassembly of `0x1bfd0` and the
 81-slot-iteration loop specifically to resolve, tracked as the next
 concrete step.
+
+**Found and fixed a real, foundational bug this round: `IFILE_Seek`'s
+return value was backwards.** The real `AEEFile.h` documents `Seek`'s
+contract precisely: it returns `AEE_SUCCESS`(0)/`AEE_EFAILED`(1), *not*
+the resulting position -- the one documented exception being
+`_SEEK_CURRENT` with `moveDistance=0`, a "tell" operation that does
+return the current position. `FileHle::SeekImpl` had always returned
+the resulting position instead, which only coincidentally matched real
+"0=success" for the specific case of seeking to absolute position 0 --
+so every previous test (and every previous real gate this session) that
+happened to seek to position 0 looked correct, while any real seek to a
+*nonzero* position returned a nonzero value real game code reads as
+failure. **Found via the resource-list loop from the previous entry**:
+its helper (`ddragonz.mod` offset `0x739c`) does
+`ISHELL`-style `Seek(SEEK_START, index*8)` then checks the result
+against 0 -- exactly the shape that would silently break for every
+`index > 0`. Rewrote `SeekImpl` to match the real contract exactly,
+including the real documented asymmetry between read-only files
+(seeking outside `[0, size]` fails) and writable files (seeking past
+EOF extends the file; only seeking negative fails) and the `_SEEK_
+CURRENT`+0 tell exception. Rewrote the existing Seek test to check the
+real contract instead of the old (wrong) one, and added 3 more:
+tell-returns-position, out-of-bounds-fails-on-read-only, and
+past-EOF-extends-a-writable-file.
+**Verified against the real game** (a temporary live memory watchpoint
++ full instruction trace of the exact failing call, both removed after
+use): `0x739c`'s *two* real `Seek` calls (one to the GGZ header-table
+entry, one to the resource's real data offset) now both succeed
+correctly, and the whole function completes and returns success for a
+real resource index (61) that previously failed outright. **The
+`ERROR CODE:6` loop still doesn't fully clear**, for a new, different,
+narrower reason found by continuing the same trace one level deeper:
+after the two real `Seek`s succeed, the resource-loading routine
+(`0x1bfd0`) reads the file's real 8-byte GGZ header entry correctly
+(offset `0x1c3e25`, size `0x9ef0` -- both parsed correctly), then tries
+to `Read` the actual resource content through a *different* object,
+`manager->12` (`manager` here is a distinct per-subsystem struct at
+`applet+0x19c`, not the `applet+0x128` GL-init struct from earlier) --
+and `manager->12` still points at the old, still-unidentified generic
+scaffold for class `0x01001014` (the twin of `0x01001003`=`FileMgr`
+found together at the very first `0x1b2fc` gate this session), whose
+blind `Stub` slot 3 returns 0 bytes read every time. Nothing in
+`0x739c`/`0x1bfd0` ever *writes* `manager->12` -- it must be
+initialized once elsewhere, in a dedicated init routine for this
+`applet+0x19c` subsystem not yet located. Tracked as the next concrete
+step: find that init routine (the same technique as every fix this
+session -- find what constructs `applet+0x19c`, trace its own
+`ISHELL_CreateInstance` calls) to finally identify class `0x01001014`
+for real, the same way `0x01001003` was identified.

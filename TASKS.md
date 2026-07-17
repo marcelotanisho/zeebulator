@@ -904,21 +904,28 @@ playable start-to-finish at full speed, standalone build.
       evidence) — are all real, tested, working HLE now.
       **Not yet playable**: the game is currently stuck redrawing a
       diagnostic overlay (`"ERROR CODE:6"` / `"LIST COUNT:3"`) every
-      tick. A real gap behind part of this is now fixed: the game opens
+      tick. Two real gaps behind this are now fixed: (1) the game opens
       its own packed resource archive as a raw file
       (`IFILEMGR_OpenFile("sound.ggz")`), which the dev tool's
       `VirtualFilesystem` never exposed (only each archive's
-      *decompressed entries*, not its own raw bytes) — fixed, verified
-      against the real game (`OpenFile` now succeeds with the real
-      1.9 MB file size, and the game genuinely reads/seeks within it).
-      The diagnostic loop itself persists for a different, deeper
-      reason: traced to a real 81-slot resource-list loop
-      (`ddragonz.mod` offset `0x1c964`) and its per-item helper
-      (offset `0x1bfd0`) — genuine application business logic (why
-      entry N behaves differently from entry 0), not a missing HLE
-      primitive, so a different and likely longer investigation than
-      everything above. See `PHASE8_LOG.md`'s final entries for the
-      full trace.
+      *decompressed entries*, not its own raw bytes); (2) a real,
+      foundational bug in `FileHle::SeekImpl` — it returned the
+      resulting file position instead of `AEE_SUCCESS`/`AEE_EFAILED`
+      (confirmed backwards against the real `AEEFile.h` contract),
+      silently breaking any real seek to a nonzero position. Both fixed
+      and verified against the real game: `OpenFile` succeeds with the
+      real 1.9 MB file size, and a real resource-loading routine's two
+      real `Seek` calls (to a GGZ header entry, then to the resource's
+      real data offset) both now succeed correctly where they
+      previously failed. The diagnostic loop still persists past both
+      fixes, for a third, narrower reason: the same routine reads real
+      resource content through a per-subsystem field
+      (`applet+0x19c`'s own `+12`) that's still wired to an old,
+      unidentified generic scaffold (class `0x01001014`, found
+      alongside `AEECLSID_FILEMGR` at the very first `CreateInstance`
+      gate this session but never resolved) instead of a real `IFile`-
+      shaped object — tracked as the next concrete step. See
+      `PHASE8_LOG.md`'s final entries for the full trace.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
