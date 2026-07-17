@@ -57,21 +57,18 @@ void FileHle::OpenFileImpl(IArmCore& core) {
   std::string name = ReadCString(memory_, core.GetRegister(kR1));
   uint32_t mode = core.GetRegister(kR2);
 
+  uint32_t handle = 0;
   auto writable_it = writable_files_.find(name);
   if (writable_it != writable_files_.end()) {
-    core.SetRegister(kR0, AllocateFileObject(name, &writable_it->second, &writable_it->second));
-    return;
-  }
-  if (const std::vector<uint8_t>* data = vfs_.Find(name)) {
-    core.SetRegister(kR0, AllocateFileObject(name, data));
-    return;
-  }
-  if ((mode & kOfmCreate) != 0) {
+    handle = AllocateFileObject(name, &writable_it->second, &writable_it->second);
+  } else if (const std::vector<uint8_t>* data = vfs_.Find(name)) {
+    handle = AllocateFileObject(name, data);
+  } else if ((mode & kOfmCreate) != 0) {
     auto [inserted, _] = writable_files_.emplace(name, std::vector<uint8_t>{});
-    core.SetRegister(kR0, AllocateFileObject(name, &inserted->second, &inserted->second));
-    return;
+    handle = AllocateFileObject(name, &inserted->second, &inserted->second);
   }
-  core.SetRegister(kR0, 0);
+  if (handle != 0) last_opened_handle_ = handle;
+  core.SetRegister(kR0, handle);
 }
 
 void FileHle::FileMgrGetInfoImpl(IArmCore& core) {
@@ -137,9 +134,8 @@ void FileHle::EnumNextImpl(IArmCore& core) {
   core.SetRegister(kR0, 1);  // TRUE
 }
 
-void FileHle::ReadImpl(IArmCore& core) {
-  // int32 Read(IFile* po, void* pDest, uint32 nWant)
-  auto it = open_files_.find(core.GetRegister(kR0));
+void FileHle::ReadFromHandle(IArmCore& core, uint32_t handle) {
+  auto it = open_files_.find(handle);
   if (it == open_files_.end()) {
     core.SetRegister(kR0, 0);
     return;
@@ -154,6 +150,11 @@ void FileHle::ReadImpl(IArmCore& core) {
   }
   f.position += n;
   core.SetRegister(kR0, n);
+}
+
+void FileHle::ReadImpl(IArmCore& core) {
+  // int32 Read(IFile* po, void* pDest, uint32 nWant)
+  ReadFromHandle(core, core.GetRegister(kR0));
 }
 
 void FileHle::WriteImpl(IArmCore& core) {
@@ -284,6 +285,15 @@ uint32_t FileHle::Build(uint32_t file_mgr_vtable_address, uint32_t file_mgr_obje
   };
   return BuildInterfaceObject(memory_, hle_, file_mgr_vtable_address,
                                file_mgr_object_address, mgr_methods);
+}
+
+uint32_t FileHle::BuildLastOpenedFileProxy(uint32_t vtable_address, uint32_t object_address) {
+  // Sized to cover every real IFile slot (see file_methods in Build()),
+  // even though only Read (slot 3) is expected to be called on this
+  // one -- see the class doc comment for why.
+  std::vector<HleRuntime::HleFunction> methods(9, Stub);
+  methods[3] = [this](IArmCore& core) { ReadFromHandle(core, last_opened_handle_); };
+  return BuildInterfaceObject(memory_, hle_, vtable_address, object_address, methods);
 }
 
 }  // namespace zeebulator

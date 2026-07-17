@@ -205,8 +205,18 @@ int main(int argc, char** argv) {
   // Real compiled .mod code (ARM RVCT ROPI convention) expects a
   // "static base" pointer at kBase-4 -- see core/brew/mod_runtime.h and
   // PHASE8_LOG.md for how this was found via real disassembly.
+  // heap_size was originally 1 MiB, sized arbitrarily rather than
+  // measured -- real disassembly of Double Dragon's own resource-list
+  // loader (PHASE8_LOG.md) shows it MALLOC-ing real, sizeable audio
+  // buffers (tens to hundreds of KB each) for many real resources in a
+  // row, genuinely exhausting 1 MiB partway through and returning a
+  // real null from MALLOC that real game code can't recover from --
+  // not a bug in MallocImpl itself (confirmed via a live debug trace),
+  // just too small a heap for this real game's real needs. Bumped to
+  // 16 MiB, a generous but not unreasonable amount of app heap for a
+  // 2009-era dedicated gaming device.
   zeebulator::ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                                      /*heap_size=*/0x00100000, /*context_address=*/0x80280200);
+                                      /*heap_size=*/0x01000000, /*context_address=*/0x80280200);
   mod_runtime.Install(kBase, /*table_address=*/0x80280000);
 
   uint32_t display_obj =
@@ -290,9 +300,21 @@ int main(int argc, char** argv) {
                                           /*file_mgr_object=*/0x80005000,
                                           /*file_vtable=*/0x80006000);
   shell_hle.RegisterInstance(0x01001003, file_mgr_obj);
-  uint32_t unknown_0x01001014_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80012000, /*object=*/0x80013000, /*slot_count=*/40);
-  shell_hle.RegisterInstance(0x01001014, unknown_0x01001014_obj);
+  // ClsId 0x01001014: created alongside 0x01001003 above and never
+  // reassigned anywhere in the traced code (confirmed with a live
+  // memory watchpoint across a full run -- see PHASE8_LOG.md). Real
+  // disassembly shows its slot 3 (Read) called immediately after the
+  // game's own resource-loading routine opens and seeks the real file
+  // it wants via a *different* object (IFileMgr), with no attach/bind
+  // step ever observed -- so a real generic scaffold's blind Stub
+  // silently "succeeds" with 0 bytes read every time. Wired to
+  // FileHle's last-opened-file proxy instead: an evidence-grounded
+  // educated implementation of the one behavior everything points at
+  // (see file_hle.h's own doc comment on BuildLastOpenedFileProxy for
+  // the full reasoning and what's still unconfirmed about it).
+  uint32_t last_opened_file_proxy =
+      file_hle.BuildLastOpenedFileProxy(/*vtable=*/0x80012000, /*object=*/0x80013000);
+  shell_hle.RegisterInstance(0x01001014, last_opened_file_proxy);
   // A still-deeper gate (0x1d5b8, reached only after the fixes above)
   // requires two more classes -- confirmed via real objdump directly on
   // the literal pool addresses its own `ldr r1,[pc,#N]` instructions
@@ -489,7 +511,8 @@ int main(int argc, char** argv) {
       if (trace_this_tick) std::printf("--- tick %llu ---\n", static_cast<unsigned long long>(tick_count));
       try {
         auto tick_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, timer.callback,
-                                                   timer.user_data, 0, 0, 0, /*trace=*/false,
+                                                   timer.user_data, 0, 0, 0,
+                                                   /*trace=*/false,
                                                    /*hle_trace=*/trace_this_tick);
         if (tick_result.wandered_outside_module || tick_result.exceeded_step_budget) {
           std::printf("timer callback did not complete trustworthily -- stopping.\n");

@@ -313,3 +313,52 @@ TEST(FileHle, GetFreeSpaceWritesTotalWhenPointerIsNonNull) {
       f.hle.CallArmFunction(f.MgrSlot(kMgrGetFreeSpace), f.mgr, total_addr);
   EXPECT_EQ(f.cpu.GetMemory().Read32(total_addr), free_bytes);
 }
+
+TEST(FileHle, LastOpenedFileProxyReadsFromWhicheverFileWasMostRecentlyOpened) {
+  Fixture f;
+  constexpr uint32_t kProxyVtable = 0x80004000;
+  constexpr uint32_t kProxyObject = 0x80005000;
+  uint32_t proxy = f.file_hle.BuildLastOpenedFileProxy(kProxyVtable, kProxyObject);
+  uint32_t proxy_read = f.cpu.GetMemory().Read32(kProxyVtable + kFileRead * 4);
+
+  WriteCString(f.cpu.GetMemory(), kScratch, "bar.bin");  // 8 bytes: 1..8
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  ASSERT_NE(handle, 0u);
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileSeek), handle, /*_SEEK_START=*/0, 3);
+
+  // Read through the proxy, not the real handle -- it should still see
+  // bar.bin's real bytes starting from the position the real handle
+  // was left at.
+  uint32_t dest = kScratch + 0x100;
+  EXPECT_EQ(f.hle.CallArmFunction(proxy_read, proxy, dest, 2), 2u);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 4) << "byte at index 3 (0-based) is value 4";
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest + 1), 5);
+}
+
+TEST(FileHle, LastOpenedFileProxyFollowsANewerOpenFile) {
+  Fixture f;
+  constexpr uint32_t kProxyVtable = 0x80004000;
+  constexpr uint32_t kProxyObject = 0x80005000;
+  uint32_t proxy = f.file_hle.BuildLastOpenedFileProxy(kProxyVtable, kProxyObject);
+  uint32_t proxy_read = f.cpu.GetMemory().Read32(kProxyVtable + kFileRead * 4);
+
+  WriteCString(f.cpu.GetMemory(), kScratch, "bar.bin");
+  f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0);
+  WriteCString(f.cpu.GetMemory(), kScratch + 0x40, "foo.txt");  // "hello"
+  f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch + 0x40, 0);
+
+  uint32_t dest = kScratch + 0x100;
+  EXPECT_EQ(f.hle.CallArmFunction(proxy_read, proxy, dest, 1), 1u);
+  EXPECT_EQ(f.cpu.GetMemory().Read8(dest), 'h') << "proxy follows the newer open, not the first";
+}
+
+TEST(FileHle, LastOpenedFileProxyReturnsZeroWhenNothingHasBeenOpenedYet) {
+  Fixture f;
+  constexpr uint32_t kProxyVtable = 0x80004000;
+  constexpr uint32_t kProxyObject = 0x80005000;
+  uint32_t proxy = f.file_hle.BuildLastOpenedFileProxy(kProxyVtable, kProxyObject);
+  uint32_t proxy_read = f.cpu.GetMemory().Read32(kProxyVtable + kFileRead * 4);
+
+  uint32_t dest = kScratch + 0x100;
+  EXPECT_EQ(f.hle.CallArmFunction(proxy_read, proxy, dest, 1), 0u);
+}

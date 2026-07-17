@@ -52,6 +52,25 @@ class FileHle {
   uint32_t Build(uint32_t file_mgr_vtable_address, uint32_t file_mgr_object_address,
                  uint32_t file_vtable_address);
 
+  // Builds a proxy IFile-shaped object whose Read (slot 3) always
+  // forwards to whichever file this OpenFileImpl most recently
+  // returned, re-resolved on every call rather than fixed at build
+  // time. Real disassembly of Double Dragon (PHASE8_LOG.md) shows a
+  // second, separate real BREW class (0x01001014, created once via
+  // ISHELL_CreateInstance alongside AEECLSID_FILEMGR and never
+  // reassigned anywhere in the traced code -- confirmed with a live
+  // memory watchpoint across a full run) whose own Read is called
+  // immediately after the game's own resource-loading routine opens
+  // and seeks the real file it wants via a completely different
+  // object (IFileMgr). No real header or sample in this repo's bundled
+  // materials names class 0x01001014 (see PHASE8_LOG.md for what was
+  // searched and ruled out), so this is a deliberate, evidence-
+  // grounded educated implementation -- not a confirmed-correct one --
+  // of the one behavior every piece of real evidence points at: acting
+  // as "whatever file is current" without ever being told so
+  // explicitly through its own storage.
+  uint32_t BuildLastOpenedFileProxy(uint32_t vtable_address, uint32_t object_address);
+
  private:
   struct OpenFile {
     std::string name;
@@ -74,6 +93,11 @@ class FileHle {
   void FileGetInfoImpl(IArmCore& core);
   void SeekImpl(IArmCore& core);
 
+  // Shared by ReadImpl (handle = R0, the real "po") and the last-
+  // opened-file proxy's Read (handle = last_opened_handle_, ignoring
+  // its own "po" entirely).
+  void ReadFromHandle(IArmCore& core, uint32_t handle);
+
   void WriteFileInfo(uint32_t dest_addr, const std::string& name, uint32_t size);
   uint32_t AllocateFileObject(const std::string& name, const std::vector<uint8_t>* data,
                                std::vector<uint8_t>* mutable_data = nullptr);
@@ -88,6 +112,9 @@ class FileHle {
   // Runtime-created/written files (e.g. save games) -- separate from
   // the read-only GGZ-backed vfs_, never persisted past this process.
   std::unordered_map<std::string, std::vector<uint8_t>> writable_files_;
+  // The handle OpenFileImpl most recently returned successfully (0 if
+  // none yet) -- see BuildLastOpenedFileProxy.
+  uint32_t last_opened_handle_ = 0;
 };
 
 }  // namespace zeebulator
