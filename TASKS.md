@@ -952,6 +952,42 @@ playable start-to-finish at full speed, standalone build.
       research-asset gap rather than an emulator gap, though not yet
       confirmable without another real copy of the file. See
       `PHASE8_LOG.md`'s final entries for the full trace and reasoning.
+- [ ] Validate the HLE against a second real game (Peggle), started this
+      round to check whether Double Dragon-tuned HLE generalizes.
+      Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
+      archive.org preservation item (see PHASE8_LOG.md for provenance;
+      files live under `research/games/_archive_org_zeebo-arquivista/`,
+      git-ignored) — re-downloading Double Dragon from it turned out to
+      be byte-for-byte identical to the copy already in this repo,
+      independently confirming that file is authentic and complete, not
+      a truncated research-asset gap (see the entry above). Surveyed all
+      61 titles' formats: **only Double Dragon uses the GGZ archive
+      format** — every other title uses a different container per
+      publisher/engine (classic-arcade ports like Bad Dudes/Caveman
+      Ninja/Pac-Mania wrap what looks like an embedded arcade-emulation
+      core with its own `"PACK"`-magic `.pkg` format; several PopCap
+      titles — Peggle, Bejeweled Twist, Zuma's Revenge — use a cleaner
+      single-archive `resources.bar`/`resources.dat`, format not yet
+      identified, doesn't match public PopCap BAR headers). Picked
+      Peggle for its clean layout and smaller `.mod` (274KB vs Double
+      Dragon's 462KB). Found Peggle's own real `IModule::CreateInstance`
+      ClsId — `0x01099CD6` / `17407190`, unrelated to Double Dragon's
+      `0x0102F789` — confirmed directly against `peggle.mod`'s own raw
+      file bytes at the literal-pool address `CreateInstance` compares
+      against (same technique as Double Dragon's). With that and the
+      real static-base DBGPRINTF slot fix (offset `0x9c`, committed — see
+      `core/brew/mod_runtime.h`), `CreateInstance` now runs real code
+      to completion and returns a real, non-null applet pointer.
+      **Blocked on a new, different, more architectural gap**:
+      `HandleEvent(EVT_APP_START)` hits a real `BX`/`BLX` into
+      Thumb-mode code, which `core/cpu/arm_interpreter.cpp` doesn't
+      implement at all (ARM-only so far, ~600 lines) — Double Dragon's
+      `.mod` apparently never needed it. Implementing Thumb (T32)
+      decoding + ARM/Thumb interworking is a genuinely bigger,
+      architectural piece of work, deliberately not started this round
+      — see PHASE8_LOG.md for the full trace and reasoning, and pick
+      this up when ready to take on interpreter-level work rather than
+      HLE-gap fixes.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

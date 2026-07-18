@@ -1,4 +1,5 @@
-# Phase 8 Investigation Log — Double Dragon
+# Phase 8 Investigation Log — Double Dragon (and, from the log's final
+# section onward, a second title: Peggle)
 
 This is the detailed, blow-by-blow investigation log for TASKS.md's Phase 8
 task "Iteratively debug against the real game, filling HLE API gaps as
@@ -8,9 +9,12 @@ rest of the project's task list.
 
 Every entry here is grounded in real evidence (real disassembly via
 `arm-none-eabi-objdump`, real bundled SDK/header extraction, or live
-runtime instrumentation) against the real, compiled `ddragonz.mod` —
+runtime instrumentation) against the real, compiled game module —
 never guessed. Entries are in chronological order (oldest first); the
-most recent entry reflects current status.
+most recent entry reflects current status. Almost all entries are
+against Double Dragon's `ddragonz.mod`; the final section is against a
+second real title, Peggle's `peggle.mod`, brought in to check whether
+HLE work tuned against one game generalizes to another.
 
 ---
 
@@ -1170,3 +1174,138 @@ emulator does. Making further progress here most likely needs a
 different real copy of `sound.ggz` (or of the whole game package) to
 compare against, rather than more disassembly of code already read
 exhaustively down to its last real branch.
+
+---
+
+## Second real game: Peggle
+
+Rather than keep pushing on Double Dragon's asset-level dead end, brought
+in a second real commercial title to test something Double Dragon alone
+never could: whether HLE work this deeply tuned against one game's real
+code actually generalizes, or was accidentally overfit to it.
+
+**Sourcing, and an unplanned but useful side-verification.** Downloaded
+all 61 real games from the `zeebo-arquivista` archive.org preservation
+item (https://archive.org/details/zeebo-arquivista, a curated ~700MB
+Zeebo collection distinct from this repo's original Double Dragon
+source) into `research/games/_archive_org_zeebo-arquivista/`
+(git-ignored, same as every other real game asset in this repo). Before
+picking a second title, re-downloaded Double Dragon from this
+independent source specifically to test the open question from the
+previous section: is this repo's `sound.ggz` possibly an incomplete
+research-asset dump? Compared all 5 real files
+(`274754.mif`/`data.ggz`/`ddragonz.mod`/`ddragonz.sig`/`sound.ggz`)
+byte-for-byte (SHA-256) against the copy already in this repo: **all 5
+are identical**, including `sound.ggz`. This rules out "incomplete dump"
+as the explanation for the entry-74 EOF mismatch documented above — the
+file is confirmed authentic and complete from two independent sources,
+which narrows that open question rather than closing it (see that
+section for the remaining hypotheses).
+
+**Format survey across all 61 titles, an important and unplanned
+finding**: only Double Dragon uses the GGZ archive format this repo's
+loader (`core/loader/ggz.h`) already supports. Every other title uses a
+different real container. The classic-arcade ports (`Bad Dudes vs.
+DragonNinja`, `Caveman Ninja`, `Dark Seal`, `Heavy Barrel`, `Karnov's
+Revenge`, `Street Hoop`, `Pac-Mania`, `Super BurgerTime`, etc.) ship
+loose per-asset files (`.tex`/`.wav`/`.fnz`/`.tga`) alongside a
+`"PACK"`-magic `.pkg` container (real magic bytes confirmed directly:
+`50 41 43 4B` = `"PACK"`, followed by a real embedded zlib stream --
+`78 da`, zlib's "best compression" header -- found inside one entry's
+raw bytes) -- consistent with these being ports built on an embedded
+classic-arcade-hardware emulation core bundling original ROM data,
+architecturally very different from Double Dragon's native BREW app.
+Several real PopCap titles (`Peggle`, `Bejeweled Twist`, `Zuma's
+Revenge`) instead ship a single clean `resources.bar`/`resources.dat`
+archive alongside `<game>.mod`/`.sig` -- much closer in shape to Double
+Dragon's own layout, though the header bytes checked (`Peggle`'s
+`resources.bar`) don't match any publicly documented PopCap BAR
+signature, so the real format is still unidentified, not assumed.
+**Picked Peggle**: cleanest layout of the non-GGZ titles, and its
+`peggle.mod` (274,124 bytes) is noticeably smaller than
+`ddragonz.mod` (462,748 bytes).
+
+**Found Peggle's real `IModule::CreateInstance` ClsId via live
+execution, not hand-decoding.** Peggle's `AEEMod_Load`/`AEEMod_New`
+prologue (file offset `0`-`0x2740`-ish) follows the identical real
+`AEEModGen.c`-template shape Double Dragon's does (same MALLOC-based
+`AEEMod_New(dwSize=20, ...)` call through the confirmed static-base
+slot `0x68`) -- expected, since both are BREW SDK-compiled ROPI
+binaries -- but its `CreateInstance` (real address `0x2630`, found by
+resolving the vtable-populating PC-relative literal stores in
+`AEEMod_New`'s tail) is a *thunk* that jumps through a stored function
+pointer (`module+12`) rather than doing an inline class-ID compare like
+Double Dragon's. That pointer is null on the very first real
+`AEEMod_Load` call (confirmed live: the two stack args `AEEMod_New`
+forwards for it come from memory Double Dragon's equivalent call site
+also zeroes), so real `CreateInstance` instead falls through to a
+generic real dispatcher at module offset `0xcc8`. Rather than keep
+hand-decoding this unfamiliar shape, just ran it live (`trace=true` on
+the `CreateInstance` call, same technique used throughout this log) with
+a guessed ClsId (the folder name, `278962` -- wrong, as expected) and
+read the real comparison directly out of the trace: `cmp r4, r0` at
+module offset `0xce8`, with `r0` loaded from a literal at `0xcd8` whose
+real value, cross-checked directly against the raw file bytes at that
+exact literal-pool address, is **`0x01099CD6`** (decimal `17407190`) --
+unrelated to Double Dragon's own real ClsId, `0x0102F789`; different
+game, different constant. Re-ran with the real value: `CreateInstance` reaches
+real, substantial code (accesses `AEECLSID_DISPLAY` = `0x01001001`,
+matching Double Dragon's own confirmed real value) but wanders outside
+the module at step 33, jumping to `pc=0x00000000` -- the same "missing
+static-base slot -> null function pointer -> jump to zero" shape
+documented earlier in this log for Double Dragon's own early
+`AEEMod_Load` gap.
+
+**Found and fixed the real gap: static-base slot `0x9c`, a debug-logging
+function.** Traced the indirect call at module offset `0xd18`
+(`ldr ip,[r0,#0x9c]; ...; bx ip`, where `r0` is the confirmed
+static-base table address) and its arguments by resolving every
+PC-relative literal address by hand and reading the real bytes at each
+directly out of the file (not guessed): the destination buffer passed
+as the first call's first argument literally contains the ASCII bytes
+`"*dbgprint"`; the source argument is a real Windows build-machine path,
+`"e:\Peggl..."` (a debug build artifact). A second, differently-shaped
+call through the *same* slot immediately after (module offset `0xd30`
+onward) passes a real literal format string as its first argument --
+found three at nearby call sites: `"CREATING APPLET: %x"`, `"FAILED TO
+CREATE APPLET %x"`, `"FAILED TO ALLOCATE MEMORY %x"`. This is BREW's
+real `DBGPRINTF` macro family (different fixed-arity real helper calls
+per how many `%`-substitutions the format string needs, all funneling
+through one static-base slot). Checked every real call site found (161
+total, `grep`-counted) for whether the return value is ever used
+afterward -- it never is, the very next instruction after every call
+overwrites `r0` before it could be read -- so implemented as a pure
+no-op (`core/brew/mod_runtime.{h,cpp}`, `kDbgPrintfSlotOffset = 0x9c`,
+one new test `DbgPrintfSlotDoesNotCrash`). Committed (`b0788bc`).
+**Verified against the real game**: re-ran Peggle's `CreateInstance` --
+now completes in 141 real steps (versus wandering after 33 and running
+786,680 steps of a real-but-untrustworthy excursion before), returns
+real `SUCCESS` (`r0=0`), and writes a real non-null applet pointer
+(`0x80300024`).
+
+**Blocked on a new, different, and more architectural gap: Thumb-mode
+code.** Driving `HandleEvent(EVT_APP_START)` on the real, non-null
+applet immediately throws: a real `BX`/`BLX` at module offset `0xa4c`
+targets an odd address, requesting Thumb (T32) instruction state.
+`core/cpu/arm_interpreter.cpp` (~600 lines) is ARM-only -- it has no
+Thumb decoder and no ARM/Thumb interworking at all, because Double
+Dragon's `ddragonz.mod` apparently never needed one. This is
+qualitatively different from every other gap in this log: those were
+all missing HLE call-outs or table slots (bounded, mechanical,
+find-the-real-behavior-and-wire-it-in work); this is the CPU
+interpreter itself missing a whole instruction-set mode, which would
+mean a second 16-bit decoder plus correct mode-switching semantics --
+a real, separate feature, not attempted this round. Deliberately
+stopped here rather than starting that work without discussing scope
+first.
+
+**Where this leaves the Peggle thread**: real ClsId found and verified;
+one real, general (not Peggle-specific) HLE gap found, fixed, tested,
+and committed, benefiting any future title that hits the same slot;
+`CreateInstance` now succeeds cleanly end-to-end. The concrete next
+steps, in the order they'd naturally come up, are: (1) implement Thumb
+(T32) decoding and ARM/Thumb interworking in the CPU interpreter, and
+(2) reverse-engineer `resources.bar`'s real format (only the `"PACK"`-
+style titles' container has been characterized at all so far; Peggle's
+own `resources.bar` header doesn't match any format checked yet). Both
+are real, separate, non-trivial pieces of work, not started this round.
