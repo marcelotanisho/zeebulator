@@ -1090,3 +1090,52 @@ the `0x0102F789`/`16971657` entry above); re-confirmed directly
 against the real compiled literal at file offset `0x738` before
 re-running. `tools/game_probe.cpp` always takes the real ClsId as its
 4th CLI argument, `16971657`, not the folder name.
+
+**Resolved the "not yet resolved" question above, via real disassembly
+of the dispatcher itself (`0x1c170` onward, the true function entry --
+`0x1c1ec`/`0x1c964` from earlier entries are both part of the same
+function) plus a live watchpoint, no guessing.** Two findings, one of
+which *corrects* an earlier entry in this log:
+1. **Correction**: `"LIST COUNT"` and the per-tick case-dispatch index
+   are not two related-but-distinct counters as the previous entry
+   concluded -- they are the exact same 16-bit struct field
+   (`applet+0x36b2`). The dispatcher reads it as `r1` at entry
+   (`ldrsh r1,[r4,#2]` at `0x1c18c`) to pick which of the 12 cases to
+   run, then unconditionally increments and stores it back
+   (`0x1c3c8`-`0x1c3d0`) before returning. So every real tick this
+   dispatcher runs, it advances to the *next* case, permanently -- this
+   is a run-once-through-12-states sequencer, not a retry loop.
+2. **The real reason the diagnostic never changes turns out to be much
+   simpler than "stuck retrying case 2 forever"**: it isn't retried at
+   all. A live watchpoint on both fields (`applet+0x36c4`
+   error-code, `applet+0x36b2` count) across a full ~900-tick run
+   showed exactly four writes total -- count going `0 -> 1 -> 2`, then
+   error-code `-> 6` and count `-> 3`, all within the first 3 real
+   ticks -- and **zero further writes to either field for the
+   remaining ~900 ticks**. The whole dispatcher function opens with an
+   unrelated early-out guard (`0x1c170`: if `[r1+4] == 0`, write `1`
+   and return immediately, touching neither field) -- consistent with
+   whatever higher-level code owns this subsystem simply no longer
+   calling this stepper at all once loading has failed, rather than
+   calling it and hitting a guard every time (a guard trip would have
+   shown up as repeated writes of `1`, which never appeared). The
+   values displayed every frame afterward are just whatever was last
+   left in memory from tick 3, redrawn by a separate, unrelated render
+   path -- not evidence of an active retry.
+   Also confirmed independently via static disassembly of the real
+   call site (`0x1c250`: `mov r3, #81`) that the loop's 81-item bound
+   is a **hardcoded literal**, not derived from any real parsed count
+   -- so the real game genuinely, unconditionally attempts up to 81
+   sound-resource slots every time this state runs, regardless of how
+   many entries `sound.ggz` actually has. Combined with the previous
+   entry's finding (failure lands exactly on real entry 74 of 74, via
+   genuine end-of-file exhaustion, not an out-of-range index), this
+   makes it likely that our copy of `sound.ggz` is missing trailing
+   data the real distributed file has -- i.e. **the current best
+   hypothesis is a research-asset gap, not an emulator gap**: if the
+   real file had enough trailing bytes for entry 74's raw read to
+   reach its full declared 1034 bytes (by spilling into further, even
+   if unused, archive data the same way every earlier entry does),
+   this exact failure would not occur. No further real evidence in
+   this repo's bundled materials to confirm or rule that out -- no
+   code changes this round, purely investigative.

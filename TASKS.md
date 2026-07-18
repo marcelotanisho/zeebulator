@@ -903,14 +903,10 @@ playable start-to-finish at full speed, standalone build.
       `AEECLSID_DIB`/`AEECLSID_SignalCBFactory` (strong circumstantial
       evidence) — are all real, tested, working HLE now.
       **Not yet playable**: the game is currently stuck redrawing a
-      diagnostic overlay (`"ERROR CODE:6"` / `"LIST COUNT:3"`) every
-      tick — confirmed persistent, not transient (unchanged across 10
-      real ticks in a fresh trace). Reconciled what the diagnostic
-      actually means: `"LIST COUNT"` is the per-tick state machine's
-      own step counter, not a resource-list position — a dead end for
-      narrowing the search that way. Four real gaps found and fixed so
-      far: (1) the game opens its own packed resource archive as a raw
-      file (`IFILEMGR_OpenFile("sound.ggz")`), which the dev tool's
+      diagnostic overlay (`"ERROR CODE:6"` / `"LIST COUNT:3"`), frozen
+      since real tick 3. Four real gaps found and fixed so far: (1) the
+      game opens its own packed resource archive as a raw file
+      (`IFILEMGR_OpenFile("sound.ggz")`), which the dev tool's
       `VirtualFilesystem` never exposed (only each archive's
       *decompressed entries*, not its own raw bytes); (2) a real,
       foundational bug in `FileHle::SeekImpl` — it returned the
@@ -938,11 +934,24 @@ playable start-to-finish at full speed, standalone build.
       entry has more archive data after it. Independently verified
       (Python `zlib`) that those exact 505 real bytes are a complete,
       valid gzip stream decompressing cleanly to exactly 1034 bytes —
-      not truncation or a parsing bug on our end. Open question: does
-      real hardware's original `sound.ggz` have more trailing data, or
-      does real game code have an unfound recovery path for exactly
-      this last-entry case? See `PHASE8_LOG.md`'s final entries for
-      the full trace and reasoning.
+      not truncation or a parsing bug on our end. Also disassembled
+      the dispatcher itself directly: `"LIST COUNT"` and the per-tick
+      case index turned out to be the *same* struct field (corrects an
+      earlier entry in `PHASE8_LOG.md` that treated them as separate),
+      and a live watchpoint across ~900 subsequent ticks showed zero
+      further writes to it or the error-code field after tick 3 — this
+      isn't an infinite retry loop, the game gives up after exactly one
+      real attempt and stops invoking this subsystem entirely; the
+      frozen diagnostic is just stale memory redrawn by an unrelated
+      render path. Also confirmed via disassembly that the loop's
+      81-slot bound is a hardcoded literal, not derived from any real
+      parsed count. Current best hypothesis: this repo's `sound.ggz`
+      research asset may be missing trailing bytes the real distributed
+      file has (which would let entry 74's raw read spill into further
+      archive data the way every earlier entry's does) — i.e. likely a
+      research-asset gap rather than an emulator gap, though not yet
+      confirmable without another real copy of the file. See
+      `PHASE8_LOG.md`'s final entries for the full trace and reasoning.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
