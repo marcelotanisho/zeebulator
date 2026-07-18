@@ -1139,3 +1139,34 @@ which *corrects* an earlier entry in this log:
    this exact failure would not occur. No further real evidence in
    this repo's bundled materials to confirm or rule that out -- no
    code changes this round, purely investigative.
+3. Also fully, statically disassembled `0x1bfd0`'s tail (`0x1c09c`-
+   `0x1c0f8`) to rule out a missed bypass: the final
+   `cmp [manager+20](expected), r5(actual)` is a strict equality gate
+   with no partial-acceptance path -- on any mismatch it unconditionally
+   falls through to a cleanup branch that returns real `0`. Confirms
+   there is no alternate real code path that would let a short read
+   like this one succeed; the only way past this specific gate is more
+   real bytes at that file offset.
+4. Tried one more thing before concluding this thread: temporarily
+   injected all 14 of this dev tool's currently-mapped `AVK_*` key codes
+   (`SdlKeyToAvk`'s number-key and arrow-key range) as real
+   `HandleEvent` key-down/up pairs spaced across ~450 further ticks,
+   on the chance the frozen subsystem is actually waiting on player
+   input (an "insert coin"/"press start" style dismiss) rather than
+   being permanently dead. A live watchpoint across the whole run showed
+   zero further writes to either field for any of them. Inconclusive
+   rather than a firm no, since this tool's key mapping is explicitly a
+   guess, not a confirmed real one (see `SdlKeyToAvk`'s own doc comment)
+   -- but no evidence found that input is the missing piece either.
+   Reverted (no code changes kept from this experiment).
+
+**Where this leaves Phase 8**: every concrete, findable-with-real-
+evidence gap in the emulator's own HLE has been closed for this code
+path. What remains blocking real playability is a single real resource
+(`sound.ggz` entry 74 of 74) that this repo's copy of the file cannot
+satisfy a strict, exact-match real read against, for a reason (genuine
+end-of-file) that's a property of the *asset*, not of anything the
+emulator does. Making further progress here most likely needs a
+different real copy of `sound.ggz` (or of the whole game package) to
+compare against, rather than more disassembly of code already read
+exhaustively down to its last real branch.
