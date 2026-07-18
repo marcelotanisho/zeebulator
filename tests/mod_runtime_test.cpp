@@ -21,6 +21,7 @@ constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
 constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
+constexpr uint32_t kDbgPrintfSlotOffset = 0x9c;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kTableAddress = 0x80280000;
@@ -97,6 +98,16 @@ TEST(ModRuntime, FreeSlotDoesNotCrash) {
 
   uint32_t free_fn = cpu.GetMemory().Read32(kTableAddress + kFreeSlotOffset);
   EXPECT_NO_FATAL_FAILURE(hle.CallArmFunction(free_fn, /*ptr=*/kHeapRegion));
+}
+
+TEST(ModRuntime, DbgPrintfSlotDoesNotCrash) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+
+  uint32_t dbgprintf_fn = cpu.GetMemory().Read32(kTableAddress + kDbgPrintfSlotOffset);
+  EXPECT_NO_FATAL_FAILURE(hle.CallArmFunction(dbgprintf_fn, /*dest=*/0, /*count=*/4, /*src=*/0));
 }
 
 TEST(ModRuntime, GetAppContextSlotReturnsShellInstanceAtConfirmedOffset) {

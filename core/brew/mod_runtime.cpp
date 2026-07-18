@@ -21,6 +21,7 @@ constexpr uint32_t kMallocSlotOffset = 0x68;
 constexpr uint32_t kFreeSlotOffset = 0x6c;
 constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
 constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
+constexpr uint32_t kDbgPrintfSlotOffset = 0x9c;
 // Offsets within the "app context" struct GetAppContext returns where
 // real call sites read the current app's IShell/IDisplay pointers.
 constexpr uint32_t kAppContextShellOffset = 12;
@@ -246,6 +247,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t bounded_strcpy_fn = hle_.Register([this](IArmCore& core) { BoundedStrcpyImpl(core); });
   uint32_t strstr_fn = hle_.Register([this](IArmCore& core) { StrstrImpl(core); });
   uint32_t sprintf_fn = hle_.Register([this](IArmCore& core) { SprintfImpl(core); });
+  uint32_t dbgprintf_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
   memory_.Write32(table_address + kStrlenSlotOffset, strlen_fn);
@@ -257,6 +259,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   memory_.Write32(table_address + kFreeSlotOffset, free_fn);
   memory_.Write32(table_address + kGetUpTimeMsSlotOffset, get_uptime_ms_fn);
   memory_.Write32(table_address + kGetAppContextSlotOffset, get_app_context_fn);
+  memory_.Write32(table_address + kDbgPrintfSlotOffset, dbgprintf_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 

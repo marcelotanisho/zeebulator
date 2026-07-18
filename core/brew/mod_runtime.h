@@ -126,7 +126,27 @@ namespace zeebulator {
 // consumed argument. See ModRuntime::SprintfImpl for which format
 // directives are supported.
 //
-// Only these eleven table slots are confirmed by real disassembly so
+// A twelfth slot, offset 0x9c, is a debug-logging function: found while
+// probing a different real game (Peggle's `peggle.mod`, the same real
+// static-base table layout as Double Dragon -- see TASKS.md Phase 8 for
+// why a second title was brought in). Real call sites near the very
+// start of `AEEMod_CreateInstance` invoke it twice in a row with two
+// different argument shapes; reading the literal-pool addresses passed
+// as arguments directly out of the real file's bytes shows why: the
+// first call's destination buffer literally contains the ASCII string
+// `"*dbgprint"` and its source argument is a real Windows build-machine
+// path (`"e:\Peggle\..."`), while the second call's first argument is a
+// real literal format string (`"CREATING APPLET: %x"`, `"FAILED TO
+// CREATE APPLET %x"`, `"FAILED TO ALLOCATE MEMORY %x"` at other call
+// sites) -- exactly BREW's real `DBGPRINTF` macro family (which expands
+// to different fixed-arity helper calls depending on how many
+// substitution arguments the format string needs, all funneling through
+// this one static-base slot). No caller ever inspects this slot's
+// return value -- confirmed by checking every real call site found (the
+// instruction immediately after each call always overwrites r0 before
+// it could be read) -- so it's implemented as a pure no-op.
+//
+// Only these twelve table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
