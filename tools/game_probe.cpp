@@ -12,12 +12,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <vector>
 
 #include "core/audio/mixer.h"
 #include "core/brew/file_hle.h"
 #include "core/brew/gl_hle.h"
 #include "core/brew/idisplay.h"
+#include "core/brew/interface_object.h"
 #include "core/brew/ishell.h"
 #include "core/brew/media_hle.h"
 #include "core/brew/mod_runtime.h"
@@ -403,6 +405,66 @@ int main(int argc, char** argv) {
   constexpr uint32_t kFourthContextObject = 0x80020000;
   cpu.GetMemory().Write32(kFourthContextObject + 20, 1);  // rest is already zero
   mod_runtime.SetFourthContextObject(kFourthContextObject);
+  // Real code elsewhere (peggle.mod offset 0x989c-0x99f8, reached from
+  // the same tick-0 callback once it got past the +20 gate above) reads
+  // `context[0x24] + 0x45000 + 0x3d8` as a real, standalone object --
+  // confirmed by the call shape that follows it (`ldr r0,[fp]; ldr
+  // r3,[r0,#8]; mov r0,fp; bx r3`, i.e. a plain absolute vtable call at
+  // slot 2 with `fp` itself as `this`, not the ROPI relative-vtable
+  // shape the third context field uses) -- ordinary enough to give a
+  // real, generic stub object rather than modeling the rest of this
+  // apparent large global arena, which nothing yet requires understood.
+  // Written after HandleEvent(EVT_APP_START) below, not here -- real
+  // code (confirmed via a live memory watchpoint) writes a real zero
+  // to this exact field once during that call, presumably a real
+  // "not yet initialized" reset that legitimately precedes whatever
+  // real code would normally populate it for real.
+  //
+  // Real code calls this object's own slot 2 with a shape matching a
+  // real QueryInterface-style call (`this`, an id/flag, and a pointer
+  // to receive the result) and, without checking the result for
+  // failure, immediately dereferences whatever slot 2 wrote there.
+  // Live tracing found the exact same shape recur at least twice in a
+  // row through freshly-returned objects, with no sign of stopping --
+  // so rather than manually re-diagnosing and hand-patching each
+  // successive level, every slot of every object below is built the
+  // same self-propagating way: succeed (r0=0) and write a fresh object
+  // of the same kind into whatever the caller passed as the output
+  // pointer (r2), lazily, however deep a real chain of these turns out
+  // to go. EXPERIMENTAL and specific to this investigation (TASKS.md
+  // Phase 8) -- not yet confirmed as a general real BREW convention,
+  // so deliberately kept local to this tool rather than promoted to
+  // scaffold_object.h.
+  //
+  // Confirmed working for two real chained levels (verified via live
+  // trace), then hit a real, different-in-kind wall this mechanism
+  // can't paper over: a real caller reads offset 0x30 *directly* off
+  // one of these returned objects (`ldr r3,[r1,#0x30]`), not through
+  // `*object` the way every vtable call up to this point has -- i.e.
+  // it expects a flat struct with a real function pointer embedded at
+  // a specific fixed offset, not another vtable object. Left as-is
+  // (harmlessly reads 0 there and reports the same clean, diagnosable
+  // wander as before) rather than guessed at -- the next concrete step
+  // for whoever picks this back up.
+  uint32_t next_self_propagating_addr = 0x80030000;
+  std::function<uint32_t()> build_self_propagating_stub =
+      [&cpu, &hle, &next_self_propagating_addr, &build_self_propagating_stub]() -> uint32_t {
+    uint32_t vtable_addr = next_self_propagating_addr;
+    uint32_t object_addr = next_self_propagating_addr + 0x800;
+    next_self_propagating_addr += 0x1000;
+    std::vector<zeebulator::HleRuntime::HleFunction> methods(40);
+    for (auto& method : methods) {
+      method = [&cpu, &build_self_propagating_stub](zeebulator::IArmCore& core) {
+        uint32_t out_ptr = core.GetRegister(zeebulator::kR2);
+        uint32_t child = build_self_propagating_stub();
+        cpu.GetMemory().Write32(out_ptr, child);
+        core.SetRegister(zeebulator::kR0, 0);
+      };
+    }
+    return zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, vtable_addr, object_addr,
+                                             methods);
+  };
+  uint32_t unknown_arena_0x453d8_obj = build_self_propagating_stub();
   media_hle.Build(/*vtable=*/0x8000B000);
 
   auto& mem = cpu.GetMemory();
@@ -492,6 +554,14 @@ int main(int argc, char** argv) {
                 cpu.GetRegister(zeebulator::kPC), cpu.GetRegister(zeebulator::kPC) - kBase);
     return 1;
   }
+
+  // Real code inside CreateInstance/HandleEvent(EVT_APP_START) writes a
+  // real zero to context[0x24]+0x45000+0x3d8 once, presumably its own
+  // "not yet initialized" reset -- confirmed via a live memory
+  // watchpoint (temporary, reverted). Writing our placeholder object
+  // here, after that real reset instead of before it, is what makes it
+  // stick for the real per-tick reads that follow.
+  cpu.GetMemory().Write32(kFourthContextObject + 0x45000 + 0x3d8, unknown_arena_0x453d8_obj);
 
   std::printf("Reached the event loop with no unhandled instruction! Window will stay open.\n");
   bool running = true;
