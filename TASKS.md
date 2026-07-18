@@ -1044,13 +1044,26 @@ playable start-to-finish at full speed, standalone build.
       call, a clean `bx lr` return) never calls `SetTimer` again to
       re-arm itself. Double Dragon's whole per-frame loop depends on
       exactly that self-rearming pattern (see this file's own real,
-      confirmed doc comment on `IShellHle`); **Peggle's real main loop
-      evidently does not use it**, which is why nothing past tick 0 —
-      including the resource-load call site — is ever reached by
-      driving simulated time forward. What Peggle's real continuation
-      mechanism actually is (a different real BREW notification API, a
-      redraw-driven callback, or something else) is not yet identified.
-      See PHASE8_LOG.md.
+      confirmed doc comment on `IShellHle`).
+      **Found and fixed why**: the callback's whole re-arm path is
+      gated behind a fourth real field on the shared "app context"
+      struct (offset `0x24`, `SetFourthContextObject()`) that this
+      codebase never wrote, so the gate always failed. Wired to a
+      real, writable, zeroed memory block with just the one confirmed-
+      load-bearing field (`+20`) pre-set non-zero. Verified: tick 0
+      now runs hundreds of real HLE calls (including a real
+      `ISHELL_CreateInstance` for the same `FileMgr` class Double
+      Dragon uses) instead of one.
+      **Immediately hit a new, bigger-picture gap**: real code treats
+      `context[0x24]` not as a small object but as the base of a
+      **large global data arena** — different subsystems reach their
+      own portion of it via large fixed offsets (e.g. `+0x45000`) from
+      that same base. Traced precisely (confirmed the resulting null
+      pointer, not a bug in the fix), but deliberately not guessed
+      further: unlike the narrow `+20` flag, this is open-ended —
+      no way yet to know how many more such offsets exist or what real
+      data belongs at them. See PHASE8_LOG.md for the full trace and
+      the two candidate ways to proceed.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

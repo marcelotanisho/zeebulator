@@ -1594,3 +1594,69 @@ All temporary instrumentation for this investigation (the PC
 watchpoint, the key-injection probe, the `SetTimerImpl` print) was
 reverted -- confirmed via a clean `git status`/`git diff` before moving
 on. 240 tests still pass.
+
+---
+
+**Fixed the real timer re-arm gate.** Re-examined tick 0's callback
+(`peggle.mod` offset `0x32db0`, already fully disassembled in the
+entry above) closely enough this time to see it *does* try to re-arm
+its own `ISHELL_SetTimer` -- gated entirely behind
+`*(context[0x24] + 20)` being non-zero, a fourth real field on the
+same shared "app context" struct as the confirmed Shell/Display/third-
+object fields, which this codebase never wrote (so it always read as
+null and the gate always failed). Unlike the other three fields, this
+one is read and written as a plain data struct rather than through a
+vtable -- the same callback stores a 64-bit timestamp at `+24`/`+28`
+and reads another field at `+0x2a0`. Traced the time source
+(`peggle.mod` offset `0x16cbc`) and confirmed it's nothing new: a thin
+wrapper around this codebase's own already-working `GETUPTIMEMS` slot,
+returning it zero-extended to 64 bits.
+Added `ModRuntime::SetFourthContextObject`, wired in `tools/game_probe.
+cpp` to a real, writable, zeroed memory block with only the one
+confirmed-load-bearing field (`+20`) pre-set non-zero -- explicitly
+framed (in both the code comment and here) as an educated, minimal
+enabling stub, not a claim about what this struct actually is.
+**Verified against the real game**: tick 0's callback now runs
+hundreds of real HLE calls -- including a real `ISHELL_CreateInstance`
+for class `0x01001003`, the exact same `FileMgr` class Double Dragon
+uses -- where it previously made exactly one. Committed (`cf1b1fe`).
+
+**Immediately hit a new, different gap, and traced it precisely: not
+a missing HLE call this time, but a much bigger real structure than
+our placeholder can safely stand in for.** Re-ran with full
+instruction tracing bounded to tick 0 (temporary, reverted after) and
+found the new wander-to-zero at real module offset `0x99f8`
+(`peggle.mod` offset `0x9868`-`0x99f8`, a different real function from
+the timer callback -- reached from it). The exact real sequence:
+`bl 0x27594` (`GETAPPCONTEXT`, confirmed identical to every other real
+call site) `-> ldr r0,[r0,#0x24]` (our new field) `-> add r0,r0,
+#0x45000 -> ldr fp,[r0,#0x3d8]` -- i.e. real code treats
+`context[0x24]` not as a small "manager" object with a couple of
+meaningful fields, but as the **base address of a large global data
+arena**, with different real subsystems reaching their own portion of
+it through large, fixed offsets (`0x45000` here) from that same base.
+Confirmed by adding `r11` to the trace print (temporary, reverted):
+`fp` (`r11`) is null at the crash, exactly as expected, since our
+placeholder object is only ~1KB and everything past it reads as
+unmapped/zero by default -- not a bug in the fix itself, just
+confirmation the real structure goes much further than what's been
+implemented.
+**Deliberately not extended further right now.** The `+20` "is ready"
+flag was a single, narrow, well-evidenced field with a clear real
+consequence (unlocking `SetTimer`); guessing at what real object
+belongs at `context[0x24] + 0x45000 + 0x3d8` inside what is apparently
+a large, multi-subsystem global arena -- with no idea yet how many
+more such offsets exist elsewhere in it -- is a different, much larger
+kind of guess, and exactly the risk this log has avoided everywhere
+else ("a wrong implementation here risks trading a clean, diagnosable
+failure for silent data corruption"). Tracked as the next concrete
+step: either map out more of this arena's real layout via further
+disassembly (now that the technique -- watch `GETAPPCONTEXT` ->
+`context[0x24]` -> large fixed offset -- is established and
+repeatable), or treat `context[0x24]` itself differently (e.g. as a
+large real allocation the emulator provisions generously by default,
+if further evidence suggests the arena's *contents* mostly don't need
+to be meaningful except at a few specific, identifiable offsets like
+this session's `+20`).
+All temporary instrumentation (the `r11` trace column, the tick-0-only
+trace flag) reverted -- clean `git diff` confirmed. 241 tests pass.
