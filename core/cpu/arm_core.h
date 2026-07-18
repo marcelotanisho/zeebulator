@@ -32,6 +32,7 @@ enum CpsrBit : uint32_t {
   kCpsrZ = 30,  // Zero
   kCpsrC = 29,  // Carry
   kCpsrV = 28,  // Overflow
+  kCpsrT = 5,   // Thumb state
 };
 
 // Interface to the emulated ARM1136J-S application core. See

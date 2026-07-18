@@ -13,6 +13,7 @@ add_executable(zeebulator_tests
   core_test.cpp
   memory_test.cpp
   cpu_test.cpp
+  thumb_test.cpp
   ggz_test.cpp
   mif_test.cpp
   mod_test.cpp

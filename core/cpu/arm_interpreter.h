@@ -16,17 +16,31 @@ class UnimplementedInstruction : public std::runtime_error {
       : std::runtime_error(what) {}
 };
 
-// v1 ARMv6 (ARM1136J-S) interpreter, ARM (A32) state only — no Thumb yet.
-// Covers data processing, branch, single word/byte load-store, block
-// data transfer (LDM/STM, user-bank/exception-return variants excluded),
-// halfword/signed transfer (STRH/LDRH/LDRSB/LDRSH), BX/BLX
-// (branch-and-exchange, register form) as long as the target keeps
-// execution in ARM state (bit 0 of the target address clear), and
-// multiply/multiply-accumulate (MUL/MLA, plus long multiply UMULL/
-// UMLAL/SMULL/SMLAL) — a real switch into Thumb state raises
-// UnimplementedInstruction, since Thumb decoding isn't implemented at
-// all. Swap (SWP/SWPB), PSR transfer, SWI, and coprocessor instructions
-// also raise UnimplementedInstruction.
+// v2 ARMv6 (ARM1136J-S) interpreter: ARM (A32) state plus Thumb (T16)
+// state, with ARM/Thumb interworking. ARM state covers data processing,
+// branch, single word/byte load-store, block data transfer (LDM/STM,
+// user-bank/exception-return variants excluded), halfword/signed
+// transfer (STRH/LDRH/LDRSB/LDRSH), BX/BLX, and multiply/
+// multiply-accumulate (MUL/MLA, plus long multiply UMULL/UMLAL/SMULL/
+// SMLAL). Swap (SWP/SWPB), PSR transfer, SWI, and coprocessor
+// instructions raise UnimplementedInstruction.
+//
+// Thumb support was added after real disassembly of a second real game
+// (Peggle, `peggle.mod` — see PHASE8_LOG.md) hit a real BX into Thumb
+// code that Double Dragon's own `.mod` never exercised. Covers all 19
+// real Thumb instruction format groups from the ARM Architecture
+// Reference Manual's Thumb instruction set summary except software
+// interrupt (format 17, SWI — unimplemented, matching ARM state's own
+// SWI handling) and the format-16 SWI/undefined condition codes
+// (0b1111/0b1110). Interworking (BX/BLX register-form in both states,
+// Thumb's long-branch BLX(1), and loading PC directly via LDR/LDM in
+// ARM state or POP in Thumb state) all check the target address's bit 0
+// to select the resulting instruction state, per the real architecture
+// rule introduced in ARMv5T and present in ARMv6. Plain, non-
+// interworking writes to PC (ARM data-processing results, Thumb format
+// 5 MOV/ADD/CMP with Rd=PC, and any branch computed from a fixed
+// instruction-stream offset) never change instruction state — only an
+// explicit interworking write does.
 class ArmInterpreter : public IArmCore {
  public:
   ArmInterpreter();
@@ -72,6 +86,41 @@ class ArmInterpreter : public IArmCore {
   void ExecuteBranchExchange(uint32_t instr);
   void ExecuteHalfwordTransfer(uint32_t instr);
   void ExecuteMultiply(uint32_t instr);
+
+  // Sets PC from an interworking write (BX/BLX in either state, LDR/LDM
+  // into PC in ARM state, POP into PC in Thumb state, and the BLX(1)
+  // long-branch's implicit switch): bit 0 of `target` selects Thumb (1)
+  // or ARM (0), the CPSR T-bit is updated to match, and PC is set to
+  // `target` with bit 0 (Thumb) or bits[1:0] (ARM) cleared so it's
+  // always correctly aligned for whichever state was just selected.
+  void SetPcInterworking(uint32_t target);
+
+  // Reads a register the way *Thumb* code reads it as an operand — R15
+  // reads as ((address of the currently-executing instruction) + 4)
+  // word-aligned, per the Thumb instruction set's PC semantics (distinct
+  // from ARM state's +8, unaligned rule — see ReadOperandRegister).
+  // Only reachable for R15 via Thumb format 5 (hi-register operations).
+  uint32_t ReadThumbOperandRegister(uint32_t index) const;
+
+  void ExecuteThumb(uint16_t instr);
+  void ExecuteThumbMoveShiftedRegister(uint16_t instr);
+  void ExecuteThumbAddSubtract(uint16_t instr);
+  void ExecuteThumbMovCmpAddSubImmediate(uint16_t instr);
+  void ExecuteThumbAluOperation(uint16_t instr);
+  void ExecuteThumbHiRegisterOperation(uint16_t instr);
+  void ExecuteThumbPcRelativeLoad(uint16_t instr);
+  void ExecuteThumbLoadStoreRegisterOffset(uint16_t instr);
+  void ExecuteThumbLoadStoreSignExtended(uint16_t instr);
+  void ExecuteThumbLoadStoreImmediateOffset(uint16_t instr);
+  void ExecuteThumbLoadStoreHalfword(uint16_t instr);
+  void ExecuteThumbSpRelativeLoadStore(uint16_t instr);
+  void ExecuteThumbLoadAddress(uint16_t instr);
+  void ExecuteThumbAddOffsetToSp(uint16_t instr);
+  void ExecuteThumbPushPop(uint16_t instr);
+  void ExecuteThumbMultipleLoadStore(uint16_t instr);
+  void ExecuteThumbConditionalBranch(uint16_t instr);
+  void ExecuteThumbUnconditionalBranch(uint16_t instr);
+  void ExecuteThumbLongBranchWithLink(uint16_t instr);
 
   std::array<uint32_t, 16> regs_{};
   uint32_t cpsr_ = 0;

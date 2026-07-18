@@ -389,11 +389,13 @@ TEST(Cpu, BranchExchangeJumpsToArmTarget) {
   EXPECT_EQ(cpu.GetRegister(kPC), 0x2000u);
 }
 
-TEST(Cpu, BranchExchangeToThumbTargetIsUnimplemented) {
+TEST(Cpu, BranchExchangeToThumbTargetSwitchesState) {
   ArmInterpreter cpu;
   cpu.SetRegister(kR1, 0x2001);  // bit 0 set -> requests Thumb state
   cpu.GetMemory().Write32(0, 0xE12FFF11);  // BX R1
-  EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kPC), 0x2000u) << "bit 0 cleared from the target";
+  EXPECT_TRUE(Flag(cpu, zeebulator::kCpsrT));
 }
 
 TEST(Cpu, BranchWithLinkExchangeSetsLrAndJumps) {

@@ -286,8 +286,12 @@ void ArmInterpreter::ExecuteSingleDataTransfer(uint32_t instr) {
     uint32_t value = byte_transfer ? memory_.Read8(transfer_address)
                                     : memory_.Read32(transfer_address);
     if (rd == kPC) {
-      regs_[kPC] = value;
-      pc_updated_by_instruction_ = true;
+      // LDR pc, ... interworks (selects ARM/Thumb from bit 0) on
+      // ARMv5T and later, which ARMv6/ARM1136J-S includes -- the real
+      // idiom compiled code compiled for interworking uses to return
+      // from a function that may have been called via BLX from the
+      // other instruction state.
+      SetPcInterworking(value);
     } else {
       regs_[rd] = value;
     }
@@ -334,8 +338,9 @@ void ArmInterpreter::ExecuteBlockDataTransfer(uint32_t instr) {
     if (load) {
       uint32_t value = memory_.Read32(address);
       if (i == kPC) {
-        regs_[kPC] = value;
-        pc_updated_by_instruction_ = true;
+        // LDM/POP with pc in the register list interworks, same real
+        // rule and rationale as ExecuteSingleDataTransfer's LDR pc.
+        SetPcInterworking(value);
       } else {
         regs_[i] = value;
       }
@@ -356,14 +361,16 @@ void ArmInterpreter::ExecuteBranchExchange(uint32_t instr) {
   bool link = (instr >> 5) & 1;
   uint32_t rm = instr & 0xF;
   uint32_t target = ReadOperandRegister(rm);
-  if (target & 1) {
-    throw UnimplementedInstruction(
-        "BX/BLX target requests Thumb state, which isn't implemented");
-  }
   if (link) {
     regs_[kLR] = regs_[kPC] + 4;
   }
-  regs_[kPC] = target;
+  SetPcInterworking(target);
+}
+
+void ArmInterpreter::SetPcInterworking(uint32_t target) {
+  bool to_thumb = target & 1;
+  SetFlag(kCpsrT, to_thumb);
+  regs_[kPC] = to_thumb ? (target & ~1u) : (target & ~3u);
   pc_updated_by_instruction_ = true;
 }
 
@@ -486,6 +493,440 @@ void ArmInterpreter::ExecuteMultiply(uint32_t instr) {
   }
 }
 
+uint32_t ArmInterpreter::ReadThumbOperandRegister(uint32_t index) const {
+  // Thumb's PC-as-operand rule (format 5 hi-register ops are the only
+  // way to read R15 in Thumb state) differs from ARM's: +4, word-
+  // aligned, not +8 unaligned -- see ReadOperandRegister and the class
+  // doc comment.
+  return index == kPC ? ((regs_[kPC] + 4) & ~3u) : regs_[index];
+}
+
+void ArmInterpreter::ExecuteThumbMoveShiftedRegister(uint16_t instr) {
+  // Format 1: 000 Op[2] Offset5[5] Rs[3] Rd[3] -- LSL/LSR/ASR Rd,Rs,#Offset5
+  uint32_t op = (instr >> 11) & 0x3;  // 0=LSL, 1=LSR, 2=ASR (3 is Format 2)
+  uint32_t offset5 = (instr >> 6) & 0x1F;
+  uint32_t rs = (instr >> 3) & 0x7;
+  uint32_t rd = instr & 0x7;
+  bool carry_out;
+  uint32_t result = ShiftWithCarry(regs_[rs], op, offset5, GetFlag(kCpsrC),
+                                    carry_out, /*is_immediate_shift=*/true);
+  regs_[rd] = result;
+  SetFlag(kCpsrN, (result >> 31) & 1);
+  SetFlag(kCpsrZ, result == 0);
+  SetFlag(kCpsrC, carry_out);
+}
+
+void ArmInterpreter::ExecuteThumbAddSubtract(uint16_t instr) {
+  // Format 2: 00011 I[1] Op[1] Rn/Imm3[3] Rs[3] Rd[3]
+  bool immediate = (instr >> 10) & 1;
+  bool subtract = (instr >> 9) & 1;
+  uint32_t rn_or_imm = (instr >> 6) & 0x7;
+  uint32_t rs = (instr >> 3) & 0x7;
+  uint32_t rd = instr & 0x7;
+  uint32_t operand2 = immediate ? rn_or_imm : regs_[rn_or_imm];
+  bool carry_out, overflow_out;
+  uint32_t result = subtract
+      ? AddWithFlags(regs_[rs], ~operand2, 1, carry_out, overflow_out)
+      : AddWithFlags(regs_[rs], operand2, 0, carry_out, overflow_out);
+  regs_[rd] = result;
+  SetFlag(kCpsrN, (result >> 31) & 1);
+  SetFlag(kCpsrZ, result == 0);
+  SetFlag(kCpsrC, carry_out);
+  SetFlag(kCpsrV, overflow_out);
+}
+
+void ArmInterpreter::ExecuteThumbMovCmpAddSubImmediate(uint16_t instr) {
+  // Format 3: 001 Op[2] Rd[3] Imm8[8] -- MOV/CMP/ADD/SUB Rd,#Imm8
+  uint32_t op = (instr >> 11) & 0x3;
+  uint32_t rd = (instr >> 8) & 0x7;
+  uint32_t imm8 = instr & 0xFF;
+  uint32_t rd_val = regs_[rd];
+  uint32_t result = 0;
+  bool write_result = true;
+  bool carry_out = GetFlag(kCpsrC), overflow_out = GetFlag(kCpsrV);
+  switch (op) {
+    case 0: result = imm8; break;                                                              // MOV
+    case 1: result = AddWithFlags(rd_val, ~imm8, 1, carry_out, overflow_out); write_result = false; break;  // CMP
+    case 2: result = AddWithFlags(rd_val, imm8, 0, carry_out, overflow_out); break;              // ADD
+    case 3: result = AddWithFlags(rd_val, ~imm8, 1, carry_out, overflow_out); break;             // SUB
+  }
+  if (write_result) regs_[rd] = result;
+  SetFlag(kCpsrN, (result >> 31) & 1);
+  SetFlag(kCpsrZ, result == 0);
+  if (op != 0) {  // MOV#imm8 affects only N,Z; CMP/ADD/SUB affect C,V too.
+    SetFlag(kCpsrC, carry_out);
+    SetFlag(kCpsrV, overflow_out);
+  }
+}
+
+void ArmInterpreter::ExecuteThumbAluOperation(uint16_t instr) {
+  // Format 4: 010000 Op[4] Rs[3] Rd[3]
+  uint32_t op = (instr >> 6) & 0xF;
+  uint32_t rs = (instr >> 3) & 0x7;
+  uint32_t rd = instr & 0x7;
+  uint32_t rd_val = regs_[rd];
+  uint32_t rs_val = regs_[rs];
+  uint32_t result = 0;
+  bool write_result = true;
+  // Initialized to the current flags so ops that don't affect a given
+  // flag (e.g. AND leaves C/V alone) re-write it unchanged below.
+  bool carry_out = GetFlag(kCpsrC);
+  bool overflow_out = GetFlag(kCpsrV);
+  switch (op) {
+    case 0x0: result = rd_val & rs_val; break;                                                    // AND
+    case 0x1: result = rd_val ^ rs_val; break;                                                     // EOR
+    case 0x2: result = ShiftWithCarry(rd_val, 0, rs_val & 0xFF, carry_out, carry_out, false); break;  // LSL
+    case 0x3: result = ShiftWithCarry(rd_val, 1, rs_val & 0xFF, carry_out, carry_out, false); break;  // LSR
+    case 0x4: result = ShiftWithCarry(rd_val, 2, rs_val & 0xFF, carry_out, carry_out, false); break;  // ASR
+    case 0x5: result = AddWithFlags(rd_val, rs_val, GetFlag(kCpsrC), carry_out, overflow_out); break;   // ADC
+    case 0x6: result = AddWithFlags(rd_val, ~rs_val, GetFlag(kCpsrC), carry_out, overflow_out); break;  // SBC
+    case 0x7: result = ShiftWithCarry(rd_val, 3, rs_val & 0xFF, carry_out, carry_out, false); break;  // ROR
+    case 0x8: result = rd_val & rs_val; write_result = false; break;                               // TST
+    case 0x9: result = AddWithFlags(0, ~rs_val, 1, carry_out, overflow_out); break;                 // NEG
+    case 0xA: result = AddWithFlags(rd_val, ~rs_val, 1, carry_out, overflow_out); write_result = false; break;  // CMP
+    case 0xB: result = AddWithFlags(rd_val, rs_val, 0, carry_out, overflow_out); write_result = false; break;   // CMN
+    case 0xC: result = rd_val | rs_val; break;                                                     // ORR
+    case 0xD: result = rd_val * rs_val; break;  // MUL -- C,V UNPREDICTABLE, left unchanged
+    case 0xE: result = rd_val & ~rs_val; break;                                                    // BIC
+    case 0xF: result = ~rs_val; break;                                                             // MVN
+  }
+  if (write_result) regs_[rd] = result;
+  SetFlag(kCpsrN, (result >> 31) & 1);
+  SetFlag(kCpsrZ, result == 0);
+  SetFlag(kCpsrC, carry_out);
+  SetFlag(kCpsrV, overflow_out);
+}
+
+void ArmInterpreter::ExecuteThumbHiRegisterOperation(uint16_t instr) {
+  // Format 5: 010001 Op[2] H1[1] H2[1] Rs[3] Rd[3] -- H1/H2 extend Rd/Rs
+  // to the full r0-r15 range (low-register formats above can only name
+  // r0-r7). Op 3 is BX/BLX; H1 there is the link bit, not a Hd extension.
+  uint32_t op = (instr >> 8) & 0x3;
+  bool h1 = (instr >> 7) & 1;
+  bool h2 = (instr >> 6) & 1;
+  uint32_t rs = (h2 ? 8u : 0u) | ((instr >> 3) & 0x7);
+  uint32_t rd = (h1 ? 8u : 0u) | (instr & 0x7);
+
+  if (op == 0x3) {  // BX/BLX
+    uint32_t target = ReadThumbOperandRegister(rs);
+    if (h1) {  // BLX: real ARMv6 ISA -- H1 selects BLX(1) vs BX(0) here.
+      regs_[kLR] = (regs_[kPC] + 2) | 1;
+    }
+    SetPcInterworking(target);
+    return;
+  }
+
+  uint32_t rd_val = ReadThumbOperandRegister(rd);
+  uint32_t rs_val = ReadThumbOperandRegister(rs);
+  switch (op) {
+    case 0x0: {  // ADD -- no flags affected (unlike the low-register formats)
+      uint32_t result = rd_val + rs_val;
+      if (rd == kPC) {
+        regs_[kPC] = result & ~1u;  // branches, but never interworks
+        pc_updated_by_instruction_ = true;
+      } else {
+        regs_[rd] = result;
+      }
+      break;
+    }
+    case 0x1: {  // CMP -- sets flags like a full 32-bit compare, Rd not written
+      bool carry_out, overflow_out;
+      uint32_t result = AddWithFlags(rd_val, ~rs_val, 1, carry_out, overflow_out);
+      SetFlag(kCpsrN, (result >> 31) & 1);
+      SetFlag(kCpsrZ, result == 0);
+      SetFlag(kCpsrC, carry_out);
+      SetFlag(kCpsrV, overflow_out);
+      break;
+    }
+    case 0x2: {  // MOV -- no flags affected
+      if (rd == kPC) {
+        regs_[kPC] = rs_val & ~1u;  // branches, but never interworks
+        pc_updated_by_instruction_ = true;
+      } else {
+        regs_[rd] = rs_val;
+      }
+      break;
+    }
+  }
+}
+
+void ArmInterpreter::ExecuteThumbPcRelativeLoad(uint16_t instr) {
+  // Format 6: 01001 Rd[3] Word8[8] -- LDR Rd,[PC,#Word8*4]
+  uint32_t rd = (instr >> 8) & 0x7;
+  uint32_t word8 = instr & 0xFF;
+  uint32_t base = (regs_[kPC] + 4) & ~3u;
+  regs_[rd] = memory_.Read32(base + word8 * 4);
+}
+
+void ArmInterpreter::ExecuteThumbLoadStoreRegisterOffset(uint16_t instr) {
+  // Format 7: 0101 L[1] B[1] 0 Ro[3] Rb[3] Rd[3] -- STR/LDR{B} Rd,[Rb,Ro]
+  bool load = (instr >> 11) & 1;
+  bool byte = (instr >> 10) & 1;
+  uint32_t ro = (instr >> 6) & 0x7;
+  uint32_t rb = (instr >> 3) & 0x7;
+  uint32_t rd = instr & 0x7;
+  uint32_t addr = regs_[rb] + regs_[ro];
+  if (load) {
+    regs_[rd] = byte ? memory_.Read8(addr) : memory_.Read32(addr);
+  } else if (byte) {
+    memory_.Write8(addr, static_cast<uint8_t>(regs_[rd]));
+  } else {
+    memory_.Write32(addr, regs_[rd]);
+  }
+}
+
+void ArmInterpreter::ExecuteThumbLoadStoreSignExtended(uint16_t instr) {
+  // Format 8: 0101 H[1] S[1] 1 Ro[3] Rb[3] Rd[3] -- STRH/LDRH/LDRSB/LDRSH
+  bool h = (instr >> 11) & 1;
+  bool s = (instr >> 10) & 1;
+  uint32_t ro = (instr >> 6) & 0x7;
+  uint32_t rb = (instr >> 3) & 0x7;
+  uint32_t rd = instr & 0x7;
+  uint32_t addr = regs_[rb] + regs_[ro];
+  if (!s && !h) {  // STRH
+    memory_.Write16(addr, static_cast<uint16_t>(regs_[rd]));
+  } else if (!s && h) {  // LDRH
+    regs_[rd] = memory_.Read16(addr);
+  } else if (s && !h) {  // LDRSB
+    auto b = static_cast<int8_t>(memory_.Read8(addr));
+    regs_[rd] = static_cast<uint32_t>(static_cast<int32_t>(b));
+  } else {  // LDRSH
+    auto hw = static_cast<int16_t>(memory_.Read16(addr));
+    regs_[rd] = static_cast<uint32_t>(static_cast<int32_t>(hw));
+  }
+}
+
+void ArmInterpreter::ExecuteThumbLoadStoreImmediateOffset(uint16_t instr) {
+  // Format 9: 011 B[1] L[1] Offset5[5] Rb[3] Rd[3]
+  bool byte = (instr >> 12) & 1;
+  bool load = (instr >> 11) & 1;
+  uint32_t offset5 = (instr >> 6) & 0x1F;
+  uint32_t rb = (instr >> 3) & 0x7;
+  uint32_t rd = instr & 0x7;
+  uint32_t addr = regs_[rb] + (byte ? offset5 : offset5 * 4);
+  if (load) {
+    regs_[rd] = byte ? memory_.Read8(addr) : memory_.Read32(addr);
+  } else if (byte) {
+    memory_.Write8(addr, static_cast<uint8_t>(regs_[rd]));
+  } else {
+    memory_.Write32(addr, regs_[rd]);
+  }
+}
+
+void ArmInterpreter::ExecuteThumbLoadStoreHalfword(uint16_t instr) {
+  // Format 10: 1000 L[1] Offset5[5] Rb[3] Rd[3] -- STRH/LDRH Rd,[Rb,#Offset5*2]
+  bool load = (instr >> 11) & 1;
+  uint32_t offset5 = (instr >> 6) & 0x1F;
+  uint32_t rb = (instr >> 3) & 0x7;
+  uint32_t rd = instr & 0x7;
+  uint32_t addr = regs_[rb] + offset5 * 2;
+  if (load) {
+    regs_[rd] = memory_.Read16(addr);
+  } else {
+    memory_.Write16(addr, static_cast<uint16_t>(regs_[rd]));
+  }
+}
+
+void ArmInterpreter::ExecuteThumbSpRelativeLoadStore(uint16_t instr) {
+  // Format 11: 1001 L[1] Rd[3] Word8[8] -- STR/LDR Rd,[SP,#Word8*4]
+  bool load = (instr >> 11) & 1;
+  uint32_t rd = (instr >> 8) & 0x7;
+  uint32_t word8 = instr & 0xFF;
+  uint32_t addr = regs_[kSP] + word8 * 4;
+  if (load) {
+    regs_[rd] = memory_.Read32(addr);
+  } else {
+    memory_.Write32(addr, regs_[rd]);
+  }
+}
+
+void ArmInterpreter::ExecuteThumbLoadAddress(uint16_t instr) {
+  // Format 12: 1010 SP[1] Rd[3] Word8[8] -- ADD Rd,(PC|SP),#Word8*4
+  bool sp = (instr >> 11) & 1;
+  uint32_t rd = (instr >> 8) & 0x7;
+  uint32_t word8 = instr & 0xFF;
+  uint32_t base = sp ? regs_[kSP] : ((regs_[kPC] + 4) & ~3u);
+  regs_[rd] = base + word8 * 4;
+}
+
+void ArmInterpreter::ExecuteThumbAddOffsetToSp(uint16_t instr) {
+  // Format 13: 10110000 S[1] SWord7[7] -- ADD SP,#+/-SWord7*4
+  bool negative = (instr >> 7) & 1;
+  uint32_t offset = (instr & 0x7F) * 4;
+  regs_[kSP] = negative ? regs_[kSP] - offset : regs_[kSP] + offset;
+}
+
+void ArmInterpreter::ExecuteThumbPushPop(uint16_t instr) {
+  // Format 14: 1011 L[1] 10 R[1] Rlist[8] -- PUSH/POP {Rlist{,LR/PC}}
+  bool load = (instr >> 11) & 1;
+  bool extra = (instr >> 8) & 1;  // R: store LR (push) / load PC (pop)
+  uint32_t rlist = instr & 0xFF;
+
+  if (load) {
+    // POP: address increasing from SP; loading PC interworks (real
+    // ARMv5T+/v6 rule, same as ARM-state LDR/LDM into PC).
+    uint32_t addr = regs_[kSP];
+    for (uint32_t i = 0; i < 8; ++i) {
+      if ((rlist >> i) & 1) {
+        regs_[i] = memory_.Read32(addr);
+        addr += 4;
+      }
+    }
+    if (extra) {
+      uint32_t value = memory_.Read32(addr);
+      addr += 4;
+      regs_[kSP] = addr;
+      SetPcInterworking(value);
+      return;
+    }
+    regs_[kSP] = addr;
+  } else {
+    // PUSH: SP decrements by the full count up front (matching STMDB),
+    // then registers land at increasing addresses, LR (if R=1) highest.
+    int count = 0;
+    for (uint32_t i = 0; i < 8; ++i) {
+      if ((rlist >> i) & 1) ++count;
+    }
+    if (extra) ++count;
+    uint32_t addr = regs_[kSP] - count * 4;
+    regs_[kSP] = addr;
+    for (uint32_t i = 0; i < 8; ++i) {
+      if ((rlist >> i) & 1) {
+        memory_.Write32(addr, regs_[i]);
+        addr += 4;
+      }
+    }
+    if (extra) {
+      memory_.Write32(addr, regs_[kLR]);
+    }
+  }
+}
+
+void ArmInterpreter::ExecuteThumbMultipleLoadStore(uint16_t instr) {
+  // Format 15: 1100 L[1] Rb[3] Rlist[8] -- STMIA/LDMIA Rb!,{Rlist}
+  bool load = (instr >> 11) & 1;
+  uint32_t rb = (instr >> 8) & 0x7;
+  uint32_t rlist = instr & 0xFF;
+  bool rb_in_list = (rlist >> rb) & 1;
+  uint32_t addr = regs_[rb];
+  for (uint32_t i = 0; i < 8; ++i) {
+    if (!((rlist >> i) & 1)) continue;
+    if (load) {
+      regs_[i] = memory_.Read32(addr);
+    } else {
+      memory_.Write32(addr, regs_[i]);
+    }
+    addr += 4;
+  }
+  // Real, defined special case: if Rb is loaded as part of an LDM, the
+  // loaded value wins over the writeback -- skip the writeback rather
+  // than clobbering what was just loaded into it.
+  if (!(load && rb_in_list)) {
+    regs_[rb] = addr;
+  }
+}
+
+void ArmInterpreter::ExecuteThumbConditionalBranch(uint16_t instr) {
+  // Format 16: 1101 Cond[4] SOffset8[8]
+  uint32_t cond = (instr >> 8) & 0xF;
+  if (cond == 0xF) {
+    throw UnimplementedInstruction("Thumb SWI (format 17) not supported");
+  }
+  if (cond == 0xE) {
+    throw UnimplementedInstruction(
+        "Thumb undefined instruction space (format 16, cond=1110)");
+  }
+  if (!ConditionPassed(cond)) return;
+  auto soffset8 = static_cast<int8_t>(instr & 0xFF);
+  regs_[kPC] = static_cast<uint32_t>(static_cast<int32_t>(regs_[kPC] + 4) +
+                                      static_cast<int32_t>(soffset8) * 2);
+  pc_updated_by_instruction_ = true;
+}
+
+void ArmInterpreter::ExecuteThumbUnconditionalBranch(uint16_t instr) {
+  // Format 18: 11100 Offset11[11]
+  uint32_t offset11 = instr & 0x7FF;
+  // Sign-extends the 11-bit field and doubles it (halfword -> byte
+  // offset) in one arithmetic shift: <<21 puts the field's sign bit at
+  // bit 31, and >>20 (rather than >>21) nets an extra <<1.
+  int32_t signed_offset = static_cast<int32_t>(offset11 << 21) >> 20;
+  regs_[kPC] = static_cast<uint32_t>(static_cast<int32_t>(regs_[kPC] + 4) + signed_offset);
+  pc_updated_by_instruction_ = true;
+}
+
+void ArmInterpreter::ExecuteThumbLongBranchWithLink(uint16_t instr) {
+  // Format 19: two halfwords, both dispatched here (H = bits[12:11]):
+  //   H=10 (first half):  LR = PC(fetch+4) + SignExtend(Offset11)<<12
+  //   H=11 (second half, BL):  completes the branch, stays in Thumb
+  //   H=01 (second half, BLX(1)): completes the branch, switches to ARM
+  uint32_t h = (instr >> 11) & 0x3;
+  uint32_t offset11 = instr & 0x7FF;
+
+  if (h == 0x2) {
+    // Same sign-extend-and-shift trick as Format 18, but shifted left
+    // by 12 instead of 1: <<21 then >>9 nets <<12 after sign-extension.
+    int32_t signed_high = static_cast<int32_t>(offset11 << 21) >> 9;
+    regs_[kLR] = static_cast<uint32_t>(static_cast<int32_t>(regs_[kPC] + 4) + signed_high);
+    return;
+  }
+
+  uint32_t target = regs_[kLR] + (offset11 << 1);
+  uint32_t return_addr = (regs_[kPC] + 2) | 1;  // next instr; bit0 set for a later interworking return
+  if (h == 0x1) {  // BLX(1): unconditional switch to ARM, word-aligned target.
+    regs_[kLR] = return_addr;
+    SetFlag(kCpsrT, false);
+    regs_[kPC] = target & ~3u;
+  } else {  // BL (h == 0x3): stays in Thumb.
+    regs_[kLR] = return_addr;
+    regs_[kPC] = target & ~1u;
+  }
+  pc_updated_by_instruction_ = true;
+}
+
+void ArmInterpreter::ExecuteThumb(uint16_t instr) {
+  if ((instr & 0xF800) == 0x1800) {  // 00011xxx -- Format 2 (checked before
+    ExecuteThumbAddSubtract(instr);  // Format 1's broader 000xx prefix)
+  } else if ((instr & 0xE000) == 0x0000) {  // 000xxxxx -- Format 1
+    ExecuteThumbMoveShiftedRegister(instr);
+  } else if ((instr & 0xE000) == 0x2000) {  // 001xxxxx -- Format 3
+    ExecuteThumbMovCmpAddSubImmediate(instr);
+  } else if ((instr & 0xFC00) == 0x4000) {  // 010000xx -- Format 4
+    ExecuteThumbAluOperation(instr);
+  } else if ((instr & 0xFC00) == 0x4400) {  // 010001xx -- Format 5
+    ExecuteThumbHiRegisterOperation(instr);
+  } else if ((instr & 0xF800) == 0x4800) {  // 01001xxx -- Format 6
+    ExecuteThumbPcRelativeLoad(instr);
+  } else if ((instr & 0xF000) == 0x5000) {  // 0101xxxx -- Format 7/8
+    if ((instr & 0x0200) == 0) {
+      ExecuteThumbLoadStoreRegisterOffset(instr);
+    } else {
+      ExecuteThumbLoadStoreSignExtended(instr);
+    }
+  } else if ((instr & 0xE000) == 0x6000) {  // 011xxxxx -- Format 9
+    ExecuteThumbLoadStoreImmediateOffset(instr);
+  } else if ((instr & 0xF000) == 0x8000) {  // 1000xxxx -- Format 10
+    ExecuteThumbLoadStoreHalfword(instr);
+  } else if ((instr & 0xF000) == 0x9000) {  // 1001xxxx -- Format 11
+    ExecuteThumbSpRelativeLoadStore(instr);
+  } else if ((instr & 0xF000) == 0xA000) {  // 1010xxxx -- Format 12
+    ExecuteThumbLoadAddress(instr);
+  } else if ((instr & 0xFF00) == 0xB000) {  // 10110000 -- Format 13 (checked
+    ExecuteThumbAddOffsetToSp(instr);       // before Format 14's broader mask)
+  } else if ((instr & 0xF600) == 0xB400) {  // 1011x10x -- Format 14
+    ExecuteThumbPushPop(instr);
+  } else if ((instr & 0xF000) == 0xC000) {  // 1100xxxx -- Format 15
+    ExecuteThumbMultipleLoadStore(instr);
+  } else if ((instr & 0xF000) == 0xD000) {  // 1101xxxx -- Format 16
+    ExecuteThumbConditionalBranch(instr);   // (SWI/undef handled inside)
+  } else if ((instr & 0xF800) == 0xE000) {  // 11100xxx -- Format 18 (checked
+    ExecuteThumbUnconditionalBranch(instr);  // before Format 19's broader mask)
+  } else if ((instr & 0xE000) == 0xE000) {  // 111xxxxx, excluding Format 18
+    ExecuteThumbLongBranchWithLink(instr);  // above -- Format 19's 3 halfwords
+  } else {
+    throw UnimplementedInstruction("Unrecognized Thumb instruction encoding");
+  }
+}
+
 void ArmInterpreter::Step() {
   uint32_t fetch_addr = regs_[kPC];
   if (call_out_size_ != 0 && fetch_addr >= call_out_base_ &&
@@ -496,8 +937,18 @@ void ArmInterpreter::Step() {
     return;
   }
 
-  uint32_t instr = memory_.Read32(fetch_addr);
   pc_updated_by_instruction_ = false;
+
+  if (GetFlag(kCpsrT)) {
+    uint16_t thumb_instr = memory_.Read16(fetch_addr);
+    ExecuteThumb(thumb_instr);
+    if (!pc_updated_by_instruction_) {
+      regs_[kPC] = fetch_addr + 2;
+    }
+    return;
+  }
+
+  uint32_t instr = memory_.Read32(fetch_addr);
 
   uint32_t cond = (instr >> 28) & 0xF;
   if (ConditionPassed(cond)) {
