@@ -29,6 +29,7 @@ constexpr uint32_t kReallocSlotOffset = 0x74;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
+constexpr uint32_t kAppContextFourthObjectOffset = 0x24;
 }  // namespace
 
 ModRuntime::ModRuntime(Memory& memory, HleRuntime& hle, uint32_t heap_region, uint32_t heap_size,
@@ -44,6 +45,8 @@ void ModRuntime::SetShellInstance(uint32_t shell_ptr) { shell_ptr_ = shell_ptr; 
 void ModRuntime::SetDisplayInstance(uint32_t display_ptr) { display_ptr_ = display_ptr; }
 
 void ModRuntime::SetThirdContextObject(uint32_t object_ptr) { third_context_object_ = object_ptr; }
+
+void ModRuntime::SetFourthContextObject(uint32_t object_ptr) { fourth_context_object_ = object_ptr; }
 
 uint32_t ModRuntime::Allocate(uint32_t size) {
   uint32_t aligned = (size + 3) & ~3u;  // word-align every allocation
@@ -269,6 +272,7 @@ void ModRuntime::GetAppContextImpl(IArmCore& core) {
   memory_.Write32(context_address_ + kAppContextShellOffset, shell_ptr_);
   memory_.Write32(context_address_ + kAppContextDisplayOffset, display_ptr_);
   memory_.Write32(context_address_ + kAppContextThirdObjectOffset, third_context_object_);
+  memory_.Write32(context_address_ + kAppContextFourthObjectOffset, fourth_context_object_);
   core.SetRegister(kR0, context_address_);
 }
 

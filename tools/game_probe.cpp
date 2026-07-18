@@ -390,6 +390,19 @@ int main(int argc, char** argv) {
   uint32_t unknown_context_0x2c_obj = zeebulator::BuildGenericRelativeVtableStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x80010000, /*object=*/0x80011000, /*slot_count=*/20);
   mod_runtime.SetThirdContextObject(unknown_context_0x2c_obj);
+  // A fourth real field (offset 0x24) found continuing the Peggle
+  // investigation into why its per-tick callback never re-arms its own
+  // timer the real self-rearming way: real code there reads and writes
+  // this as a plain data struct (not a vtable interface), gating its
+  // entire timer-rearming path on offset +20 being non-zero. Real
+  // identity unknown -- wired to a real, writable, zeroed memory block
+  // with just that one confirmed-load-bearing field pre-set non-zero,
+  // an educated, minimal enabling stub (see mod_runtime.h's doc
+  // comment), not a confirmed-correct implementation of whatever this
+  // struct actually is.
+  constexpr uint32_t kFourthContextObject = 0x80020000;
+  cpu.GetMemory().Write32(kFourthContextObject + 20, 1);  // rest is already zero
+  mod_runtime.SetFourthContextObject(kFourthContextObject);
   media_hle.Build(/*vtable=*/0x8000B000);
 
   auto& mem = cpu.GetMemory();

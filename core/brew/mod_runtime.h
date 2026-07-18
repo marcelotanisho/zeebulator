@@ -64,6 +64,26 @@ namespace zeebulator {
 // resolves rather than wandering into unmapped memory; replace with a
 // real implementation once the interface's identity is understood.
 //
+// The same context struct has a fourth confirmed-to-exist field, offset
+// +0x24 -- found continuing the Peggle investigation (TASKS.md Phase 8)
+// into why its per-tick timer callback never re-armed itself the real
+// self-rearming-`SetTimer` way Double Dragon's does. Real disassembly
+// of that callback (`peggle.mod` offset `0x32db0`) shows it reads
+// `*(context[0x24] + 20)` and skips its entire timer-rearming path
+// unconditionally if that's zero -- which it always is, since nothing
+// in this codebase ever wrote a real object there. Unlike the Shell/
+// Display/third-object fields, this one is accessed as a plain,
+// directly-read-and-written data struct, not through a vtable (the
+// same callback also reads and writes a 64-bit timestamp at
+// `+24`/`+28` and another field at `+0x2a0`) -- so it isn't a BREW
+// *interface* at all, more likely an app- or OS-provided "scheduler"/
+// timing-state block. Its real identity and full real layout are not
+// known. `SetFourthContextObject()` supplies a real, writable memory
+// block (zeroed, with only the one confirmed-load-bearing field,
+// `+20`, pre-set non-zero to unlock the gate) -- an educated, minimal
+// enabling stub, not a confirmed-correct implementation of whatever
+// this real struct actually is.
+//
 // A fourth slot, offset 0xb0 (4 real call sites, far rarer than 0xc0),
 // is GETUPTIMEMS: called with no argument, twice, around a chunk of
 // per-tick work, with `second_result - first_result` used immediately
@@ -219,6 +239,12 @@ class ModRuntime {
   // before or after Install().
   void SetThirdContextObject(uint32_t object_ptr);
 
+  // Sets the object pointer the offset-0xc0 "get app context" slot
+  // should expose at the confirmed-to-exist, but not-yet-identified,
+  // field offset (+0x24) -- see the class doc comment. Safe to call
+  // before or after Install().
+  void SetFourthContextObject(uint32_t object_ptr);
+
   // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot
   // returns. Deterministic and tick-driven (not a real wall-clock read)
   // to match how the rest of the emulator's timing works (see
@@ -257,6 +283,7 @@ class ModRuntime {
   uint32_t shell_ptr_ = 0;
   uint32_t display_ptr_ = 0;
   uint32_t third_context_object_ = 0;
+  uint32_t fourth_context_object_ = 0;
   uint32_t uptime_ms_ = 0;
 };
 
