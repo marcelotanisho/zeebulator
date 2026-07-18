@@ -146,7 +146,23 @@ namespace zeebulator {
 // instruction immediately after each call always overwrites r0 before
 // it could be read) -- so it's implemented as a pure no-op.
 //
-// Only these twelve table slots are confirmed by real disassembly so
+// A thirteenth slot, offset 0x44, is a second MEMCPY-equivalent: found
+// the same way as the twelfth (real Thumb-mode `AEEMod_CreateInstance`
+// code on Peggle, once Thumb decoding existed to trace it). The one real
+// call site unambiguously reachable through the confirmed static-base-
+// table-fetch idiom (`peggle.mod` offset `0xc718`, immediately after
+// re-fetching the table pointer via the same "PC-relative literal, add
+// pc, deref -4" sequence every other slot is found through) calls it
+// with exactly memcpy's calling convention -- `(dest=sp+28, src=sp+4,
+// count=24)`, a plain 24-byte stack-struct copy -- and its return value
+// is read into R0 immediately after, matching `void *memcpy(dest, src,
+// n)`'s "returns dest" contract too. Most likely a real ARM EABI helper
+// symbol (e.g. `__aeabi_memcpy`) a compiler can emit separately from a
+// user-callable `memcpy` for compiler-generated struct copies, but
+// behaviorally identical -- implemented by registering the same
+// MemcpyImpl a second time rather than duplicating it.
+//
+// Only these thirteen table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
