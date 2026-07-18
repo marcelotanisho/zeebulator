@@ -23,8 +23,10 @@ constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
 constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
 constexpr uint32_t kDbgPrintfSlotOffset = 0x9c;
 constexpr uint32_t kMemcpyAliasSlotOffset = 0x44;
+constexpr uint32_t kReallocSlotOffset = 0x74;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
+constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
 constexpr uint32_t kTableAddress = 0x80280000;
 constexpr uint32_t kContextAddress = 0x80280200;
 constexpr uint32_t kHeapRegion = 0x80300000;
@@ -91,6 +93,48 @@ TEST(ModRuntime, ReturnsNullWhenHeapIsExhausted) {
   EXPECT_EQ(second, 0u);
 }
 
+TEST(ModRuntime, ReallocGrowsAndPreservesContent) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t malloc_fn = cpu.GetMemory().Read32(kTableAddress + kMallocSlotOffset);
+  uint32_t realloc_fn = cpu.GetMemory().Read32(kTableAddress + kReallocSlotOffset);
+
+  uint32_t original = hle.CallArmFunction(malloc_fn, /*size=*/4);
+  cpu.GetMemory().Write32(original, 0xCAFEF00D);
+
+  uint32_t grown = hle.CallArmFunction(realloc_fn, original, /*size=*/16);
+  EXPECT_NE(grown, 0u);
+  EXPECT_NE(grown, original) << "this allocator never resizes in place";
+  EXPECT_EQ(cpu.GetMemory().Read32(grown), 0xCAFEF00Du) << "original content preserved";
+}
+
+TEST(ModRuntime, ReallocReturnsNullWithoutTouchingOldBlockWhenHeapIsExhausted) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/8, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t malloc_fn = cpu.GetMemory().Read32(kTableAddress + kMallocSlotOffset);
+  uint32_t realloc_fn = cpu.GetMemory().Read32(kTableAddress + kReallocSlotOffset);
+
+  uint32_t original = hle.CallArmFunction(malloc_fn, /*size=*/4);
+  cpu.GetMemory().Write32(original, 0x11223344);
+
+  EXPECT_EQ(hle.CallArmFunction(realloc_fn, original, /*size=*/1000), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read32(original), 0x11223344u) << "failed realloc leaves the old block alone";
+}
+
+TEST(ModRuntime, ReallocWithNullPointerBehavesLikeMalloc) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t realloc_fn = cpu.GetMemory().Read32(kTableAddress + kReallocSlotOffset);
+
+  EXPECT_EQ(hle.CallArmFunction(realloc_fn, /*ptr=*/0, /*size=*/16), kHeapRegion);
+}
+
 TEST(ModRuntime, FreeSlotDoesNotCrash) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
@@ -136,6 +180,19 @@ TEST(ModRuntime, GetAppContextSlotReturnsDisplayInstanceAtConfirmedOffset) {
   uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
   uint32_t context = hle.CallArmFunction(get_app_context_fn);
   EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextDisplayOffset), kDisplayPtr);
+}
+
+TEST(ModRuntime, GetAppContextSlotReturnsThirdObjectAtConfirmedOffset) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  constexpr uint32_t kThirdObjectPtr = 0x80004000;
+  mod_runtime.SetThirdContextObject(kThirdObjectPtr);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+
+  uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
+  uint32_t context = hle.CallArmFunction(get_app_context_fn);
+  EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextThirdObjectOffset), kThirdObjectPtr);
 }
 
 TEST(ModRuntime, SetShellInstanceCanBeCalledAfterInstall) {

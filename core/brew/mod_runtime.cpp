@@ -23,10 +23,12 @@ constexpr uint32_t kGetUpTimeMsSlotOffset = 0xb0;
 constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
 constexpr uint32_t kDbgPrintfSlotOffset = 0x9c;
 constexpr uint32_t kMemcpyAliasSlotOffset = 0x44;
+constexpr uint32_t kReallocSlotOffset = 0x74;
 // Offsets within the "app context" struct GetAppContext returns where
 // real call sites read the current app's IShell/IDisplay pointers.
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
+constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
 }  // namespace
 
 ModRuntime::ModRuntime(Memory& memory, HleRuntime& hle, uint32_t heap_region, uint32_t heap_size,
@@ -41,16 +43,53 @@ void ModRuntime::SetShellInstance(uint32_t shell_ptr) { shell_ptr_ = shell_ptr; 
 
 void ModRuntime::SetDisplayInstance(uint32_t display_ptr) { display_ptr_ = display_ptr; }
 
-void ModRuntime::MallocImpl(IArmCore& core) {
-  uint32_t size = core.GetRegister(kR0);
+void ModRuntime::SetThirdContextObject(uint32_t object_ptr) { third_context_object_ = object_ptr; }
+
+uint32_t ModRuntime::Allocate(uint32_t size) {
   uint32_t aligned = (size + 3) & ~3u;  // word-align every allocation
   if (aligned > heap_end_ - heap_cursor_) {
-    core.SetRegister(kR0, 0);  // NULL: out of (emulated) heap space
-    return;
+    return 0;  // NULL: out of (emulated) heap space
   }
   uint32_t result = heap_cursor_;
   heap_cursor_ += aligned;
-  core.SetRegister(kR0, result);
+  return result;
+}
+
+void ModRuntime::MallocImpl(IArmCore& core) {
+  core.SetRegister(kR0, Allocate(core.GetRegister(kR0)));
+}
+
+void ModRuntime::ReallocImpl(IArmCore& core) {
+  // void *realloc(void *ptr, size_t size)
+  //
+  // Real disassembly of Peggle (TASKS.md Phase 8, PHASE8_LOG.md) shows
+  // two independent real growable-array implementations (56-byte and
+  // 4-byte elements) calling this static-base slot identically:
+  // `(old_ptr=array's current buffer, new_size=new_element_count *
+  // element_size)`, checking the result for non-null before overwriting
+  // their own buffer pointer -- exactly realloc's real contract,
+  // including "leave the old block alone on failure" (this never writes
+  // to `old_ptr`, only reads from it).
+  //
+  // This allocator has no free-list (see Allocate()/FREE's own doc
+  // comment), so unlike real realloc there's no way to know the old
+  // block's real size to copy just that many bytes -- copies `size`
+  // bytes from the old block instead. Safe in this bump-allocator's
+  // specific case even when that overreads past the old block's real
+  // content: bump-allocated memory is never reused, so anything past
+  // the old content is either still-zeroed, never-touched memory, or a
+  // later allocation that hasn't happened yet -- and the real callers
+  // observed always immediately overwrite that tail with new elements
+  // right after a successful grow anyway.
+  uint32_t old_ptr = core.GetRegister(kR0);
+  uint32_t size = core.GetRegister(kR1);
+  uint32_t new_ptr = Allocate(size);
+  if (new_ptr != 0 && old_ptr != 0) {
+    for (uint32_t i = 0; i < size; ++i) {
+      memory_.Write8(new_ptr + i, memory_.Read8(old_ptr + i));
+    }
+  }
+  core.SetRegister(kR0, new_ptr);
 }
 
 void ModRuntime::MemcpyImpl(IArmCore& core) {
@@ -229,6 +268,7 @@ void ModRuntime::GetAppContextImpl(IArmCore& core) {
   // after Install().
   memory_.Write32(context_address_ + kAppContextShellOffset, shell_ptr_);
   memory_.Write32(context_address_ + kAppContextDisplayOffset, display_ptr_);
+  memory_.Write32(context_address_ + kAppContextThirdObjectOffset, third_context_object_);
   core.SetRegister(kR0, context_address_);
 }
 
@@ -249,6 +289,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t strstr_fn = hle_.Register([this](IArmCore& core) { StrstrImpl(core); });
   uint32_t sprintf_fn = hle_.Register([this](IArmCore& core) { SprintfImpl(core); });
   uint32_t dbgprintf_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  uint32_t realloc_fn = hle_.Register([this](IArmCore& core) { ReallocImpl(core); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemcpyAliasSlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
@@ -262,6 +303,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   memory_.Write32(table_address + kGetUpTimeMsSlotOffset, get_uptime_ms_fn);
   memory_.Write32(table_address + kGetAppContextSlotOffset, get_app_context_fn);
   memory_.Write32(table_address + kDbgPrintfSlotOffset, dbgprintf_fn);
+  memory_.Write32(table_address + kReallocSlotOffset, realloc_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 

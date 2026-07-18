@@ -36,4 +36,30 @@ uint32_t BuildStubObjectWithOverride(Memory& memory, HleRuntime& hle, uint32_t v
                                       uint32_t object_address, size_t slot_count,
                                       size_t override_slot, HleRuntime::HleFunction override_fn);
 
+// Same as BuildGenericStubObject, but for a real, different real ABI
+// this session found probing a second game (Peggle, `peggle.mod` --
+// see PHASE8_LOG.md): real disassembly of a virtual call through a
+// still-unidentified field on the shared "app context" struct (offset
+// 0x2c on the struct ModRuntime's confirmed offset-0xc0 slot returns --
+// see mod_runtime.h) shows the call resolving its target as `vtable_
+// base + *(vtable_base + slot*4)` -- a relative offset from the
+// vtable's own address, not a plain absolute function pointer -- rather
+// than the ordinary `*(vtable_base + slot*4)` every other confirmed
+// real BREW interface in this codebase uses. This matches ARM RVCT's
+// documented "ROPI" (Read-Only Position-Independent) C++ virtual
+// function table convention: vtable entries store offsets so the
+// vtable itself never contains an absolute, load-address-dependent
+// value. Every slot stores an HLE sentinel address encoded the same way
+// (`sentinel - vtable_address`) so a caller computing the real ABI's
+// relative-offset formula lands back on the real sentinel regardless of
+// where `vtable_address` is placed. The real interface's identity and
+// what any of its methods actually do are still unknown -- this exists
+// purely so calling through it resolves to a harmless no-op instead of
+// wandering into unmapped memory, the same "observe, then replace with
+// real behavior" role BuildGenericStubObject plays for absolute-vtable
+// interfaces.
+uint32_t BuildGenericRelativeVtableStubObject(Memory& memory, HleRuntime& hle,
+                                               uint32_t vtable_address,
+                                               uint32_t object_address, size_t slot_count);
+
 }  // namespace zeebulator

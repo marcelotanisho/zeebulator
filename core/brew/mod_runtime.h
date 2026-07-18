@@ -51,6 +51,19 @@ namespace zeebulator {
 // pRect)` at that exact slot index precisely. This field is the current
 // app's `IDisplay` pointer. `SetDisplayInstance()` supplies it.
 //
+// The same context struct has a third confirmed-to-exist field, offset
+// +0x2c -- found probing Peggle (`peggle.mod`, TASKS.md Phase 8): real
+// code reads it and calls through it with ARM RVCT's "ROPI" relative-
+// vtable convention (see scaffold_object.h's
+// BuildGenericRelativeVtableStubObject doc comment), unlike every other
+// confirmed real interface in this codebase. Unlike the Shell/Display
+// fields, *what real interface this points at* isn't known yet -- only
+// that real code expects something non-null and callable there.
+// `SetThirdContextObject()` supplies a placeholder (a relative-vtable
+// stub, safe to call but does nothing real) so calling through it
+// resolves rather than wandering into unmapped memory; replace with a
+// real implementation once the interface's identity is understood.
+//
 // A fourth slot, offset 0xb0 (4 real call sites, far rarer than 0xc0),
 // is GETUPTIMEMS: called with no argument, twice, around a chunk of
 // per-tick work, with `second_result - first_result` used immediately
@@ -162,7 +175,19 @@ namespace zeebulator {
 // behaviorally identical -- implemented by registering the same
 // MemcpyImpl a second time rather than duplicating it.
 //
-// Only these thirteen table slots are confirmed by real disassembly so
+// A fourteenth slot, offset 0x74, is REALLOC: found continuing the same
+// Peggle trace, once the class's own third context field (see above)
+// was given a safe stub to call through. Two independent real call
+// sites (`peggle.mod` offsets `0x3b038` and `0x3b0dc`) -- two separate
+// growable-array template instantiations, one with 56-byte elements,
+// one with 4-byte ones -- both call it with `(old_ptr=the array's
+// current buffer, read from the array struct, new_size=new_element_
+// count * element_size)` and check the result for non-null before
+// overwriting their own buffer pointer, exactly `void *realloc(void
+// *ptr, size_t size)`'s real contract. See ReallocImpl for how it's
+// implemented against this allocator's no-free-list bump allocator.
+//
+// Only these fourteen table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -188,6 +213,12 @@ class ModRuntime {
   // before or after Install().
   void SetDisplayInstance(uint32_t display_ptr);
 
+  // Sets the object pointer the offset-0xc0 "get app context" slot
+  // should expose at the confirmed-to-exist, but not-yet-identified,
+  // field offset (+0x2c) -- see the class doc comment. Safe to call
+  // before or after Install().
+  void SetThirdContextObject(uint32_t object_ptr);
+
   // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot
   // returns. Deterministic and tick-driven (not a real wall-clock read)
   // to match how the rest of the emulator's timing works (see
@@ -211,6 +242,12 @@ class ModRuntime {
   void SprintfImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);
+  void ReallocImpl(IArmCore& core);
+
+  // Shared bump-allocation core used by both MallocImpl and
+  // ReallocImpl. Returns 0 (NULL) if `size` doesn't fit in the
+  // remaining heap.
+  uint32_t Allocate(uint32_t size);
 
   Memory& memory_;
   HleRuntime& hle_;
@@ -219,6 +256,7 @@ class ModRuntime {
   uint32_t context_address_;
   uint32_t shell_ptr_ = 0;
   uint32_t display_ptr_ = 0;
+  uint32_t third_context_object_ = 0;
   uint32_t uptime_ms_ = 0;
 };
 

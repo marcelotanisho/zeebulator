@@ -51,3 +51,30 @@ TEST(ScaffoldObject, OverrideSlotRunsTheSuppliedImplementation) {
   uint32_t other_sentinel = cpu.GetMemory().Read32(kVtableAddr + 3 * 4);
   EXPECT_EQ(hle.CallArmFunction(other_sentinel, obj), 0u) << "non-overridden slots stay generic";
 }
+
+TEST(ScaffoldObject, RelativeVtableObjectHeaderPointsAtVtable) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  uint32_t obj = zeebulator::BuildGenericRelativeVtableStubObject(cpu.GetMemory(), hle, kVtableAddr,
+                                                                   kObjectAddr, 4);
+
+  EXPECT_EQ(obj, kObjectAddr);
+  EXPECT_EQ(cpu.GetMemory().Read32(kObjectAddr), kVtableAddr);
+}
+
+TEST(ScaffoldObject, RelativeVtableSlotResolvesThroughTheRealRopiFormula) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  constexpr size_t kSlotCount = 4;
+  uint32_t obj = zeebulator::BuildGenericRelativeVtableStubObject(cpu.GetMemory(), hle, kVtableAddr,
+                                                                   kObjectAddr, kSlotCount);
+
+  for (uint32_t slot = 0; slot < kSlotCount; ++slot) {
+    uint32_t stored_offset = cpu.GetMemory().Read32(kVtableAddr + slot * 4);
+    // Real ARM RVCT ROPI virtual-call formula: target = vtable_base +
+    // stored_offset, not the stored value directly (see the header's
+    // doc comment for the real disassembly this matches).
+    uint32_t resolved_target = kVtableAddr + stored_offset;
+    EXPECT_EQ(hle.CallArmFunction(resolved_target, obj, /*arg1=*/0xAAAA), 0u) << "slot " << slot;
+  }
+}

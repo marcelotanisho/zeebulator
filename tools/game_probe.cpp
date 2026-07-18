@@ -380,6 +380,16 @@ int main(int argc, char** argv) {
   // AEEMod_Load/CreateInstance -- see core/brew/mod_runtime.h.
   mod_runtime.SetShellInstance(shell);
   mod_runtime.SetDisplayInstance(display_obj);
+  // The same ambient context struct has a third real field (offset
+  // 0x2c) found probing Peggle -- real code there calls through it
+  // using ARM RVCT's ROPI relative-vtable convention, unlike every
+  // other confirmed interface here. Its real identity is still
+  // unknown; wired to a relative-vtable-safe scaffold (see
+  // BuildGenericRelativeVtableStubObject's doc comment) purely so the
+  // call resolves rather than wandering into unmapped memory.
+  uint32_t unknown_context_0x2c_obj = zeebulator::BuildGenericRelativeVtableStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80010000, /*object=*/0x80011000, /*slot_count=*/20);
+  mod_runtime.SetThirdContextObject(unknown_context_0x2c_obj);
   media_hle.Build(/*vtable=*/0x8000B000);
 
   auto& mem = cpu.GetMemory();
