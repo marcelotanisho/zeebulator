@@ -1660,3 +1660,72 @@ to be meaningful except at a few specific, identifiable offsets like
 this session's `+20`).
 All temporary instrumentation (the `r11` trace column, the tick-0-only
 trace flag) reverted -- clean `git diff` confirmed. 241 tests pass.
+
+---
+
+**Provisioned `context[0x24] + 0x45000 + 0x3d8` and immediately hit
+two more real, evidence-grounded gaps in a row, both now fixed.**
+First attempt wrote a generic stub object into that field during
+initial setup, before any ARM code ran -- `fp` was still null at the
+same crash site as before. A `Memory::Write8` watchpoint on that exact
+address (temporary, reverted) caught the real cause: real
+`CreateInstance`/`HandleEvent(EVT_APP_START)` code writes a real zero
+to this same field once, as part of its own initialization (evidently
+its own "not yet initialized" reset), unconditionally clobbering
+whatever was already there. **Fix**: moved the write to happen right
+before the "Reached the event loop" print, i.e. after `HandleEvent`
+returns and after the real reset has already happened -- confirmed via
+trace this unblocks the immediate null-pointer crash (step count moved
+from 3100 to 3106).
+
+Immediately hit a second gap one level deeper: the object's slot 2 is
+called with a real QueryInterface-style shape (`this`, an id/flag, and
+an output pointer `ppOut` in `r2`); our stub correctly returned success
+in `r0`, but since it never touched memory, `*ppOut` stayed zero, and
+the real caller dereferenced it without checking the status -- a new
+null-pointer crash at step 3155. Patching slot 2 with a second stub
+object fixed that one level, but the exact same shape recurred a third
+time at the same step count, through the newly-returned object's own
+slot 2. Rather than keep hand-patching one level at a time, generalized
+to a recursive **self-propagating stub** (`std::function<uint32_t()>`
+lambda capturing itself by reference, in `tools/game_probe.cpp`): every
+slot of every generated object now lazily builds a fresh child object
+of the same shape and writes it into whatever output pointer the real
+caller passed, on demand, however deep a real chain of these turns out
+to go. Explicitly marked EXPERIMENTAL and kept local to
+`tools/game_probe.cpp` rather than promoted to
+`core/brew/scaffold_object.h`, since this out-pointer-chaining shape is
+not yet confirmed as a general real BREW ABI convention -- it's only
+been observed at this one real call site so far.
+
+**Verified against the real game**: tick 0 now runs vastly deeper --
+real `ISHELL_CreateInstance(ClsId=0x01001003)` (the same `FileMgr`
+class confirmed via Double Dragon), many real `Seek`-shaped
+(`trap=0xf000029c`) calls, real `trap=0xf0000294` calls, and the
+self-propagating chain itself visibly firing through real traps
+`0xf0000584`, `0xf0000664`, `0xf0000700`, `0xf0000588` -- before
+hitting a new, different-in-kind wall. First tried the self-propagating
+stub with 10 slots per object and hit the exact same step-3155 wall;
+tracing showed the failing read (`ldr r3,[r1,#0x30]`, offset 48 = slot
+12) was simply past the end of a too-small 10-slot vtable, reading
+unmapped memory as zero. Widened to 40 slots (matching this codebase's
+established sizing convention for unidentified interfaces) and hit the
+*same* step-3155 wall again -- this time confirmed via careful trace
+re-reading that the instruction is not a vtable-indirected call at all:
+it reads directly from `object+0x30` (the object's own memory), not
+`*(*object+0x30)` the way every real vtable call handled so far works.
+That is a third, genuinely different real object convention -- a flat
+struct with a function pointer embedded at a fixed offset, distinct
+from both the ROPI-relative-vtable shape (context's own third field)
+and the standard absolute-vtable shape (every `BuildInterfaceObject`
+call, including this arena object itself) already implemented.
+**Deliberately left undoctored** -- the self-propagating stub's plain
+zero-filled object memory reads as 0 there, producing the same clean,
+diagnosable wander as every previous real gap in this log, rather than
+guessing at what real function belongs at that offset. This is the
+next concrete step for continuing this investigation.
+
+Committed (`01fa50e`). All temporary instrumentation (the
+`Memory::Write8` watchpoint in `core/memory/memory.cpp`, an `r11`
+trace column in `core/cpu/arm_interpreter.cpp`) reverted -- confirmed
+via clean `git diff` on both files. 241 tests pass.

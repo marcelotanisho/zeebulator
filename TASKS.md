@@ -1064,6 +1064,29 @@ playable start-to-finish at full speed, standalone build.
       no way yet to know how many more such offsets exist or what real
       data belongs at them. See PHASE8_LOG.md for the full trace and
       the two candidate ways to proceed.
+      **Provisioned that arena field and fixed two more real gaps in a
+      row**: a write-timing bug (real `HandleEvent` code resets the
+      field to zero once during its own init, so the placeholder must
+      be written *after* `HandleEvent` returns, not before), and a
+      recurring real QueryInterface-style out-pointer chain (caller
+      passes an output pointer, ignores the returned status, and
+      dereferences whatever was written there — confirmed recurring
+      through multiple freshly-returned objects). Generalized the fix
+      into an experimental **self-propagating stub** (a recursive
+      lambda in `tools/game_probe.cpp` that lazily builds a fresh child
+      object for any such out-pointer call, arbitrarily deep) rather
+      than hand-patching each level — deliberately kept local to the
+      probe tool, not promoted to general scaffolding, since this
+      chaining shape is only confirmed at this one real call site so
+      far. **Verified**: tick 0 now reaches real
+      `ISHELL_CreateInstance(ClsId=0x01001003)`, many real `Seek`-shaped
+      and other real HLE calls, and the self-propagating chain itself
+      firing through several more real traps — a large jump in real
+      execution depth. Hit a new, third real object convention at the
+      next level (a flat struct with a function pointer read directly
+      off a fixed offset, not through a vtable) — deliberately left
+      undoctored rather than guessed at. See PHASE8_LOG.md for the full
+      trace evidence; this is the next concrete step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
