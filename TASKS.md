@@ -996,10 +996,23 @@ playable start-to-finish at full speed, standalone build.
       gap: a third real field (offset `0x2c`) on the shared "app
       context" struct (the same struct the confirmed offset-`0xc0` slot
       returns) that real code dereferences expecting an actual object,
-      not the zero it currently holds there. Not yet fixed — needs its
-      own investigation (what real interface this field is meant to
-      expose) rather than a guess. See PHASE8_LOG.md for the full trace
-      and reasoning.
+      not the zero it currently holds there. **Fixed**: added a general
+      mechanism for this real ABI variant
+      (`scaffold_object.h`'s `BuildGenericRelativeVtableStubObject`,
+      since it's a genuine ROPI relative-vtable ABI pattern, not a
+      one-off) and a third settable `ModRuntime` context field
+      mirroring Shell/Display — the real interface itself is still
+      unidentified, wired to a safe no-op placeholder for now. That
+      unblocked one more real gap: static-base offset `0x74` is
+      REALLOC, confirmed via two independent real growable-array call
+      sites (different element sizes, same `(old_ptr, new_size)`
+      contract). **With both fixed, `HandleEvent(EVT_APP_START)` now
+      completes successfully and Peggle reaches its real steady-state
+      event loop** — the same milestone Double Dragon reached, on a
+      second real game. See PHASE8_LOG.md for the full trace and
+      reasoning, including a detour where a long stretch of no visible
+      output was first mistaken for a hang before being confirmed as
+      the tool's own correct, by-design infinite event loop.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

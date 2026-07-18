@@ -1386,10 +1386,86 @@ out of the file's bytes.
 **Where this leaves things now**: the CPU interpreter itself is no
 longer the blocker for Peggle -- everything remaining is back to the
 same kind of HLE-gap, real-evidence-grounded work every other entry in
-this log describes. Next concrete steps, in order: (1) understand and
-implement the `+0x2c` context field, (2) continue iterating on whatever
-real gaps show up after that the same way, (3) separately,
-reverse-engineer `resources.bar`'s real format (still not started;
-Peggle's own header doesn't match any known public format checked so
-far) -- needed before Peggle can get past its own asset loading the way
-Double Dragon did.
+this log describes.
+
+**Fixed the `+0x2c` context field with a general mechanism, not a
+guess.** Re-examined the real call site (`ldr r0,[r9,#0x2c]; ldr
+r2,[r0]; ldr r3,[r2,#4]; add r2,r3,r2; bx r2`, `peggle.mod` offset
+`0xafb4`-`0xafc8`) and recognized the shape: the resolved call target
+is `vtable_pointer + *(vtable_pointer + 4)`, not the ordinary `*(vtable
++ slot*4)` every other confirmed interface in this codebase uses. This
+is ARM RVCT's documented "ROPI" (Read-Only Position-Independent) C++
+virtual-function-table convention: entries store offsets *relative to
+the vtable's own address* rather than absolute function pointers, so
+the vtable itself never contains a load-address-dependent value.
+Confirmed this isn't specific to one call site by checking the pattern
+is a real, general ABI variant, not a one-off -- so rather than a
+one-off workaround, added a proper general mechanism:
+`scaffold_object.h/cpp`'s `BuildGenericRelativeVtableStubObject`
+(mirrors `BuildGenericStubObject`'s exact role for absolute-vtable
+interfaces, just storing `sentinel - vtable_address` at each slot so
+the real ABI's relative-offset formula resolves back to the real
+sentinel). Two new tests confirm the header and the real resolution
+formula both work. `ModRuntime` gained a third settable context field,
+`SetThirdContextObject()`, mirroring `SetShellInstance`/
+`SetDisplayInstance` exactly -- the real interface's identity is still
+unknown, so this is wired to the new relative-vtable-safe scaffold, the
+same "observe, then replace with real behavior once identified" role
+generic stubs play everywhere else in this codebase.
+
+**That unblocked one more real gap: static-base offset `0x74` is
+REALLOC.** Found by continuing the exact same trace once the `+0x2c`
+call could resolve instead of wandering to zero. Two independent real
+call sites (`peggle.mod` offsets `0x3b038` and `0x3b0dc`) -- two
+separate growable-array template instantiations, one with 56-byte
+elements, one with 4-byte elements -- both call it with `(old_ptr=the
+array's current buffer, new_size=new_element_count * element_size)`
+and check the result for non-null before overwriting their own buffer
+pointer: exactly `void *realloc(void *ptr, size_t size)`'s real
+contract, including "leave the old block alone on failure" (neither
+call site's own logic would make sense otherwise). Implemented against
+this allocator's existing no-free-list bump allocator (`ModRuntime::
+Allocate()`, factored out of `MallocImpl` so both share it): allocates
+a fresh block of `size` bytes and copies from the old block if both
+succeed. Documented tradeoff, not a hidden gap: since this allocator
+never tracks or reuses freed sizes, it copies `size` bytes from the old
+block rather than `min(old_size, size)` (real realloc's contract) --
+safe specifically because bump-allocated memory is never reused, so
+anything read past the old block's real content is either still-zeroed
+or not-yet-allocated memory, and the real callers observed always
+immediately overwrite that tail with new elements right after a
+successful grow anyway. Three new tests (grow-and-preserve,
+fail-leaves-old-block-alone, null-pointer-behaves-like-malloc).
+
+**A debugging detour worth recording, since it nearly got mis-
+diagnosed as a bug**: with both fixes in place, re-running Peggle
+appeared to hang after one single real trap call in tick 0 -- no more
+output for 90+ seconds under a bounded `timeout`. Chased this
+seriously (temporarily reduced the interpreter's own step budget,
+separated stdout/stderr to rule out output buffering as the cause,
+added raw fprintf/fflush instrumentation directly inside `Step()` and
+`ExecuteBranchExchange`) before finding the real explanation: the
+"hang" was a real `bx lr` where `lr` held exactly `0xf0000000` --
+`trap_base`, the real sentinel address `HleRuntime`/`tools/game_probe.
+cpp`'s own call-loop convention uses to mean "this ARM function call
+completed, return control to the C++ caller." That's the *correct*,
+successful completion of the tick-0 timer callback -- not a bug. Once
+that returns cleanly, `tools/game_probe.cpp`'s own top-level loop does
+exactly what it's designed to do for an interactive tool: delay 16ms,
+tick again, forever, until a real `SDL_QUIT` (never sent in this
+headless test run). All debug instrumentation was reverted (`git diff`
+confirmed clean on `core/cpu/arm_interpreter.cpp` before committing).
+
+**Verified against the real game**: Peggle's `HandleEvent(EVT_APP_
+START)` now returns successfully (`1`), and the tool reaches "Reached
+the event loop with no unhandled instruction! Window will stay open."
+-- the exact same milestone Double Dragon reached, on a second real
+game, using entirely general (not Peggle-specific) fixes. All 240 tests
+pass.
+
+**Next concrete steps**: (1) let Peggle run for many more real ticks to
+see what real gap (if any) shows up next, the same iterative way every
+title in this log has been debugged; (2) separately, reverse-engineer
+`resources.bar`'s real format (still not started; Peggle's own header
+doesn't match any known public format checked so far) -- needed before
+Peggle can load its own real assets the way Double Dragon does.
