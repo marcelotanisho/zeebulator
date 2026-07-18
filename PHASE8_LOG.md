@@ -1547,3 +1547,50 @@ resuming the raw byte analysis already started on the file's first 128
 bytes (a plausible small header/count field around offset 0, then what
 looks like a directory table with irregular strides starting around
 offset `0x2c` -- not yet confirmed against any real value).
+
+**Chased "what real game state reaches the resource-load call" and
+found the real, structural reason: Peggle's main loop doesn't use the
+self-rearming `SetTimer` pattern this codebase's whole tick-driving
+model assumes.** Statically traced the real call chain backward from
+the resource-load site (`peggle.mod` offset `0x8e90`) through three
+real callers (`0x8860` -> `0x6d34` -> `0x2aca4`, the last flanked by
+two more real `DBGPRINTF` calls with real source line numbers `216`/
+`221`) to build a plausible reach path, then tested it directly with a
+cheap PC watchpoint (temporary, reverted) on all three addresses across
+60+ real seconds (thousands of ticks): zero hits. Also tried injecting
+all 14 of the dev tool's mapped `AVK_*` key codes across many ticks in
+case a menu/splash screen was waiting on input (temporary, reverted):
+also zero hits, and critically, zero evidence any *further* tick ever
+ran at all.
+That last point led to the real answer: added a temporary live print
+directly inside `IShellHle::SetTimerImpl` (reverted after use) and
+confirmed `ISHELL_SetTimer` is called **exactly once** across the
+entire run -- `(ms=20, callback=0x00132db0, user_data=0x80280200)`.
+The callback address's bit 0 is clear (ruling out a real suspicion
+this raised: that `tools/game_probe.cpp`'s `CallArmFunctionChecked`
+dispatches a timer callback's raw pointer value as a PC transfer
+without checking it for the real ARM/Thumb interworking convention a
+function-pointer *value* is subject to, unlike a direct branch --
+worth fixing generally if it's ever found to matter, but not the cause
+here). And per this file's own earlier, already-fully-traced record of
+tick 0's real execution (~24 instructions, one `GETAPPCONTEXT` call, a
+clean `bx lr` return), that lone callback never calls `SetTimer` again
+to re-arm itself.
+Double Dragon's entire per-frame loop depends on exactly that real,
+self-rearming pattern -- documented plainly in this project's own code
+(`core/brew/ishell.h`'s class doc comment: "real game code re-arms its
+own via `ISHELL_SetTimer` ... calling `SetTimer` again with the same
+identity every time it fires"). **Peggle's real main loop evidently
+does not work this way**, which is the real, now-confirmed reason
+nothing past tick 0 -- including the resource-load call site -- is
+ever reached by driving simulated time forward the way every title in
+this log has been driven so far. What Peggle's real continuation
+mechanism actually *is* (a different real BREW notification API, a
+redraw/vsync-driven callback, or something else entirely) is not yet
+identified -- this is now the concrete blocker for both making further
+progress on Peggle at all and for finding a verifiable anchor to crack
+`resources.bar`'s binary format.
+All temporary instrumentation for this investigation (the PC
+watchpoint, the key-injection probe, the `SetTimerImpl` print) was
+reverted -- confirmed via a clean `git status`/`git diff` before moving
+on. 240 tests still pass.

@@ -1032,7 +1032,25 @@ playable start-to-finish at full speed, standalone build.
       not guessed further without a known (resource ID → size) pair to
       verify against first (the one real call site found isn't reached
       by blindly driving ticks; needs its own investigation for how
-      Peggle actually reaches it). See PHASE8_LOG.md.
+      Peggle actually reaches it).
+      **Found why, and it's a real, significant finding of its own**:
+      traced `ISHELL_SetTimer` directly (a live print inside
+      `IShellHle::SetTimerImpl`, reverted after use) and confirmed it is
+      called **exactly once** across the entire run, registering a
+      20ms, plain-ARM-mode (bit 0 clear, ruling out a suspected Thumb-
+      interworking bug in how `tools/game_probe.cpp` dispatches timer
+      callbacks) callback — and that callback's own execution (already
+      fully traced earlier: ~24 real instructions, one `GETAPPCONTEXT`
+      call, a clean `bx lr` return) never calls `SetTimer` again to
+      re-arm itself. Double Dragon's whole per-frame loop depends on
+      exactly that self-rearming pattern (see this file's own real,
+      confirmed doc comment on `IShellHle`); **Peggle's real main loop
+      evidently does not use it**, which is why nothing past tick 0 —
+      including the resource-load call site — is ever reached by
+      driving simulated time forward. What Peggle's real continuation
+      mechanism actually is (a different real BREW notification API, a
+      redraw-driven callback, or something else) is not yet identified.
+      See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
