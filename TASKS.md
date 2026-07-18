@@ -92,9 +92,11 @@ awareness yet.
       - **Still deferred, and explicitly rejected via
         `UnimplementedInstruction` rather than silently mis-executed:**
         swap (SWP/SWPB), MRS/MSR (PSR transfer), SWI, coprocessor
-        instructions, LDM/STM's user-bank/exception-return (S=1) variant,
-        BX/BLX to a Thumb target, Thumb state entirely. Will be picked up
-        incrementally as real game code needs them.
+        instructions, LDM/STM's user-bank/exception-return (S=1) variant.
+        Will be picked up incrementally as real game code needs them.
+        (Thumb state itself — full T16 decoding plus ARM/Thumb
+        interworking — was deferred here too originally, but has since
+        been implemented; see Phase 8's Peggle entry below.)
 - [x] Unit tests against known ARMv6 instruction-behavior vectors —
       `tests/cpu_test.cpp`, 27 tests, all hand-encoded real ARM instruction
       words (not synthetic/fake encodings), verified bit-field-by-bit-field
@@ -978,16 +980,26 @@ playable start-to-finish at full speed, standalone build.
       real static-base DBGPRINTF slot fix (offset `0x9c`, committed — see
       `core/brew/mod_runtime.h`), `CreateInstance` now runs real code
       to completion and returns a real, non-null applet pointer.
-      **Blocked on a new, different, more architectural gap**:
-      `HandleEvent(EVT_APP_START)` hits a real `BX`/`BLX` into
-      Thumb-mode code, which `core/cpu/arm_interpreter.cpp` doesn't
-      implement at all (ARM-only so far, ~600 lines) — Double Dragon's
-      `.mod` apparently never needed it. Implementing Thumb (T32)
-      decoding + ARM/Thumb interworking is a genuinely bigger,
-      architectural piece of work, deliberately not started this round
-      — see PHASE8_LOG.md for the full trace and reasoning, and pick
-      this up when ready to take on interpreter-level work rather than
-      HLE-gap fixes.
+      **Implemented Thumb (T16) decoding and ARM/Thumb interworking**
+      (`core/cpu/arm_interpreter.{h,cpp}`, 33 new tests in
+      `tests/thumb_test.cpp`) after `HandleEvent(EVT_APP_START)` hit a
+      real `BX` into Thumb code the interpreter couldn't execute at all
+      — Double Dragon's own `.mod` apparently never needed it. Covers
+      all 19 real Thumb1 instruction formats and real ARM/Thumb
+      interworking (BX/BLX in both states, Thumb `POP{pc}`, ARM
+      `LDR`/`LDM` into `pc`). Verified against real Peggle code:
+      `HandleEvent` now runs tens of thousands of real Thumb
+      instructions cleanly. That, plus two more real static-base slots
+      found the same way as every other gap in this project (offset
+      `0x44`, a second MEMCPY-equivalent; see `core/brew/mod_runtime.h`),
+      pushed real execution to ~25,800 steps before hitting a new, deeper
+      gap: a third real field (offset `0x2c`) on the shared "app
+      context" struct (the same struct the confirmed offset-`0xc0` slot
+      returns) that real code dereferences expecting an actual object,
+      not the zero it currently holds there. Not yet fixed — needs its
+      own investigation (what real interface this field is meant to
+      expose) rather than a guess. See PHASE8_LOG.md for the full trace
+      and reasoning.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

@@ -1302,10 +1302,94 @@ first.
 **Where this leaves the Peggle thread**: real ClsId found and verified;
 one real, general (not Peggle-specific) HLE gap found, fixed, tested,
 and committed, benefiting any future title that hits the same slot;
-`CreateInstance` now succeeds cleanly end-to-end. The concrete next
-steps, in the order they'd naturally come up, are: (1) implement Thumb
-(T32) decoding and ARM/Thumb interworking in the CPU interpreter, and
-(2) reverse-engineer `resources.bar`'s real format (only the `"PACK"`-
-style titles' container has been characterized at all so far; Peggle's
-own `resources.bar` header doesn't match any format checked yet). Both
-are real, separate, non-trivial pieces of work, not started this round.
+`CreateInstance` now succeeds cleanly end-to-end.
+
+**Implemented Thumb (T16) decoding and ARM/Thumb interworking.**
+`core/cpu/arm_interpreter.{h,cpp}` gained a full second decoder: all 19
+real instruction format groups from the ARM Architecture Reference
+Manual's Thumb instruction set summary, matched bit-for-bit against
+that public specification (the same kind of real-evidence grounding
+this whole log uses for BREW APIs, just against the CPU's own public
+ISA spec instead of a game binary) -- except software interrupt
+(format 17) and the two reserved condition codes in format 16
+(`0b1110`/`0b1111`), both of which raise `UnimplementedInstruction`,
+matching how ARM-state SWI is already handled. Also implemented real
+interworking per the ARMv5T+ rule ARMv6/ARM1136J-S includes: `BX`/`BLX`
+in both instruction states, Thumb's `POP{pc}`, and ARM's `LDR`/`LDM`
+loading directly into `pc` all now select ARM or Thumb from the target
+address's bit 0 (previously, ARM's `BX` to a Thumb target threw
+outright, and ARM's `LDR`/`LDM` into `pc` never checked bit 0 at all --
+both real gaps this closes, not just the one that blocked Peggle).
+33 new tests (`tests/thumb_test.cpp`), one per format plus interworking
+and two deliberately-chosen edge cases: the real, spec-defined "loaded
+value wins over writeback" rule for `LDM` with the base register in its
+own register list, and rejection of a real Thumb-2-only encoding
+(`SXTH`, `0xB200`) that's genuinely unassigned in the classic Thumb1
+ISA ARMv6 implements. Every encoding used in the tests was generated
+independently via a small Python script from the same bit-layout
+description cited in the implementation's own comments, then the two
+were cross-checked against each other -- not hand-copied into both
+places, to avoid the test oracle and the implementation sharing the
+same mistake.
+**Verified against the real game**: re-ran Peggle's `HandleEvent
+(EVT_APP_START)` -- it now executes real Thumb code for 25,003 steps
+before hitting the next real gap (previously: an immediate throw on the
+very first Thumb `BX`). All 234 tests (33 new Thumb tests plus every
+pre-existing test, none touched) pass.
+
+**Found two more real static-base gaps this same round, using the newly
+now-working Thumb decoder to trace further than was previously possible.**
+Both found via the same method as every other slot in this log: let
+real execution wander to `pc=0x00000000` (the standard "missing
+static-base slot" signature), find the exact call site through the
+confirmed table-fetch idiom (`ldr rX,[pc,#N]; add rX,pc,rX; ldr
+rX,[rX,#-4]`), and read real evidence (arguments, literals) directly
+out of the file's bytes.
+1. **Offset `0x44`, a second MEMCPY-equivalent.** The one real call
+   site unambiguously reachable through the confirmed table-fetch idiom
+   (`peggle.mod` offset `0xc718`) calls it with exactly memcpy's
+   calling convention -- `(dest=sp+28, src=sp+4, count=24)`, a plain
+   24-byte stack-struct copy -- and its return value is read
+   immediately after, matching `void *memcpy(dest,src,n)`'s "returns
+   dest" contract too. (A second, coincidentally-same-numbered access
+   at a different call site turned out to be an unrelated object's own
+   vtable slot, not this table -- ruled out by checking for the
+   table-fetch idiom specifically, not just the numeric offset.) Most
+   likely a real ARM EABI helper symbol (e.g. `__aeabi_memcpy`) a
+   compiler can emit separately from user-callable `memcpy` for
+   compiler-generated struct copies, but behaviorally identical --
+   wired to the same `MemcpyImpl`, one new test confirms the alias
+   behaves identically to the original slot. Committed alongside the
+   Thumb work.
+   **Verified against the real game**: real execution now reaches
+   25,833 steps before the next gap (up from 25,003).
+2. **Found, not yet fixed: a third real field on the shared "app
+   context" struct.** The confirmed offset-`0xc0` slot (documented
+   earlier in this log as returning a struct with `IShell` at `+12` and
+   `IDisplay` at `+20`) has a third real field, `+0x2c` (44), that real
+   Peggle code reads and dereferences expecting an actual object: `r0 =
+   context[0x2c]; r2 = *r0; r3 = *(r2+4); r2 = r3+r2; bx r2` (module
+   offset `0xafb4`-`0xafc8`) -- a vtable-style call, though the final
+   `r3+r2` addition is an unusual shape worth understanding properly
+   (possibly a relative/position-independent vtable entry, not a plain
+   absolute function pointer) before implementing anything. Our context
+   struct only ever writes `+12`/`+20`, so `+0x2c` reads back `0`,
+   `*0` also reads `0` (our `Memory` returns 0 for unmapped addresses),
+   and the final `bx r2` (r2 still `0` after the chain) is what lands
+   back on the familiar `pc=0x00000000` signature. Deliberately not
+   guessed -- what real interface this field is meant to expose isn't
+   yet known (candidates worth checking against the bundled real BREW
+   SDK reference material: some other ambient/shell-adjacent interface
+   `AEEApplet`-style context structs commonly carry) -- tracked as the
+   concrete next step.
+
+**Where this leaves things now**: the CPU interpreter itself is no
+longer the blocker for Peggle -- everything remaining is back to the
+same kind of HLE-gap, real-evidence-grounded work every other entry in
+this log describes. Next concrete steps, in order: (1) understand and
+implement the `+0x2c` context field, (2) continue iterating on whatever
+real gaps show up after that the same way, (3) separately,
+reverse-engineer `resources.bar`'s real format (still not started;
+Peggle's own header doesn't match any known public format checked so
+far) -- needed before Peggle can get past its own asset loading the way
+Double Dragon did.
