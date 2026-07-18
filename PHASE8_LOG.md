@@ -1469,3 +1469,81 @@ title in this log has been debugged; (2) separately, reverse-engineer
 `resources.bar`'s real format (still not started; Peggle's own header
 doesn't match any known public format checked so far) -- needed before
 Peggle can load its own real assets the way Double Dragon does.
+
+---
+
+**Ran (1) -- no new crash across thousands of real ticks.** Let the
+tool run for 60+ real seconds (thousands of 16ms ticks) past the point
+`HandleEvent(EVT_APP_START)` first succeeded. Confirmed indirectly
+rather than by reading direct output (stdout is fully buffered when
+redirected to a file, and the process is killed by an external
+`timeout` rather than exiting -- so buffered output past the initial
+setup lines is lost, the same trap the "false-alarm hang" entry above
+already ran into): the process consistently required *external*
+termination to stop. Every real error path in
+`tools/game_probe.cpp`'s tick loop (`wandered_outside_module`,
+`exceeded_step_budget`, a thrown `UnimplementedInstruction`) sets
+`running = false` and lets the tool exit on its own -- so a process
+that only stops when killed from outside, never on its own, is
+consistent with (though not direct proof of) clean, uninterrupted
+success across all of those ticks.
+
+**Started (2), `resources.bar`'s real format -- made real progress on
+*what* it is, not yet *how it's laid out on disk*.** Found the real
+call site the same way as every static-base slot in this log: found
+`"resources.bar"` as a real string thrice in `peggle.mod` (`0x3cdc8`,
+`0x3d280`, `0x3ec64`), then wrote a small script scanning the whole
+binary for the confirmed "PC-relative literal, add pc" idiom to find
+which real code computes each string's address -- two real call sites
+resolved cleanly (`peggle.mod` offsets `0x8ed0` and `0xa688`).
+Disassembling the first's surrounding function (`0x8e90`-`0x8eec`)
+shows it's **not a custom file-reading routine at all** -- it's a real
+call through the confirmed `ISHELL` vtable (offset `0xc0`'s ambient
+context struct, `+12` for the `IShell` pointer, then the real object's
+own vtable at slot `0xa4`/41), with a five/six-argument shape: `(pIShell,
+"resources.bar", id=r4&0xFFFF, type=0x5000, [sp]=0xFFFFFFFF, [sp+4]=
+&local)`. Cross-referencing the real bundled `AEEShell.h` identifies
+every piece of this precisely: `RESTYPE_BINARY` is literally defined as
+`0x5000`; `AEE_RES_EXT` is literally defined as `".bar"` -- "Extension
+of BREW Application Resources"; and the exact `(p,psz,id,t,b=-1,l)`
+argument shape matches the real documented macro `ISHELL_GetResSize`,
+`#define ISHELL_GetResSize(p,psz,id,t,l) (IShell_LoadResDataEx((p),
+(psz),(id),(t),(void*)-1,(l)), *l)` -- the `-1` buffer sentinel is the
+real, documented way to ask "just tell me the size, don't copy the
+data." So: `resources.bar` is confirmed to be a **standard BREW
+application resource file**, not anything Peggle-specific -- the exact
+same real mechanism any BREW app's `.bar` resource file uses, just
+happening to share a name with (and be otherwise unrelated to) PopCap's
+own differently-shaped "BAR" archives on other platforms (ruled out
+firmly this time, not just "doesn't match a public spec" as noted
+earlier probing this file).
+**Where this hits a real, structural limit the rest of this log hasn't
+run into**: every other format/API this project has reverse-engineered
+so far had its *implementation* inside a real, disassemblable `.mod` --
+GGZ's reader, the static-base runtime-support table, every `IFile`/
+`IShell` HLE call. `ISHELL_LoadResDataEx`'s real implementation lives in
+the Zeebo device's own closed OS/firmware, not in `peggle.mod` at all
+-- there is no compiled code in this repo's possession that parses the
+real `.bar` binary layout. Cracking the format therefore needs a
+different method than the rest of this log: blind, evidence-anchored
+byte analysis of the raw file, verified against a known (resource ID,
+real size) pair -- not disassembly of a caller. Tried to get that
+anchor by tracing the real requested resource ID at the one real call
+site found: neither of the two confirmed call sites (`0x8ed0`,
+`0xa688`) is reached by `CreateInstance`, `HandleEvent(EVT_APP_START)`,
+or the first several real ticks driven the same blind way as
+everything else in this log -- meaning Peggle's real code only reaches
+its own resource-loading path under some game state (a specific menu,
+level, or asset category) not yet reached by driving ticks alone.
+**Deliberately stopped here rather than guess the byte layout blind**:
+without a real (ID, size) pair to check candidate structures against,
+attempting to parse `resources.bar`'s directory now would be
+undirected guessing -- exactly the kind of "wrong implementation risks
+trading a clean, diagnosable failure for silent data corruption" this
+log has avoided everywhere else. Tracked as the next concrete step,
+either by finding what real game state reaches the resource-load call
+(more disassembly of the surrounding real control flow), or by
+resuming the raw byte analysis already started on the file's first 128
+bytes (a plausible small header/count field around offset 0, then what
+looks like a directory table with irregular strides starting around
+offset `0x2c` -- not yet confirmed against any real value).

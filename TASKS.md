@@ -1013,6 +1013,26 @@ playable start-to-finish at full speed, standalone build.
       reasoning, including a detour where a long stretch of no visible
       output was first mistaken for a hang before being confirmed as
       the tool's own correct, by-design infinite event loop.
+      Ran Peggle for many further real ticks (thousands, over 60+ real
+      seconds) with no new crash — confirmed indirectly (the process
+      needed external termination rather than exiting on its own, which
+      only happens on success; any real error sets `running=false` and
+      returns cleanly). Started reverse-engineering `resources.bar`:
+      found via real disassembly that it's opened through the real
+      `ISHELL` vtable (not a custom parser), and cross-referencing the
+      call's exact register arguments (`RESTYPE_BINARY=0x5000`, a
+      buffer of `-1`) against the real bundled `AEEShell.h` identifies
+      it precisely as `ISHELL_GetResSize`/`IShell_LoadResDataEx` — i.e.
+      `resources.bar` is a **standard BREW application resource file**
+      (`AEE_RES_EXT`), not a Peggle-specific format. Its real *binary*
+      layout is still uncracked, though: unlike every other format in
+      this project, its reader lives in the real device's own
+      OS/firmware, not in any `.mod` we can disassemble, so cracking it
+      needs blind, evidence-anchored byte analysis instead — deliberately
+      not guessed further without a known (resource ID → size) pair to
+      verify against first (the one real call site found isn't reached
+      by blindly driving ticks; needs its own investigation for how
+      Peggle actually reaches it). See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
