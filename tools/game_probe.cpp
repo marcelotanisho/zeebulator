@@ -623,6 +623,37 @@ int main(int argc, char** argv) {
   // here, after that real reset instead of before it, is what makes it
   // stick for the real per-tick reads that follow.
   cpu.GetMemory().Write32(kFourthContextObject + 0x45000 + 0x3d8, unknown_arena_0x453d8_obj);
+  // A sibling arena field, `+0x45000+0x3dc` (immediately after the one
+  // above), found tracing why Peggle's steady-state per-tick loop never
+  // varies (TASKS.md Phase 8): real code (`peggle.mod` offset
+  // 0x132df0-0x132df4, called from the timer callback every single
+  // tick) reads it and passes it, unconditionally and un-null-checked,
+  // as `this` into a real subroutine (offset 0x109088) that immediately
+  // dereferences it (`ldr r0,[r0,#4]`, `str r0,[r5,#4]`, `ldr
+  // r0,[r5,#12]`, then `ldr r0,[r0]`). Left at 0 (this codebase's
+  // default), that subroutine operates on a real null pointer every
+  // tick -- our emulator's memory model tolerates that silently rather
+  // than faulting, but it means every one of those accesses reads or
+  // writes real, meaningful low addresses (0, 4, 0xc, ...) instead of
+  // this field's own memory, which is real, evidenced address-0
+  // pollution risk, not simulation of anything real. This struct's real
+  // element layout (offset +4 looks like a call counter; +12 looks like
+  // a pointer to a small, up-to-4-element array whose entries are read
+  // at large offsets like +0xbc/+0xdc) is not understood well enough to
+  // populate meaningfully -- likely Peggle's own internal per-tick game
+  // data, not a generic BREW interface, and a materially bigger
+  // reverse-engineering task than every other field fixed so far. So,
+  // rather than guess at that real layout, this gets the same safe,
+  // conservative treatment as the fourth field's own arena allocation
+  // itself: a real, writable, zeroed memory block, just enough to stop
+  // the real null-pointer accesses from landing on unrelated low
+  // addresses. This does NOT change what the real subroutine does (a
+  // zeroed block still reads as "empty" at every offset checked, so it
+  // still takes the same do-nothing branch) -- it only isolates the
+  // read/write pattern safely, and is not expected to unblock further
+  // real progress on its own.
+  constexpr uint32_t kArena0x3dcBlock = 0x80050000;
+  cpu.GetMemory().Write32(kFourthContextObject + 0x45000 + 0x3dc, kArena0x3dcBlock);
 
   std::printf("Reached the event loop with no unhandled instruction! Window will stay open.\n");
   bool running = true;
