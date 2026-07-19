@@ -436,31 +436,47 @@ int main(int argc, char** argv) {
   // so deliberately kept local to this tool rather than promoted to
   // scaffold_object.h.
   //
-  // Confirmed working for two real chained levels (verified via live
-  // trace), then hit a real, different-in-kind wall this mechanism
-  // can't paper over: a real caller reads offset 0x30 *directly* off
-  // one of these returned objects (`ldr r3,[r1,#0x30]`), not through
-  // `*object` the way every vtable call up to this point has -- i.e.
-  // it expects a flat struct with a real function pointer embedded at
-  // a specific fixed offset, not another vtable object. Left as-is
-  // (harmlessly reads 0 there and reports the same clean, diagnosable
-  // wander as before) rather than guessed at -- the next concrete step
-  // for whoever picks this back up.
+  // Initially built every one of the 40 slots this same self-propagating
+  // way, which appeared to work for two chained levels before hitting a
+  // wall where a real caller read offset 0x30 off what looked like one of
+  // these objects directly rather than through its vtable -- but full
+  // register-level tracing (temporary, reverted) of that exact call chain
+  // (peggle.mod offsets 0x1099e0-0x109aac) showed that was a misdiagnosis:
+  // the real bug is that only real slot 2 uses the (this, id, ppOut@r2)
+  // shape above. Real slot 3 is a *different*, also-real shape --
+  // (this, ppOut@r1), no id argument (confirmed at peggle.mod offset
+  // 0x109a98: `ldr r0,[fp]; add r1,sp,#0x24; ldr r2,[r0,#0xc]; mov
+  // r0,fp; bx r2`) -- and other real slots (e.g. slot 4, confirmed at
+  // offset 0x109a00) are called with no output pointer at all, just
+  // leftover garbage sitting in r1/r2 from earlier code. Blindly writing
+  // a fresh object into r2 for every slot corrupted whatever r2 happened
+  // to hold for those other calls -- including, once, real address 0 --
+  // and it was real code later reading back that corrupted memory (not a
+  // third real object convention) that produced the offset-0x30 wall.
+  // Fixed by only special-casing the two real, evidenced shapes (slot 2
+  // via r2, slot 3 via r1, each skipped if the pointer is null -- a real
+  // "just checking, don't return anything" pattern also observed at
+  // peggle.mod offset 0x109a94's `bl 0x105b50` with r1=r2=0) and leaving
+  // every other slot a plain, side-effect-free stub.
   uint32_t next_self_propagating_addr = 0x80030000;
   std::function<uint32_t()> build_self_propagating_stub =
       [&cpu, &hle, &next_self_propagating_addr, &build_self_propagating_stub]() -> uint32_t {
     uint32_t vtable_addr = next_self_propagating_addr;
     uint32_t object_addr = next_self_propagating_addr + 0x800;
     next_self_propagating_addr += 0x1000;
-    std::vector<zeebulator::HleRuntime::HleFunction> methods(40);
-    for (auto& method : methods) {
-      method = [&cpu, &build_self_propagating_stub](zeebulator::IArmCore& core) {
-        uint32_t out_ptr = core.GetRegister(zeebulator::kR2);
-        uint32_t child = build_self_propagating_stub();
-        cpu.GetMemory().Write32(out_ptr, child);
+    auto propagate_into = [&cpu, &build_self_propagating_stub](zeebulator::ArmRegister out_reg) {
+      return [&cpu, &build_self_propagating_stub, out_reg](zeebulator::IArmCore& core) {
+        uint32_t out_ptr = core.GetRegister(out_reg);
+        if (out_ptr != 0) {
+          cpu.GetMemory().Write32(out_ptr, build_self_propagating_stub());
+        }
         core.SetRegister(zeebulator::kR0, 0);
       };
-    }
+    };
+    std::vector<zeebulator::HleRuntime::HleFunction> methods(
+        40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
+    methods[2] = propagate_into(zeebulator::kR2);
+    methods[3] = propagate_into(zeebulator::kR1);
     return zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, vtable_addr, object_addr,
                                              methods);
   };
