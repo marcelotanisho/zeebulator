@@ -1107,6 +1107,28 @@ playable start-to-finish at full speed, standalone build.
       a new, not-yet-individually-traced call site. See PHASE8_LOG.md
       for the full trace evidence; continuing to chase the new wander
       point the same way is the next concrete step.
+      **Chased that new wander point and it was a real gap this
+      codebase already knew how to fill**: real code at `peggle.mod`
+      offset `0x132dfc` reads a **fifth confirmed field on the shared
+      app context struct, offset `+0x28`**, with no null check, and
+      calls through it using the exact same ROPI relative-vtable
+      convention already implemented for the third field (`+0x2c`).
+      Added `ModRuntime::SetFifthContextObject` (an exact mirror of
+      the third field's setter) and wired it to the same kind of
+      relative-vtable scaffold. **Verified — this is the milestone the
+      whole Peggle investigation has been chasing**: the timer callback
+      now runs tick after tick with zero wander warnings and zero
+      thrown exceptions, confirmed both via ten traced clean ticks and
+      a 60-second unbounded run that needed external termination
+      rather than exiting on its own — the same "success looks like a
+      hang" signature already trusted for Double Dragon's own steady
+      state. This is *sustained* execution, not necessarily *correct*
+      execution yet: most vtable slots on every placeholder object
+      involved are still safe no-ops, and nothing has driven visible
+      output to the window. The next concrete step is determining
+      whether real game state (level/resource loading, a rendered
+      frame) is actually progressing over many ticks, or just looping
+      harmlessly on placeholders. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

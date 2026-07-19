@@ -1799,3 +1799,62 @@ lived in a since-expired scratch directory) to re-run the probe; not
 committed, since `tools/game_probe.cpp` already documents how to
 construct one and it's a throwaway harness input, not project source.
 241 tests pass.
+
+---
+
+**Chased the new, later wander point from the previous fix -- and it
+was a real gap this codebase already knows how to fill.** Re-enabled
+full register tracing for tick 0 (temporary, reverted) and found the
+new `pc=0` wander (at step 6312, up from 3155) came from real code at
+`peggle.mod` offset `0x132dfc`: `ldr r0,[r4,#0x28]` (`r4` = the app
+context address) with **no null check** before immediately calling a
+small real subroutine at offset `0x131fac` with that value. That
+subroutine (`ldr r1,[r4]; ldr r2,[r1]; add r2,r2,r1; bx r2`, after
+first calling `GETAPPCONTEXT` to get `r0`/context again) is the exact
+same ARM RVCT "ROPI" relative-vtable dispatch already confirmed and
+implemented for the context struct's third field (`+0x2c`) -- i.e.
+this is a **fifth confirmed field on the same shared app context
+struct, offset `+0x28`**, using a convention this codebase already has
+a scaffold for.
+
+Checked whether this field needed the same write-timing care as the
+fourth field's arena (a `Memory::Write8` watchpoint on
+`context_address + 0x28`, temporary, reverted): real code never writes
+it at all across the whole run -- purely read, never written, unlike
+the arena's internal reset. And unlike the fourth field's arena
+object, `GetAppContextImpl` already rewrites the *entire* context
+struct fresh on every real `GETAPPCONTEXT` call (confirmed by reading
+its own source, `core/brew/mod_runtime.cpp`), so there was no
+write-timing hazard to work around here.
+
+**Fix**: added `ModRuntime::SetFifthContextObject`, an exact mirror of
+`SetThirdContextObject`, and wired it in `tools/game_probe.cpp` to
+another `BuildGenericRelativeVtableStubObject` scaffold (its real
+identity is just as unknown as the third field's).
+
+**Verified against real Peggle -- this is the milestone the whole
+Peggle investigation has been chasing**: the timer callback now runs
+tick after tick with zero "wandered outside module" warnings and zero
+thrown exceptions. Confirmed two ways: (1) a 15-second run with per-
+tick HLE tracing enabled through tick 9 shows ten consecutive clean
+ticks, each ending with the same real call sequence and no errors; (2)
+an unbounded 60-second run needed external `timeout` termination
+rather than exiting on its own -- the exact same "success looks like a
+hang" signature already established and trusted for Double Dragon's
+own steady-state event loop (every real error path in
+`tools/game_probe.cpp`'s loops sets `running=false` and exits cleanly
+on its own; nothing here does). Committed (`473758e`). 241 tests pass.
+
+**Not yet done, and the natural next steps**: this is real *sustained*
+execution, not necessarily real *correct* execution -- the third and
+fifth context fields, the fourth field's arena beyond its one known
+sub-offset, and every non-slot-2/3 method on the self-propagating
+stub's generated objects are all still safe no-op placeholders, so
+there's no guarantee real game logic (physics, scoring, resource
+loading) is actually progressing rather than looping harmlessly. There
+is also no visible output yet -- nothing has driven a real frame to
+the SDL window. The next concrete step is watching (or tracing) what
+the game actually *does* over many ticks: does real state visibly
+change (level data loading, `resources.bar` finally being opened, a
+frame rendered), or is it looping in place on placeholder objects that
+never deliver real content forward.
