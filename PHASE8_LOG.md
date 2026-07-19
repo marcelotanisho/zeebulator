@@ -2041,3 +2041,85 @@ header dump than exists anywhere this search found, or continued
 structural tracing of the real methods called on whatever object a
 correct implementation would return -- the same evidence-only approach
 used for every other interface in this project so far.
+
+---
+
+**Took the "continued structural tracing" option: full instruction
+trace of one steady-state tick, to see what real code branches on.**
+Re-enabled full per-instruction tracing for one representative tick
+(temporary, reverted after). The very first thing the timer callback
+does, every single tick, is real (`peggle.mod` offset `0x132de4`-
+`0x132df4`): read `context[0x24]+0x45000+0x3dc` -- an immediate
+sibling of the already-provisioned `+0x3d8` field, 4 bytes later,
+confirmed reachable via two independent real functions now (this one,
+and the `0x01030766` call site's own neighbor function from the
+previous round) -- and pass it, completely un-null-checked, as `this`
+into a real subroutine at offset `0x109088`.
+
+That subroutine immediately dereferences its `this` parameter multiple
+times: `ldr r0,[r0,#4]` (read), `str r0,[r5,#4]` (write back,
+incremented -- a real per-tick call counter), `ldr r0,[r5,#12]` (read
+a second field, presumably an array pointer), then `ldr r0,[r0]`
+(dereference *that*). With the field left at 0 (this codebase's
+default for anything unprovisioned), every one of those accesses reads
+or writes **real, meaningful low memory addresses** -- confirmed via
+the trace that real address 4 was getting a real incrementing counter
+value written to it, every single tick, and real address 0 was being
+read back through the chained double-dereference. This is real,
+evidenced pollution of memory that has nothing to do with this field,
+not simulated behavior of anything real -- exactly the kind of subtle
+risk this log has flagged before ("a wrong implementation here risks
+trading a clean, diagnosable failure for silent data corruption"),
+except here the risk isn't hypothetical, it's directly observed.
+
+**What this subroutine's real elements look like isn't understood well
+enough to populate meaningfully**: offset `+4` is a real call counter,
+`+12` looks like a pointer to a small (`<=4`-element, per a `cmp
+r4,#4` loop bound) array, each element read at large offsets (`+0xbc`,
+`+0xdc`) relative to a `4`-byte stride that doesn't obviously match a
+`0xbc`+-byte struct -- consistent with this being **Peggle's own
+internal per-tick game-object list** (particles, pegs, whatever),
+anchored in the shared arena the same way the BREW-interface fields
+are, rather than a generic BREW interface at all. Fully understanding
+it would mean reverse-engineering Peggle's own gameplay data layout,
+a materially bigger and more speculative undertaking than every other
+field fixed in this investigation so far, all of which have been
+identifiably generic BREW/ambient-context mechanisms.
+
+**Fix, deliberately conservative**: rather than guess at that real
+layout, gave this field the exact same treatment already used for the
+fourth field's own arena allocation itself -- a real, writable, zeroed
+memory block (`0x80050000`), just enough that the real accesses land
+on memory that actually belongs to this field instead of colliding
+with unrelated real addresses. This does **not** change what the real
+subroutine does: a zeroed block still reads as "empty" at every offset
+checked, so the same do-nothing branch is still taken every tick --
+this is a hygiene/isolation fix, not a claimed progress unlock.
+
+**Verified** via a full re-trace: `this` now resolves to `0x80050000`
+instead of `0`, and the per-tick counter write correctly lands on
+`0x80050004` instead of real address `4`. The double-dereference
+(`ldr r0,[r5,#12]; ldr r0,[r0]`) still incidentally reads real address
+`0` once, because this field's own `+12` slot is legitimately null (an
+empty array, unknown real content) -- expected, harmless (the result
+only feeds a `cmp`/`beq`, never a jump target), and not something
+further guessing could safely improve. Committed (`47bfbf6`). 241
+tests pass; a 30-second run against real Peggle remains stable (no
+wander, no exception, needs external termination -- same steady-state
+signature as before this fix).
+
+**Overall state of the Peggle investigation**: the per-tick steady
+state is now real, evidence-traced, and clean (no known memory
+pollution), but it is still confirmed to be a fixed loop that never
+progresses to real game logic (resource loading, rendering). The
+concrete blocker is unchanged from two rounds ago: the loop's own real
+ID constant (`0x0101eb0b`) has no identified real meaning anywhere
+this project has looked (headers, other real `.mod` binaries, general
+web search). Making further progress from here most likely requires
+either a real BREW MP SDK header dump this project doesn't have access
+to, or a much larger, Peggle-specific reverse-engineering effort into
+its own per-tick game-object data (the `arena+0x45000+0x3dc` structure
+found this round) -- both bigger asks than the incremental, evidence-
+grounded fixes this log has made so far, and a reasonable point to
+pause this specific investigation thread pending either new evidence
+or a decision to invest in the larger effort.

@@ -1168,6 +1168,38 @@ playable start-to-finish at full speed, standalone build.
       still has no header match; identifying it is the next concrete
       step, likely needing either a fuller real BREW MP header set or
       more structural tracing. See PHASE8_LOG.md for full evidence.
+      **Web search for `0x0101eb0b` and the other unidentified IDs came
+      up empty** — no public source has any of them. A promising-
+      looking lead, the closed-source third-party "Infuse" Zeebo
+      emulator, turned out to have no referenceable code (proprietary,
+      no-redistribution license) and doesn't target these games anyway;
+      no public Zeebo firmware/system dump was found anywhere either.
+      This specific lead is exhausted.
+      **Took the structural-tracing option instead**: a full
+      instruction trace of one steady-state tick found the very first
+      real action every tick is reading a sibling arena field,
+      `context[0x24]+0x45000+0x3dc` (next to the already-provisioned
+      `+0x3d8`), and passing it un-null-checked into a real subroutine
+      that dereferences it repeatedly — with it left at 0, this was
+      confirmed writing a real per-tick counter to real address 4 and
+      reading real address 0 back, i.e. genuine memory pollution, not
+      simulated behavior. This field's own real layout looks like
+      Peggle's own internal per-tick game-object data (not a generic
+      BREW interface) and wasn't safe to guess at, so it got the same
+      conservative treatment as the fourth field's own arena
+      allocation: a real, isolated, zeroed memory block. **Verified**:
+      the real accesses now land on that isolated block instead of real
+      low memory; steady-state behavior is otherwise unchanged (still
+      the same do-nothing branch every tick) — a hygiene fix, not a
+      progress unlock. 241 tests pass; Peggle remains stable.
+      **This is a reasonable pause point for this investigation
+      thread**: the per-tick loop is now real, evidence-traced, and
+      free of known memory pollution, but still doesn't progress past
+      its fixed steady state. Further progress needs either a real
+      BREW MP SDK header dump this project doesn't have access to, or a
+      much larger, Peggle-specific reverse-engineering effort into its
+      own per-tick game data — both bigger asks than the incremental
+      fixes made so far. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
