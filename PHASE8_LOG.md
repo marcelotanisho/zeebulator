@@ -1858,3 +1858,65 @@ the game actually *does* over many ticks: does real state visibly
 change (level data loading, `resources.bar` finally being opened, a
 frame rendered), or is it looping in place on placeholder objects that
 never deliver real content forward.
+
+---
+
+**Answered that question directly: it's looping in place, not
+progressing.** Added temporary debug prints (reverted after use, no
+source changes remain) to every real "does something visible/external"
+HLE call this codebase has -- `IDisplayHle::DrawText`/`DrawRect`/
+`SetColor`/`Update`, `FileHle::OpenFileImpl`, and
+`IShellHle::CreateInstanceImpl`'s unknown-class failure path -- then
+ran real Peggle for 30 real seconds (roughly a thousand-plus real
+ticks, going by the ~16-20ms real timer interval).
+
+**Result**: only five real events fired in the *entire* 30-second run,
+all during the one-time `CreateInstance`/`HandleEvent(EVT_APP_START)`
+setup, none afterward: `OpenFile("udata/game", mode=1)` (read, fails),
+`OpenFile("udata/game", mode=2)` (read/write, fails),
+`OpenFile("udata/game", mode=4)` (create, presumably succeeds --
+a real "load save data, create if missing" pattern), and two real
+`CreateInstance` requests for classes this codebase doesn't implement
+(`ClsId=0x0103d8ec`, `ClsId=0x01030766` -- real, evidenced leads for a
+future round, not chased further this round). **Zero** `DrawText`/
+`DrawRect`/`Update`/`SetColor` calls the entire run -- the game never
+draws anything -- and **zero** further file opens once ticking began,
+including no attempt to open `resources.bar` itself.
+
+Cross-checked by diffing the full per-tick HLE call trace (all 20 real
+calls, trap addresses and register arguments both) between tick 1 and
+tick 5 of a separate traced run: **identical**, except for one
+incidental pointer value differing by 16 bytes (not a growing
+self-propagating-stub address -- those grow by 0x1000 per new object
+-- so almost certainly stack/heap noise, not real state). Tick 1 and
+tick 5 execute the exact same 20 HLE calls in the exact same order
+with the exact same arguments.
+
+**Conclusion**: the sustained, exception-free execution from the
+previous two fixes is real, but it is a **fixed loop over placeholder
+objects**, not real game logic progressing. The timer callback re-arms
+itself and re-runs the same ~20-call sequence every tick indefinitely
+-- consistent with the callback polling something (most likely one of
+the still-unidentified interfaces behind the third/fifth context
+fields' relative-vtable placeholders, or a sub-offset of the fourth
+field's arena beyond the one confirmed `+20` gate) that our safe
+no-op stubs can never report as "ready," so the real code that would
+follow (loading `resources.bar`, drawing a frame) never runs. This is
+the expected, honest limit of the "safe generic placeholder" approach
+this whole investigation has used -- unblocking gates one confirmed
+field at a time gets real code *running*, but getting it to do
+something *meaningful* needs the placeholders' real identities, which
+aren't known yet.
+
+**Next concrete step for whoever continues this**: identify what the
+third/fifth context fields' relative-vtable objects and the
+self-propagating stub's non-2/3 slots are actually being asked for --
+in particular, the literal ID constant baked into the module at the
+confirmed slot-2 QueryInterface call (`0x0101eb0b`, `peggle.mod`
+offset `0x1099f0`) is a real compile-time constant, and cross-
+referencing it (and the two unknown `ClsId`s found this round) against
+real BREW/Zeebo headers or other real `.mod` binaries already in
+`research/` may reveal what real interface is actually being asked
+for, the same way earlier class IDs in this project were identified.
+All temporary debug prints reverted -- confirmed via clean `git diff`.
+241 tests pass (no source changes to test).

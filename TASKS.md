@@ -1129,6 +1129,27 @@ playable start-to-finish at full speed, standalone build.
       whether real game state (level/resource loading, a rendered
       frame) is actually progressing over many ticks, or just looping
       harmlessly on placeholders. See PHASE8_LOG.md for full evidence.
+      **Checked directly (temporary instrumentation, reverted): it's
+      looping harmlessly.** A 30-second real run fired only five real
+      "does something visible/external" events (`DrawText`/`DrawRect`/
+      `Update`/`SetColor`, file opens, unknown-class `CreateInstance`
+      requests) total, all during one-time startup, none afterward —
+      zero draws the entire run, zero further file opens (including no
+      attempt at `resources.bar`). Diffing the full per-tick HLE trace
+      between tick 1 and tick 5 confirmed it: the exact same 20 calls,
+      same order, same arguments, every tick. The sustained execution
+      is real, but it's a fixed loop over placeholder objects, not real
+      game logic — most likely polling one of the still-unidentified
+      interfaces (the third/fifth context fields, or the fourth field's
+      arena beyond its one confirmed sub-offset) that our safe no-op
+      stubs can never report "ready," so it never falls through to real
+      resource loading or rendering. Next lead: a real, literal ID
+      constant baked into the module at the confirmed slot-2
+      QueryInterface call (`0x0101eb0b`) plus two unknown real `ClsId`s
+      surfaced this round — cross-referencing these against real BREW/
+      Zeebo headers or other `.mod` binaries in `research/` may reveal
+      what real interface these placeholders should actually be. See
+      PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
