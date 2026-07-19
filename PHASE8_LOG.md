@@ -1920,3 +1920,83 @@ real BREW/Zeebo headers or other real `.mod` binaries already in
 for, the same way earlier class IDs in this project were identified.
 All temporary debug prints reverted -- confirmed via clean `git diff`.
 241 tests pass (no source changes to test).
+
+---
+
+**Chased the cross-referencing lead from the previous round.** This
+repo's own reference BREW header subset
+(`research/docs/sdk_installer_extract/brew_sdk_headers_reference/`) is
+small (13 files) and had no exact match for any of the three IDs
+(`0x0101eb0b`, `0x0103d8ec`, `0x01030766`), but it did establish the
+real numeric convention: `AEEIID_IBase`/`AEEIID_IDisplay` are
+`0x0103xxxx`, `AEECLSID_DISPLAY*`/`AEECLSID_DISPLAY_NULL` are
+`0x0101xxxx` -- both unknown IDs sit squarely in those same real
+families, consistent with being genuine platform-allocated IDs rather
+than app-private ones.
+
+More useful: a binary literal search (`struct.pack("<I", id)`) across
+every real `.mod`/binary already in `research/games/` found
+`0x0103d8ec` is **not Peggle-specific** -- it also appears in
+`Super BurgerTime/mod/279125/supbtime.mod`. Disassembling both real
+call sites (`peggle.mod` offset `0x104a50`-`0x104aa0`;
+`supbtime.mod` offset `0x110e64`-`0x110ef4`) shows the **exact same**
+real instruction sequence in both, independently-compiled titles: an
+`AddRef`-shaped call on a real `IShell` pointer, then
+`ISHELL_CreateInstance(pShell, 0x0103d8ec, &slot)`, and -- only if
+that fails (`cmp r0,#0; beq ...`) -- a second attempt with a different
+real ClsId (`peggle.mod` literal at offset `0x104ac8` = `0x01014bc4`;
+confirmed identical at `supbtime.mod` offset `0x110f24`). Two
+independently-compiled real games trying the exact same two literal
+class IDs in the exact same fallback order is strong evidence this is
+a real, standard SDK/compiler-emitted helper -- not anything
+Peggle-specific -- even without a header match.
+
+A third real ClsId, `0x01030766` (`peggle.mod` offset `0x10a208`-
+`0x10a24c`), was found and traced separately: reached via a real
+`IShell` pointer read from offset `+12` of the calling function's own
+struct parameter (the same confirmed Shell-field layout as the ambient
+app context struct), with `ISHELL_CreateInstance`'s result stored
+**unconditionally** (no failure check at all) into that struct's own
+offset `+0x48`.
+
+**Fix**: registered all three with the same generic
+`BuildGenericStubObject` scaffold already established for the
+analogous `0x01002001` case (Double Dragon investigation, this same
+log, above) -- deliberately not guessing at a real interface shape
+neither header evidence nor call-site evidence actually supports yet.
+Committed (`3045852`).
+
+**Verified against real Peggle**: tick 0's total HLE call count
+dropped from 340 to 331, consistent with the real fallback-
+`CreateInstance` attempt now being skipped since the primary succeeds
+-- confirming the fix took effect exactly as the real disassembly
+predicts. **However**: the steady-state per-tick loop (tick 1 onward)
+is completely unchanged -- still the exact same 20 real calls, same
+order, verified by diffing the full trace before and after this fix.
+**This rules out all three of these classes as the cause of the
+per-tick progress plateau** documented in the previous round -- they're
+one-time startup calls, not part of whatever the steady-state loop is
+actually polling.
+
+While tracing `0x01030766`'s call site, incidentally found a further,
+adjacent real lead worth recording rather than chasing this round:
+immediately after it (`peggle.mod` offset `0x10a254`), a separate real
+function calls `GETAPPCONTEXT`, reads `context[0x24]` (the confirmed
+arena base), and reads `arena+0x45000+0x3dc` -- four bytes past the
+already-confirmed, already-provisioned `+0x3d8` sub-offset. This looks
+like a sibling slot in the same small run of pointer-sized arena
+fields, but reachability from the actual steady-state loop wasn't
+confirmed this round (this function wasn't observed in any of the
+traced ticks), so it wasn't provisioned -- a candidate for a future
+round, not a confirmed blocker.
+
+**Not yet resolved**: the actual per-tick blocker. The steady-state
+loop's own real ID constant (`0x0101eb0b`, queried every tick via the
+confirmed slot-2 QueryInterface shape on the fourth field's arena
+sub-object) still has no header match and wasn't chased further this
+round beyond the header/binary cross-reference above (also no match).
+Identifying it likely needs either a fuller real BREW MP SDK header
+set than this repo currently has, or continuing to trace structurally
+-- what real methods get called on whatever object a real
+implementation would eventually return -- the same way the context
+struct's Shell/Display fields were originally identified.

@@ -1150,6 +1150,24 @@ playable start-to-finish at full speed, standalone build.
       Zeebo headers or other `.mod` binaries in `research/` may reveal
       what real interface these placeholders should actually be. See
       PHASE8_LOG.md for full evidence.
+      **Chased that lead**: no header match for any of the three IDs in
+      this repo's (small, 13-file) reference BREW header subset, but a
+      binary search across every real `.mod` in `research/games/` found
+      ClsId `0x0103d8ec` is **not Peggle-specific** — the exact same
+      real `ISHELL_CreateInstance(0x0103d8ec)`-then-fallback-to-
+      `0x01014bc4` instruction sequence, both literal IDs included,
+      appears verbatim in Super BurgerTime's own `.mod` too — strong
+      evidence of a real, standard SDK-emitted helper. Registered
+      generic scaffolds (the same established, deliberately-unguessed
+      treatment as the earlier `0x01002001` case) for this pair plus a
+      third real ClsId (`0x01030766`, traced separately). **Verified**:
+      tick 0's call count dropped as expected (fallback path now
+      skipped since the primary succeeds), but the steady-state per-
+      tick loop is byte-for-byte unchanged — **ruling out all three as
+      the per-tick blocker**. The loop's own real ID (`0x0101eb0b`)
+      still has no header match; identifying it is the next concrete
+      step, likely needing either a fuller real BREW MP header set or
+      more structural tracing. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
