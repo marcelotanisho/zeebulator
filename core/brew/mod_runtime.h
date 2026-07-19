@@ -84,6 +84,20 @@ namespace zeebulator {
 // enabling stub, not a confirmed-correct implementation of whatever
 // this real struct actually is.
 //
+// The same context struct has a fifth confirmed-to-exist field, offset
+// +0x28 -- found continuing the Peggle investigation past the fourth
+// field's arena gate (TASKS.md Phase 8). Real disassembly (`peggle.mod`
+// offset 0x132dfc, reached from tick 0's own callback with no null
+// check beforehand) reads it unconditionally and passes it to a small
+// real subroutine (offset 0x131fac) that calls through it using the
+// exact same ARM RVCT "ROPI" relative-vtable convention as the third
+// field (`ldr r1,[r4]; ldr r2,[r1]; add r2,r2,r1; bx r2`) -- so, like
+// the third field, it's a real interface pointer, not a plain data
+// struct, but its real identity is equally unknown.
+// `SetFifthContextObject()` supplies the same kind of relative-vtable-
+// safe placeholder as the third field, for the same reason (resolve
+// the call rather than wander into unmapped memory).
+//
 // A fourth slot, offset 0xb0 (4 real call sites, far rarer than 0xc0),
 // is GETUPTIMEMS: called with no argument, twice, around a chunk of
 // per-tick work, with `second_result - first_result` used immediately
@@ -245,6 +259,12 @@ class ModRuntime {
   // before or after Install().
   void SetFourthContextObject(uint32_t object_ptr);
 
+  // Sets the object pointer the offset-0xc0 "get app context" slot
+  // should expose at the confirmed-to-exist, but not-yet-identified,
+  // field offset (+0x28) -- see the class doc comment. Safe to call
+  // before or after Install().
+  void SetFifthContextObject(uint32_t object_ptr);
+
   // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot
   // returns. Deterministic and tick-driven (not a real wall-clock read)
   // to match how the rest of the emulator's timing works (see
@@ -284,6 +304,7 @@ class ModRuntime {
   uint32_t display_ptr_ = 0;
   uint32_t third_context_object_ = 0;
   uint32_t fourth_context_object_ = 0;
+  uint32_t fifth_context_object_ = 0;
   uint32_t uptime_ms_ = 0;
 };
 

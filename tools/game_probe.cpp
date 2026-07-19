@@ -392,6 +392,17 @@ int main(int argc, char** argv) {
   uint32_t unknown_context_0x2c_obj = zeebulator::BuildGenericRelativeVtableStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x80010000, /*object=*/0x80011000, /*slot_count=*/20);
   mod_runtime.SetThirdContextObject(unknown_context_0x2c_obj);
+  // A fifth real field (offset 0x28) found continuing the investigation
+  // past the fourth field's arena gate: real code (peggle.mod offset
+  // 0x132dfc, called with no null check beforehand) reads it and calls
+  // through it using the exact same ROPI relative-vtable convention as
+  // the third field above -- see mod_runtime.h's doc comment. Same
+  // treatment as the third field: a safe, do-nothing relative-vtable
+  // scaffold so the call resolves instead of wandering into unmapped
+  // memory.
+  uint32_t unknown_context_0x28_obj = zeebulator::BuildGenericRelativeVtableStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80014000, /*object=*/0x80015000, /*slot_count=*/20);
+  mod_runtime.SetFifthContextObject(unknown_context_0x28_obj);
   // A fourth real field (offset 0x24) found continuing the Peggle
   // investigation into why its per-tick callback never re-arms its own
   // timer the real self-rearming way: real code there reads and writes
