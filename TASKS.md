@@ -1082,11 +1082,31 @@ playable start-to-finish at full speed, standalone build.
       `ISHELL_CreateInstance(ClsId=0x01001003)`, many real `Seek`-shaped
       and other real HLE calls, and the self-propagating chain itself
       firing through several more real traps — a large jump in real
-      execution depth. Hit a new, third real object convention at the
-      next level (a flat struct with a function pointer read directly
-      off a fixed offset, not through a vtable) — deliberately left
-      undoctored rather than guessed at. See PHASE8_LOG.md for the full
-      trace evidence; this is the next concrete step.
+      execution depth. Hit what first looked like a new, third real
+      object convention at the next level (a flat struct with a
+      function pointer read directly off a fixed offset, not through a
+      vtable) — left undoctored rather than guessed at.
+      **That turned out to be a misdiagnosis of a bug in this
+      codebase's own stub, not a real object convention**: closer
+      register-level tracing of the exact real call chain showed real
+      vtable slot 2 does use the assumed `(this, id, ppOut@r2)` shape,
+      but real slot 3 uses a *different*, also-real shape —
+      `(this, ppOut@r1)` — and other real slots (and one real call
+      site) pass no output pointer at all, with `r1`/`r2` holding
+      leftover garbage or explicit zero. The old stub blindly wrote a
+      child object into r2 for every slot regardless, corrupting
+      whatever it found there — once, real address 0 itself — and it
+      was real code reading back that self-inflicted corruption that
+      produced the earlier "flat struct" illusion. **Fixed** by only
+      special-casing slots 2 and 3 with their real, evidenced output
+      registers (skipped when null), leaving every other slot a plain
+      side-effect-free stub. **Verified**: tick 0 now makes 337 real
+      HLE calls (up from 207) and survives 6312 real ARM steps (up
+      from 3155) before its next wander — roughly double the real
+      execution depth. Still eventually wanders to a null pointer from
+      a new, not-yet-individually-traced call site. See PHASE8_LOG.md
+      for the full trace evidence; continuing to chase the new wander
+      point the same way is the next concrete step.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

@@ -1729,3 +1729,73 @@ Committed (`01fa50e`). All temporary instrumentation (the
 `Memory::Write8` watchpoint in `core/memory/memory.cpp`, an `r11`
 trace column in `core/cpu/arm_interpreter.cpp`) reverted -- confirmed
 via clean `git diff` on both files. 241 tests pass.
+
+---
+
+**The "flat struct at offset 0x30" wall was a misdiagnosis -- the real
+bug was in this codebase's own self-propagating stub, not a third real
+object convention.** Re-enabled full register tracing for tick 0 only
+(temporary, reverted after) and re-read the exact real call chain at
+peggle.mod offsets `0x1099e0`-`0x109aac` closely, instruction by
+instruction, rather than trusting the earlier quick read.
+
+Real vtable slot 2 (offset 8) genuinely is the `(this, id@r1,
+ppOut@r2)` QueryInterface shape the stub was built around -- confirmed
+again at offset `0x1099e0`: `ldr r2,sp+0x28 (ppOut); ldr r3,[r0,#8]
+(slot 2); ldr r1,[pc,#lit] (a real id constant, 0x0101eb0b); mov
+r0,fp; bx r3`. But real slot 3 (offset 0xc) is a *different*, also
+real shape: `(this, ppOut@r1)`, no id argument at all -- confirmed at
+offset `0x109a98`: `ldr r0,[fp]; add r1,sp,#0x24; ldr r2,[r0,#0xc]
+(slot 3); mov r0,fp; bx r2`. And real slot 4 (offset 0x10, confirmed
+at offset `0x109a00`) is called with *no* output pointer whatsoever --
+`r1`/`r2` just hold whatever leftover values earlier code left in
+them. A further real call, `bl 0x105b50` at offset `0x109a94` (itself
+a tiny two-instruction real trampoline, `ldr r3,[r0]; ldr r3,[r3,#0xc];
+bx r3`, i.e. "call this->vtbl[3]" generically), is made with `r1=0,
+r2=0` explicitly set by the real caller just before the call -- a real
+"just checking, don't return anything" idiom.
+
+The previous version of the self-propagating stub wrote a fresh child
+object into r2 for *every* slot unconditionally, with no knowledge of
+which shape a given real slot actually used. For slot 4's and the
+`bl 0x105b50` call's real, no-output shape, this blindly clobbered
+whatever r2 (or r1) held -- confirmed via re-tracing that one such
+write landed on real address 0 itself (`r2` was legitimately 0 for
+that call), silently seeding it with a stray child-object address. It
+was *that* stray, self-inflicted value -- not a real "flat struct"
+object -- that later got picked up, treated as a vtable pointer by
+`ldr r1,[r0]` (r0 having read back 0 from an earlier never-actually-
+delivered `ppOut`), and read at offset 0x30 (slot 12, well within the
+real 40-slot vtable) as a function pointer, producing a bogus non-null
+`bx` target and the misleading step-3155 crash.
+
+**Fix**: only slots 2 and 3 get the self-propagating treatment now,
+each using its own real, evidenced output register (r2 and r1
+respectively), and each skipped entirely when that register is null
+(so the real "just checking" calls are left alone rather than
+corrupting address 0 or anywhere else). Every other slot (0, 1, and
+4-39) is now a plain, side-effect-free stub -- consistent with this
+codebase's normal `Stub` pattern elsewhere, and honest about what
+isn't actually understood yet.
+
+**Verified against real Peggle**: tick 0 now makes 337 real HLE calls
+before its next wander (up from 207 before this fix), and survives
+6312 real ARM steps (up from 3155) -- roughly double the real
+execution depth in both measures. It still eventually wanders to
+`pc=0` and throws the same downstream invalid-instruction exception at
+module offset `0x90024` as before, but now from a **new, later, and
+presumably genuinely different** real call site -- not yet
+individually traced, since this round's fix was already a large,
+self-contained, evidence-grounded unit of progress worth landing on
+its own. Continuing to chase the new wander point the same way (full
+register tracing, cross-referenced against real disassembly) is the
+natural next step.
+
+Committed (`6ab0d9f`). Rebuilt `minimal.ggz` (a synthetic, empty-but-
+valid GGZ archive -- a real 8-byte one-entry table pointing at a real,
+empty gzip member -- used as Peggle's `data.ggz`/`sound.ggz` stand-ins
+since Peggle ships neither; the original copy from earlier sessions
+lived in a since-expired scratch directory) to re-run the probe; not
+committed, since `tools/game_probe.cpp` already documents how to
+construct one and it's a throwaway harness input, not project source.
+241 tests pass.
