@@ -376,6 +376,40 @@ int main(int argc, char** argv) {
   uint32_t unknown_0x01041207_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x8001E000, /*object=*/0x8001F000, /*slot_count=*/20);
   shell_hle.RegisterInstance(0x01041207, unknown_0x01041207_obj);
+  // Three more real, unidentified classes found investigating why
+  // Peggle's tick loop settles into a fixed, non-progressing steady
+  // state (TASKS.md Phase 8). The first two are a real "try the newer
+  // class, fall back to the older one" pair: real disassembly
+  // (`peggle.mod` offset 0x104a50-0x104aa0) shows `ISHELL_CreateInstance`
+  // called with ClsId 0x0103d8ec first, and -- only if that fails --
+  // ClsId 0x01014bc4 next, both immediately after an `AddRef`-shaped
+  // call on the same real IShell pointer. This exact instruction
+  // sequence, both literal ClsIds included, also appears verbatim in a
+  // second, independently-compiled real title
+  // (`Super BurgerTime/mod/279125/supbtime.mod` offset 0x110e64-
+  // 0x110ef4) -- strong evidence this is a real, standard SDK/compiler-
+  // emitted helper rather than anything Peggle-specific, though neither
+  // ID matches any class/interface ID in this repo's own reference BREW
+  // headers. The third, ClsId 0x01030766 (`peggle.mod` offset
+  // 0x10a208-0x10a24c), is reached via a real IShell pointer stored at
+  // offset +12 of the function's own struct parameter -- the same
+  // confirmed Shell-field convention as the ambient app context struct
+  // -- with its result stored unconditionally (no failure check) into
+  // that struct's own offset +0x48. All three get the same generic,
+  // deliberately-unguessed scaffold treatment already established for
+  // `0x01002001` (see this file's/PHASE8_LOG.md's Double Dragon
+  // history): safe enough that CreateInstance succeeds and later method
+  // calls resolve cleanly, without assuming a real interface shape none
+  // of this project's evidence actually supports yet.
+  uint32_t unknown_0x0103d8ec_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80040000, /*object=*/0x80041000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x0103d8ec, unknown_0x0103d8ec_obj);
+  uint32_t unknown_0x01014bc4_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80042000, /*object=*/0x80043000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x01014bc4, unknown_0x01014bc4_obj);
+  uint32_t unknown_0x01030766_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80044000, /*object=*/0x80045000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x01030766, unknown_0x01030766_obj);
   // Real code fetches "the current app's IShell"/"IDisplay" from an
   // ambient context (the static-base table's offset-0xc0 slot) in many
   // places, not just via the pIShell argument explicitly passed to
