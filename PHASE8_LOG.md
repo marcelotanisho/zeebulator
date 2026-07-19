@@ -2000,3 +2000,44 @@ set than this repo currently has, or continuing to trace structurally
 -- what real methods get called on whatever object a real
 implementation would eventually return -- the same way the context
 struct's Shell/Display fields were originally identified.
+
+---
+
+**Web search for a fuller real BREW MP header set, or anything else
+that might identify `0x0101eb0b`/`0x0103d8ec`/`0x01014bc4` --
+exhausted for now, no matches found.** No search hit (general web,
+BREW developer forums, GitHub) turns up any of these four hex values
+in any indexed source. Two adjacent leads were checked and ruled out:
+
+- **Infuse** (Tuxality's independent Zeebo/BREW HLE emulator, also
+  written "from clean reverse engineering" per its own dev blog, and
+  already reaching a playable steady state on Double Dragon, Crash
+  Nitro Kart 3D, and Zeebo Family Pack) looked promising, but its
+  source is **closed and proprietary** ("as-is", no redistribution, no
+  modification) -- there is no code to safely reference even if it
+  had solved this exact problem, and its public blog posts describe
+  features only at a high level, with nothing about class IDs or the
+  app context struct. It also doesn't target Peggle or Super
+  BurgerTime, so it may never have hit these particular IDs anyway.
+  Disassembling *its* compiled binary to extract a class-ID table
+  would violate its own license terms and is a materially different,
+  more invasive action than anything else in this project -- not
+  attempted.
+- **Actual Zeebo device firmware**: searched (not downloaded) for any
+  public source of a real firmware/system image, both generally and in
+  Portuguese. None found. This project's own already-sanctioned
+  archive.org source (`zeebo-arquivista`) and the larger "Zeebo (All
+  Games + Dev Tools)" archive.org collection both turn out to contain
+  only games plus BREW SDK samples/PDFs already mirrored in this
+  repo's `research/` -- no bootloader/OS-level dump in either. A
+  GBAtemp thread referencing Zeebo console jailbreaking returned
+  HTTP 403 and wasn't pursued further.
+
+**Conclusion: this specific lead is exhausted.** No further internet
+search is expected to help without a new, more specific starting
+point. Identifying `0x0101eb0b` (or the other two now-registered-but-
+unidentified classes) still needs either a fuller real BREW MP SDK
+header dump than exists anywhere this search found, or continued
+structural tracing of the real methods called on whatever object a
+correct implementation would return -- the same evidence-only approach
+used for every other interface in this project so far.
