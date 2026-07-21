@@ -1433,6 +1433,22 @@ playable start-to-finish at full speed, standalone build.
       coincide for Super BurgerTime; Double Dragon/Peggle need
       `0x0102f789`/`0x01099cd6`, not `274754`/`278962`. 251/251 tests
       pass. See PHASE8_LOG.md for full evidence.
+      **Traced the second loop precisely — the clock fix above works
+      correctly** (confirmed the same bounded ~32ms wait function now
+      resolves reliably, called thousands of times). The real remaining
+      wall is one level up: the real per-frame callback (`0x11c06c`)
+      walks a one-entry module-global "task list" (our SBT object) and
+      calls three of its vtable slots every pass; every single code
+      path loops back unconditionally, and nothing ever clears the
+      list-head pointer to let it exit — that would need to be a real
+      side effect of one of those slots' real implementation (almost
+      certainly self-deregistering once the romset load it's presumably
+      driving completes). Refines rather than replaces the
+      romset-loading conclusion: implementing real, stateful behavior
+      for class `0x01001017` (not just a generic scaffold) is the
+      actual next step. Not attempted this round — diagnosis only, all
+      trace instrumentation reverted, no functional changes. See
+      PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

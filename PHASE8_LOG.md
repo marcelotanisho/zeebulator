@@ -2845,3 +2845,97 @@ this distinction so it doesn't cost another investigation next time.
 
 Committed (`b285214`). 251/251 tests pass (one new test added for the
 self-advance behavior).
+
+---
+
+**Traced the second polling loop precisely -- the `GetUpTimeMs` fix
+above is working correctly, and the real remaining wall is a
+different, deeper problem: a real per-frame task-list runner whose
+real completion signal our stub object can never produce.**
+
+Added a temporary `lr=`/module-offset field to `hle_trace`'s printout
+(reverted after, per usual practice) to find exactly which real code
+the second, unresolved loop's two alternating traps return into:
+module offset `0xea80`/`0xea8c`. Disassembling `0xea40`-`0xea9c`
+(`arm-none-eabi-objdump -b binary -m arm`) shows this is the **exact
+same bounded, ~32ms real-time poll function** as the first loop that
+now resolves:
+
+```
+r0 = GETUPTIMEMS()                  ; 0xea50-0xea58
+elapsed = r0 - saved_start          ; saved_start read from a module global
+if elapsed > 32: goto exit          ; 0xea68/0xea6c, unsigned compare
+retry:
+  call static-base slot 0x184(flag=1, ...)   ; 0xea70-0xea7c
+  r0 = GETUPTIMEMS()                         ; 0xea80-0xea88
+  elapsed = r0 - saved_start
+  if elapsed <= 32: goto retry               ; 0xea94/0xea98
+exit:
+  saved_start = r0                    ; 0xea9c
+  return                              ; regardless of slot 0x184's answer
+```
+
+This confirms last round's fix is doing exactly what it was designed
+to do: this function's exit is purely time-based (never gated on slot
+`0x184`'s return value at all), and with the clock now advancing, it
+correctly resolves after ~33 reads every single time it's called --
+confirmed directly: `lr=0x0010ea8c`/`0x0010ea80` together account for
+234,807 real calls in the run that still hits the step budget,
+consistent with this same bounded function being called **thousands
+of times** by an outer loop, each time successfully running its own
+~33-iteration wait to completion.
+
+That outer loop is `0x11c06c` -- the real per-frame callback found
+two rounds ago, previously understood only at the "walk a list calling
+a vtable method" level. Full disassembly of its body (`0x11c06c`-
+`0x11c0f4`) sharpens that considerably:
+
+```
+if *list_head == 0: return                          ; 0xc074-0xc07c
+loop:
+  entry = *list_head                                 ; always our SBT
+                                                       ; object, 0x80047000 --
+                                                       ; a one-entry "list"
+  entry_vtable[0x2c](entry)              -> r0        ; "the tick"; our
+                                                       ; stub, blind 0
+  ctx = *(*module_global + 12)                        ; = shell (0x80001000),
+                                                       ; same +12 convention
+                                                       ; as GetAppContext
+  ctx_vtable[0x90](ctx, r0)                           ; IShell slot 36 =
+                                                       ; Resume; our stub,
+                                                       ; blind 0
+  entry = *list_head                                  ; unchanged
+  if entry == 0: return                               ; only real exit
+  entry_vtable[0x28](entry)                           ; our stub, blind 0
+  if *flag_byte != 0: goto loop                        ; 0xc0e4
+  bl 0x10b2d8(1)                                       ; a real message-
+                                                       ; dispatch subroutine
+                                                       ; (tail-calls 0x104e80)
+  goto loop                                            ; unconditional either way
+```
+
+**Every path through this function loops back to the top.** The only
+way out is `*list_head == 0` -- and nothing in this function, nor any
+of the three vtable calls it makes (all landing on either our SBT
+object's generic stub slots or `IShellHle`'s blind `Stub`), ever
+writes to that module-global to clear it. This isn't the "wait for
+ROM data" pattern originally hypothesized for slot `0x184` specifically
+-- it's a real, generic "process this frame's task list, one real tick
+per entry, remove entries as they finish" runner, and our SBT object
+never finishes anything because its stub slots (`0x28`/`0x2c`, whatever
+their real names are) carry no real state and can never signal "done."
+A real implementation would presumably have its own real slot `0x2c`
+eventually clear `*list_head` (self-deregistering once whatever it's
+doing -- almost certainly the romset load, given the "boot" manifest
+evidence two rounds ago -- completes).
+
+**This refines, rather than replaces, the romset-loading conclusion
+from two rounds ago**: the specific mechanism is now understood
+precisely (a real task-list runner needing real per-object completion
+state, not a simple "is data ready" flag check), but the actual next
+step is unchanged and, if anything, confirmed larger -- implementing
+real, stateful behavior for the SBT-specific class (`0x01001017`)
+well beyond its current generic scaffold. Not attempted this round;
+all trace instrumentation reverted, no functional changes. `git diff
+--stat` empty on `tools/game_probe.cpp` before this entry was
+committed.
