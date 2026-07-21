@@ -1,5 +1,6 @@
 # Phase 8 Investigation Log — Double Dragon (and, from the log's final
-# section onward, a second title: Peggle)
+# section onward, a second title: Peggle; a third, Super BurgerTime,
+# starts near the very end)
 
 This is the detailed, blow-by-blow investigation log for TASKS.md's Phase 8
 task "Iteratively debug against the real game, filling HLE API gaps as
@@ -2123,3 +2124,95 @@ found this round) -- both bigger asks than the incremental, evidence-
 grounded fixes this log has made so far, and a reasonable point to
 pause this specific investigation thread pending either new evidence
 or a decision to invest in the larger effort.
+
+---
+
+## Third title: Super BurgerTime
+
+Redirected effort here rather than continuing to push on Peggle's
+specific per-tick-loop wall (see the pause point immediately above):
+untapped, completely unprobed territory, and useful validation that the
+HLE core generalizes rather than being overfit to two titles.
+
+**Format survey (already recorded earlier in this log, see the format
+survey entry above)**: Super BurgerTime is one of the classic-arcade
+ports, shipping loose per-asset files (`.tex`/`.wav`/`.fnz`) alongside
+a `"PACK"`-magic `.pkg` container — no GGZ, no `resources.bar`, a third
+real asset-container shape distinct from both prior titles. Not solved
+yet (see below); `supbtime.mod` (2,832,292 bytes) is reachable and disassemblable
+the same way as the other two.
+
+**`.pkg` container: magic confirmed, structure NOT a byte-exact Quake
+PAK despite the coincidental "PACK" magic match.** Direct inspection:
+`50 41 43 4B` ("PACK") followed by two little-endian `uint32`s at
+offset 4/8. Naively read as Quake's classic 12-byte-header
+`(dirofs, dirlen)` convention, the values are incoherent for a real
+file (`dirofs=7`, which would point inside the header itself, and
+`dirlen=579390` doesn't divide evenly by Quake PAK's 64-byte directory
+entry stride). **Deliberately not assumed to be Quake PAK** just
+because of the magic-byte coincidence — a real embedded zlib stream
+(`78 da`) was already confirmed present elsewhere in the file (earlier
+survey), so the real structure is still open; cracking it is deferred
+until it's actually needed (asset loading hasn't been reached yet).
+
+**Found and fixed a real, foundational CPU gap: the ARMv6 "Extend"
+instruction family was entirely unimplemented.** The very first real
+instruction Super BurgerTime executes beyond the common `AEEMod_New`
+prologue (module offset `0xdc`) is `uxth r0, r0` — this interpreter's
+`Step()` treated the *entire* ARMv6 media-instruction encoding space
+(`bits[27:25]=011, bit4=1`) as unconditionally unimplemented, without
+checking whether the specific real instruction inside that space was
+actually understood. Confirmed the real encoding empirically (assembled
+each real mnemonic with `arm-none-eabi-as`, read back the actual
+bytes) rather than hand-deriving it from the ARM ARM's prose:
+`bits[27:20]` selects `UXTB(0x6E)/UXTH(0x6F)/SXTB(0x6A)/SXTH(0x6B)`,
+`bits[9:4]` must be `0b000111`, and `Rn=0b1111` selects the plain form
+(any other `Rn` selects the real accumulate form, `Rd = Rn + extended
+Rm`). Implemented all four plus their accumulate variants in one pass
+— same real instruction family, and a real game hitting one is likely
+to hit a sibling.
+
+Caught a real correctness bug before it shipped, not after: naively
+reusing `ShiftWithCarry` with `is_immediate_shift=true` for the
+rotate-field-zero case would have reinterpreted `ROR #0` as `RRX` (a
+real special case, but one that belongs to the *general shifter
+operand*, not this family's own dedicated 2-bit rotate field) —
+switched to `is_immediate_shift=false`, which correctly means true
+"no rotation" at 0 while leaving nonzero rotate amounts unaffected.
+9 new tests added (`cpu_test.cpp`), every encoding confirmed via the
+assembler rather than asserted from memory. Committed (`ef1d3d4`).
+
+**Verified against real Super BurgerTime**: `AEEMod_Load` now runs
+742,000+ real steps past the point that used to throw immediately —
+real, substantial execution, not a trivial unblock.
+
+**Immediately hit a new, different, and much deeper real wall**: after
+that long real run (confirmed to include a real BSS-zeroing loop, not
+just wasted steps), a real function returns via the APCS
+`push {fp,ip,lr,pc}` / `sub sp,fp,#12; ldm sp,{fp,sp,pc}` stack-frame
+convention (loading the return address from the stack, not via `bx
+lr`), and the popped return address is `0` — causing the exact same
+"wander outside the module, execute harmless zero-page NOPs, then
+coincidentally re-enter the module from its own start address" pattern
+already documented for Double Dragon and Peggle's own early gaps. This
+time, re-entry runs the *entire* AEEMod_New prologue a second time
+(confirmed via trace: another ~2,000,000 real steps, including the
+same real BSS-zeroing loop observed the first time) before a `bx r3`
+lands on a real module address (`0x9c`) that decodes as an ARM `LDM`/
+`STM` with the S-bit set (the exception-return/user-bank-register
+variant) — a second real gap, `Block data transfer with S=1 ... not
+supported`, though likely a downstream symptom of the same root cause
+(the CPU executing real code at the wrong alignment/address after the
+bad return) rather than a third, independent thing to fix.
+
+**Not yet root-caused**: which specific call in the chain has a
+stack-depth mismatch (an extra pop somewhere) or reads an
+under-provisioned stack region as if it held a real saved return
+address. This is a materially different *kind* of gap than anything
+fixed for Double Dragon or Peggle so far — those were all missing
+HLE calls or unprovisioned context fields; this is the CPU/stack
+interaction itself going wrong deep inside the module's own real
+compiled prologue, before any HLE surface is even reached. Tracked as
+the next concrete step for continuing Super BurgerTime. `AEECLSID` for
+`IModule::CreateInstance` also hasn't been found yet (blocked on
+`AEEMod_Load` completing first) — deferred until this is resolved.

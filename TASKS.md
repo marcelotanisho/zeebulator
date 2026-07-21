@@ -1200,6 +1200,36 @@ playable start-to-finish at full speed, standalone build.
       much larger, Peggle-specific reverse-engineering effort into its
       own per-tick game data — both bigger asks than the incremental
       fixes made so far. See PHASE8_LOG.md for full evidence.
+- [ ] Validate the HLE against a third real game (Super BurgerTime),
+      started after pausing the Peggle-specific investigation above —
+      untapped territory, and a useful check that the HLE core
+      generalizes rather than being overfit to two titles. Ships as one
+      of the classic-arcade ports: loose per-asset files plus a
+      `"PACK"`-magic `.pkg` container, a third real asset-container
+      shape distinct from both prior titles (GGZ, `resources.bar`) —
+      not yet cracked (deliberately not assumed to be a byte-exact
+      Quake PAK just because of the magic-byte coincidence; the actual
+      directory-offset fields don't parse coherently under that
+      assumption), deferred until asset loading is actually reached.
+      **Found and fixed a real, foundational CPU gap**: the entire
+      ARMv6 "Extend" instruction family (SXTB/SXTH/UXTB/UXTH + their
+      accumulate forms) was unimplemented — the very first real
+      instruction Super BurgerTime executes beyond the common
+      `AEEMod_New` prologue is a real `uxth r0, r0`. Confirmed the real
+      encoding empirically (assembled each mnemonic, read back the
+      actual bytes) rather than from memory, and implemented the whole
+      closely-related family in one pass. **Verified**: `AEEMod_Load`
+      now runs 742,000+ real steps past the previous immediate failure.
+      **Hit a new, much deeper wall immediately after**: a real function
+      returns via the APCS `ldm sp,{fp,sp,pc}` stack-frame convention,
+      and the popped return address is `0` — the same "wander outside
+      the module, coincidentally re-enter from the start" pattern
+      already seen for Double Dragon/Peggle, except this time it's a
+      CPU/stack interaction gone wrong deep inside the module's own
+      compiled prologue, before any HLE surface is reached — a
+      materially different kind of gap than any fixed so far. Not yet
+      root-caused; tracked as the next concrete step. See PHASE8_LOG.md
+      for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
