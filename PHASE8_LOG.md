@@ -3015,3 +3015,76 @@ HLE code). Committed (`798d1b9`). All debug/trace instrumentation
 directly) reverted before committing; `git diff --stat` empty on
 `core/memory/memory.cpp`/`.h` and clean on `tools/game_probe.cpp`
 except the actual fix.
+
+---
+
+**Switched focus back to Double Dragon (per user direction, after a
+step back to ask how far this project actually is from a genuinely
+playable game) and cracked its real `.obm1` sprite/texture format from
+scratch.**
+
+Every one of the 89 real entries in Double Dragon's `data.ggz`
+(confirmed via `zeebulator_ggz_inspector`) is a `.obm1` file — exactly
+the asset sub-format TASKS.md Phase 4 explicitly deferred ("format
+specifics are a per-content research task... triggered by whatever a
+real game's rendering code actually needs"). No existing documentation
+for it was found anywhere in this repo's research materials (checked
+the SDK extraction tree; a handful of files matching "obm1" as a
+substring turned out to be unrelated Maya scene files). Reverse-
+engineered directly from the raw bytes instead.
+
+Extracted all 89 real entries (a small one-off Python script mirroring
+`GgzArchive`'s already-documented format) and hex-dumped the smallest
+(`Face_Billy.obm1`, 552 bytes): a 2-byte `"OI"` magic, then `04 04`,
+then `20 00 20 00` -- read as two little-endian `uint16`s, `32, 32`,
+suspiciously exactly this asset's plausible width/height. Hypothesized
+an 8-byte header (magic + 2 unknown bytes + width + height) followed
+by a 16-color palette (2 bytes/entry) and 4-bit-per-pixel packed
+indices: `8 + 16*2 + 32*32/2 = 552` -- an exact match. Generalizing
+across all 89 files immediately falsified the naive "always 4bpp"
+version (37 mismatches) but revealed the real pattern instantly: byte
+3 of the header **is** the bits-per-pixel value itself (`04` or `08`
+in every real sample), and `8 + (1<<bpp)*2 + w*h*bpp/8` matches all 89
+real file sizes exactly, both depths, no exceptions.
+
+**Confirmed by decoding, not just by size arithmetic**: treating the
+palette entries as RGB565 and unpacking pixel indices most-
+significant-bits-first, `Font.obm1` decodes to a **fully legible ASCII
+font sheet** (digits, punctuation, upper/lowercase letters, all in
+recognizable positions) and `Bil00.obm1` decodes to a **complete,
+correct Double Dragon character sprite sheet** -- walk/punch/kick/
+jump/fall animation frames, correct skin/hair/clothing colors, all on
+a consistent magenta background several other sprites (`HitMark.obm1`,
+`Bang.obm1`) also share, strongly suggesting real color-key
+transparency convention (not confirmed/implemented -- see below).
+About as strong a confirmation as reverse-engineering gets.
+
+Implemented as permanent, tested code rather than leaving it as a
+throwaway script: `core/loader/obm1.h`/`.cpp` (`Obm1Image::Decode`,
+following the existing `GgzArchive`/Mif loader conventions exactly),
+`tests/obm1_test.cpp` (synthetic hand-built fixtures only -- no real
+game bytes, per `CONTRIBUTING.md`'s clean-room policy -- covering both
+confirmed bit depths, correct pixel ordering, and every malformed-input
+path), and `tools/zeebulator_obm1_inspector` (dumps a real `.obm1` to a
+dependency-free PPM, matching `ggz_inspector`/`mif_inspector`).
+Validated three independent ways: header-derived size matches all 89
+real files exactly; decoded output is visually correct (font sheet,
+character sheet); and the new C++ implementation's output is **byte-
+for-byte identical** to the original Python prototype across all 89
+real files (a small script comparison, not just "no exception thrown").
+259/259 tests pass (8 new). Committed (`1aa86cd`).
+
+**What this doesn't do yet**: wire decoded pixels into any real render
+path. Real Double Dragon ARM code almost certainly parses `.obm1`
+itself (it's a proprietary, studio-specific format -- not something a
+generic BREW OS service would natively understand), the same way it
+owns any other proprietary asset access; `IFile`/`IFileMgr` already
+hand back correct raw bytes regardless of what they mean, confirmed by
+this exercise, not changed by it. Also not yet used: the earlier
+session's discovery that Double Dragon's real
+`IModule::CreateInstance` needs ClsId `0x0102f789`, not the folder
+number `274754` — the `game_probe` run that reached the event loop
+cleanly used that corrected value; re-driving *that* run further,
+tracing whether real code reaches and correctly executes its own real
+`.obm1`/texture-upload logic, is the concrete next step, not yet
+started this round.

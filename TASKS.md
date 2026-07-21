@@ -460,15 +460,15 @@ its own GGZ-backed assets through real, vtable-order-verified `IFile`/
       a dedicated test.
       17 new tests (`tests/virtual_filesystem_test.cpp`,
       `tests/file_hle_test.cpp`), all synthetic (no copyrighted content).
-- [ ] Handle whatever asset sub-formats appear inside GGZ containers for the
+- [x] Handle whatever asset sub-formats appear inside GGZ containers for the
       target test game (models, sprites, etc. — format specifics are a
       per-content research task, informed by `ggzbrewtools`' documented
-      coverage) — **deferred, not blocking this phase's exit criterion.**
-      `IFile`/`IFileMgr` hand back raw bytes correctly regardless of what
-      those bytes mean internally; understanding `.obm1` sprite/model
-      internals is graphics-subsystem work (Phase 5) triggered by
-      whatever a real game's rendering code actually needs, not a
-      file-access concern.
+      coverage) — was deferred, not blocking this phase's exit criterion;
+      `.obm1` (every one of Double Dragon's 89 real sprite/texture assets)
+      cracked in Phase 8 once real further progress needed it — see
+      `core/loader/obm1.h` and PHASE8_LOG.md. `IFile`/`IFileMgr` themselves
+      needed no changes: they already hand back raw bytes correctly
+      regardless of what those bytes mean internally.
 
 ## Phase 5 — Graphics (OpenGL ES 1.0/1.1 translation)
 Exit criterion: the target test game's 3D/2D rendering appears on screen,
@@ -954,6 +954,24 @@ playable start-to-finish at full speed, standalone build.
       research-asset gap rather than an emulator gap, though not yet
       confirmable without another real copy of the file. See
       `PHASE8_LOG.md`'s final entries for the full trace and reasoning.
+      **Superseded**: the "frozen since tick 3" state above was reached
+      using ClsId `274754` (Double Dragon's download-catalog folder
+      number) at the very first `IModule::CreateInstance` call — later
+      found, while investigating Super BurgerTime, to not be the real
+      value the module's own code checks at all (see this file's Super
+      BurgerTime section and PHASE8_LOG.md). The real value is
+      `0x0102f789`; with it, `game_probe` reaches **"Reached the event
+      loop with no unhandled instruction!"** cleanly, same as the other
+      two titles, superseding this entire earlier trace (not yet
+      re-driven forward from there this round). Separately, Double
+      Dragon's real sprite/texture format — `.obm1`, all 89 assets in
+      `data.ggz` — is now fully cracked (`core/loader/obm1.h`,
+      PHASE8_LOG.md): confirmed via a legible decoded font sheet and a
+      complete, correct character animation sheet. Not yet wired into
+      any real render path — the next concrete step is letting the
+      interpreter run further past the event loop with the correct
+      ClsId and seeing whether real code reaches and correctly executes
+      its own real `.obm1`-decoding/texture-upload logic.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
