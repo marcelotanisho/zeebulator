@@ -3088,3 +3088,87 @@ cleanly used that corrected value; re-driving *that* run further,
 tracing whether real code reaches and correctly executes its own real
 `.obm1`/texture-upload logic, is the concrete next step, not yet
 started this round.
+
+---
+
+**Drove that re-run and found two real, foundational bugs -- one in
+core HLE code, one in the dev harness -- whose combined fix resolves a
+real "Failed in the initialization of the library" error dialog Double
+Dragon was silently stuck showing, and gets it genuinely opening real
+files for the first time.**
+
+Added temporary tracing (`OpenFile`/`GlTexImage2D`/`DrawText`/
+`DrawRect`/`Update` prints, all reverted after) to see what real code
+actually does once the event loop is reached. Real drawing *was*
+happening every tick -- a full-screen `DrawRect` and two `DrawText`
+calls -- but zero `OpenFile` or `GlTexImage2D` calls, ever. Decoding
+the drawn text (by dumping the raw 16-bit "code units" `DrawText`
+reads) turned up something that couldn't be real UTF-16: every other
+byte was an ordinary ASCII letter, never the 0x00 padding byte real
+ASCII-range UTF-16 requires. Read one byte per character instead, the
+message is perfectly legible English: **"Failed in the initialization
+of the library." / "Application is finished by pushing the button."**
+-- a real, user-facing error dialog, not a garbled/unfinished render.
+
+**Bug 1 (`core/brew/idisplay.cpp`)**: `IDisplayHle::DrawText` assumed
+AECHAR is the 16-bit UTF-16 code unit real BREW's `AEEText.h`
+documents as the general case. On this real Zeebo/BREW build it's a
+plain 8-bit byte. This was never actually verified against a real
+in-memory string before now -- every prior real disassembly citation
+for `DrawText` was about its calling convention, not its character
+width. Fixed to read `Read8` instead of `Read16` for both the
+null-terminator scan and the actual glyph loop. This is a real,
+foundational rendering bug that was silently affecting every text
+draw in every title this whole project has tested against, not
+something specific to this one error dialog.
+
+**Root-causing the dialog itself**: traced the real decision (a live
+memory watchpoint, temporary, reverted) to `applet+0x24`, a real
+"library init failed" status field checked once per tick before
+deciding whether to show the dialog -- set during `CreateInstance`
+itself (before the tool ever prints "CreateInstance OK"), not during
+the steady-state loop. Disassembling backward through the real
+call chain (`0x104af8` → `0x11b198` → the already-documented GL/EGL
+gate at `0x11d5b8`, TASKS.md Phase 8's earlier "0x1d5b8" citation)
+found the exact failing call: a real EGL trampoline resolving to
+`eglGetDisplay` on... a **generic stub object**, not this project's
+real `GlHle::EglGetDisplay` -- returning a blind 0, read by real code
+as `EGL_NO_DISPLAY`.
+
+**Bug 2 (`tools/game_probe.cpp`)**: ClsId `0x01014bc4` is `AEECLSID_EGL`
+-- already correctly registered against the real `GlHle`-backed EGL
+object earlier in this same file (confirmed via the bundled SDK
+headers). A later block, added investigating why Peggle's tick loop
+stalls, re-registers the *same* numeric ClsId with a `BuildGenericStub
+Object` scaffold, silently overwriting the real one for every title
+(`IShellHle::RegisterInstance` is a plain map assignment -- last write
+wins). That block's own stated purpose was covering a real "try
+`0x0103d8ec` first, fall back to `0x01014bc4`" pattern -- but
+`0x0103d8ec` is *also* a generic, always-succeeding stub, so real code
+registered against it never actually reaches the fallback branch at
+all. The stub registration for `0x01014bc4` was doing nothing for its
+originally intended purpose and actively breaking Double Dragon's own,
+unrelated, direct `CreateInstance(AEECLSID_EGL)` call. Removed it.
+
+**Verified**: `applet+0x24` reads back `0` after `CreateInstance` now
+(was `3`); the dialog no longer displays. Real code goes on to open
+real files for the first time all session -- `sound.ggz` (matching
+this project's own earlier-documented "opens its own packed resource
+archive as a raw file" finding) and `./udata/ddz.sav` (the real
+save-game flow, also previously documented) -- neither ever reached
+before. Also fixed the project's own `hello_brew` test fixture
+(`tests/fixtures/hello_brew/hello_brew.c`), which assumed 16-bit
+AECHAR same as the code this round corrected; regenerated
+`hello_brew.bin` per its own README, re-verified the unchanged
+`AEEMod_Load` offset. 259/259 tests pass (two pre-existing DrawText
+tests updated for the corrected 8-bit convention, `WriteUtf16String`
+renamed `WriteAeeCharString`). No regression on Peggle/Super
+BurgerTime -- both still reach the event loop cleanly; Super
+BurgerTime still hits its own separate, already-documented,
+unrelated post-event-loop gap.
+
+All investigation instrumentation (the render-path prints, the
+`applet+0x24` watchpoint, an `OpenFile` print used twice to confirm
+both the failure and the fix) added and fully reverted before
+committing -- `git diff --stat` clean on every file except the two
+real fixes, the two test updates, and the regenerated fixture.

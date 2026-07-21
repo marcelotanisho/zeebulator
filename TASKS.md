@@ -972,6 +972,29 @@ playable start-to-finish at full speed, standalone build.
       interpreter run further past the event loop with the correct
       ClsId and seeing whether real code reaches and correctly executes
       its own real `.obm1`-decoding/texture-upload logic.
+      **Did exactly that, and found two real, foundational bugs**: (1)
+      `IDisplayHle::DrawText` assumed 16-bit UTF-16 AECHAR; real Zeebo/
+      BREW AECHAR is a plain 8-bit byte — silently garbling every text
+      draw in every title tested so far, not just this one. (2) ClsId
+      `0x01014bc4` (`AEECLSID_EGL`, already correctly registered against
+      the real `GlHle` EGL object) was being silently overwritten by a
+      generic-stub registration for the *same* ClsId added later,
+      investigating Peggle — a dead-code fallback path that never
+      actually helped Peggle (its own primary class is itself an
+      always-succeeding stub) while breaking Double Dragon's real,
+      direct EGL init. Together these caused a real, legible
+      "Failed in the initialization of the library." dialog Double
+      Dragon was silently stuck showing since real tick 0. Fixed both;
+      the dialog no longer triggers, and real code now opens real files
+      for the first time all session — `sound.ggz` and the real
+      `./udata/ddz.sav` save flow, both previously documented as
+      real-but-unreached call shapes. Also fixed the project's own
+      `hello_brew` test fixture, which shared the same 16-bit AECHAR
+      assumption. 259/259 tests pass. No regression on Peggle/Super
+      BurgerTime. See PHASE8_LOG.md for the full evidence trail
+      (including a live memory watchpoint tracing the dialog's real
+      `applet+0x24` status field back through the real call chain to
+      the exact failing `eglGetDisplay` call).
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
