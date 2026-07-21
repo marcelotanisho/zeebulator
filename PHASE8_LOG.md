@@ -2349,3 +2349,58 @@ much smaller `.mod` was never near the fixed offset to begin with.
 by construction -- any sufficiently large real `.mod` can trigger this
 exact class of bug again. Sizing it relative to the real module (as
 fixed here) removes the whole category, not just this one instance.
+
+---
+
+**With `AEEMod_Load`/`CreateInstance` now clean, `HandleEvent(EVT_APP_
+START)` immediately reaches two more real, previously-unconfirmed
+static-base table slots in quick succession.** Both follow the exact
+same shape every prior gap in this table has: an indirect call through
+an unwritten table slot, defaulting to a null function pointer, jumping
+to address 0.
+
+- **Slot `0x40`**: one real call site (reached from `HandleEvent`)
+  calls it with `(this=the current real applet pointer, buffer=a
+  512-byte local stack buffer, size=0x200)` -- a shape that doesn't
+  match any of the fourteen already-confirmed slots (all fixed-arity,
+  non-"this"-taking C-runtime-style helpers). Registered as a safe
+  no-op rather than guessed at.
+- **Slot `0xc`**: reached via a small standalone trampoline
+  (`supbtime.mod` offset `0x11b200`-`0x11b214`: fetch the static-base
+  table through the same real relocated-literal idiom every other slot
+  uses, then `ldr pc,[table,#0xc]`) instead of the more common direct-
+  call shape, but functionally identical. Sits in the same tightly-
+  packed cluster as the confirmed `MEMCPY(0x0)`/`MEMSET(0x4)`/
+  `STRCPY(0x8)`/`STRLEN(0x14)` slots; its one real call site passes
+  `(dest=the same stack buffer, src=a real, low, module-relative
+  literal)`, consistent with a sibling string function (`STRCAT`/
+  `STRCMP` both plausible) but not confirmed. Also a safe no-op.
+
+Committed (`02731cc`). **Verified**: each fix measurably advances real
+execution -- 40,095 -> 40,177 (slot `0x40` fixed) -> 40,254 (slot
+`0xc` fixed) real steps before hitting the next, different gap. 250
+tests pass.
+
+**Hit a new, differently-shaped wall immediately after `0xc`**: instead
+of the usual clean "wander through zero, land on a real address"
+pattern, this run throws `S=1 with Rd=R15 (SPSR restore) not supported`
+at `pc=0x3000000b` -- an address far outside any real, meaningful
+range (not zero, not a real module offset), meaning some register
+computation upstream produced outright garbage rather than a clean
+null. Not investigated further this round -- a reasonable stopping
+point after three real fixes in a row (the ARM Extend instruction
+family, the stack/module collision, and these two static-base slots),
+each independently verified against real execution. The next concrete
+step for continuing Super BurgerTime is tracing backward from
+`0x3000000b` the same way every other gap in this log has been solved:
+find which real register computation produced it and why.
+
+**Overall shape of this round**: started completely unable to execute
+a single real instruction past `AEEMod_New`'s common prologue (the
+`uxth` gap); ends with real execution reaching deep into
+`HandleEvent(EVT_APP_START)` across four independent, verified fixes.
+Super BurgerTime is a substantially harder title than Double Dragon or
+Peggle were at the equivalent stage -- its `.mod` is far larger, uses
+a different, still-uncracked asset container (`.pkg`), and has already
+surfaced a whole category of bug (the stack/module collision) neither
+prior title ever triggered.

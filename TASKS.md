@@ -1271,6 +1271,28 @@ playable start-to-finish at full speed, standalone build.
       much later gap (a coprocessor instruction/SWI encoding at module
       offset `0xa0`). No regression on Peggle or Double Dragon; 250/250
       tests pass. See PHASE8_LOG.md for full evidence.
+      **Two more static-base slots found and fixed in quick
+      succession** (same "unwritten table slot → null function pointer"
+      shape as all fourteen already confirmed): slot `0x40` (called
+      `(applet_ptr, a 512-byte stack buffer, size=0x200)`, no confirmed
+      match) and slot `0xc` (reached via a standalone trampoline, sits
+      in the same cluster as `MEMCPY`/`MEMSET`/`STRCPY`/`STRLEN`, a
+      plausible `STRCAT`/`STRCMP` sibling but not confirmed) — both
+      registered as safe no-ops. **Verified**: each advances real
+      execution measurably (40,095 → 40,177 → 40,254 real steps).
+      **Hit a new, differently-shaped wall right after**: an `S=1 with
+      Rd=R15 (SPSR restore)` exception at `pc=0x3000000b`, an address
+      far outside any real range — some upstream register computation
+      produced outright garbage rather than the usual clean null.
+      Not yet traced; the next concrete step. Overall this round: went
+      from unable to execute a single real instruction past the common
+      prologue to reaching deep into `HandleEvent` across four
+      independent, verified fixes. Super BurgerTime is substantially
+      harder than Double Dragon/Peggle were at the same stage — a much
+      larger `.mod`, a different still-uncracked asset container
+      (`.pkg`), and a whole new bug category (the stack/module
+      collision) neither prior title triggered. See PHASE8_LOG.md for
+      full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
