@@ -1391,6 +1391,28 @@ playable start-to-finish at full speed, standalone build.
       Peggle/Double Dragon; 250/250 tests pass. Tracing the new gap
       inside `0x11c06c`'s own body is the next concrete step — a fresh
       thread, not yet started. See PHASE8_LOG.md for full evidence.
+      **Continued into it**: two more static-base slots. Slot `0xd0`
+      is called with `(name="boot", heap_object)` — `name` points at a
+      real, in-module ROM manifest (`"boot\0boot.rom\0zupa_p1.rom\0
+      zupa_s1.rom..."`; "zupapa" is this arcade original's real
+      Japanese title) — confirming real romset-loading code is now
+      actually executing. Fixing it (safe no-op) took the callback
+      from 95 to 2,883 real steps, including a real pass through the
+      `.pkg`/`"roms\neogeo"` string cluster the previous round found
+      unreferenced — direct proof that code is live, not dead. Slot
+      `0x184` is called `(flag=1, 0, table)`, too thin to identify;
+      fixing it (same treatment) changes the failure mode entirely —
+      real code no longer wanders, it settles into a genuine infinite
+      polling loop (alternating between two real calls forever),
+      almost certainly waiting on a real condition tied to the same
+      ROM-manifest loading, that a static no-op stub can never satisfy.
+      **This connects back to and validates the `.pkg`/romset question
+      set aside two rounds ago** — real further progress now likely
+      needs actually implementing romset loading, not another
+      static-base slot. A substantially bigger undertaking than the
+      incremental fixes so far; not attempted this round. No
+      regression on Peggle/Double Dragon; 250/250 tests pass. See
+      PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

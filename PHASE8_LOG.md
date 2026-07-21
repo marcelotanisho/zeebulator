@@ -2701,3 +2701,58 @@ static disassembly evidence, then confirmed empirically by observing
 real, previously-unreachable code execute. The next concrete step is
 tracing the new gap 95 steps into `0x11c06c`'s own real body -- a
 fresh investigation thread, not yet started.
+
+---
+
+**Continued into `0x11c06c`'s own real body -- two more static-base
+slots, each unlocking substantially more real execution, ending in a
+genuine, non-crashing infinite polling loop rather than another
+wander.**
+
+**Slot `0xd0`**: the 95-step wander traced to a static-base call at
+that offset, called with `(name="boot", heap_object)`. `name` points
+directly at a real, in-module string table (`supbtime.mod` offset
+`0x18ee50`: `"boot\0boot.rom\0zupa_p1.rom\0zupa_s1.rom..."`) -- a
+literal ROM manifest. "Zupapa" is this arcade original's real
+Japanese title, which, combined with the manifest shape itself,
+confirms this is the generic arcade-core's own real romset-loading
+code actually executing now, not the dead-looking code the earlier
+string search found. `heap_object` is a real pointer this codebase's
+own MALLOC slot had just returned. Registered as a safe no-op (no
+evidence beyond "very likely registers/hashes a named ROM chunk").
+**Verified**: the callback's own real step count jumped from 95 to
+2,883, including a real, repeating pass through the exact `.pkg`/
+`"roms\neogeo"` string cluster the earlier round found unreferenced --
+direct, concrete confirmation that cluster is live, reachable code.
+
+**Slot `0x184`**: the new 2,883-step wander traced to a second static-
+base call, `(flag=1, 0, table)` -- too thin a shape to identify.
+Registered the same way. **Verified, and the failure mode changes
+entirely**: real code no longer wanders to a null pointer at all --
+it settles into a genuine infinite loop, alternating between two real
+calls forever (`trap=0xf0000044` returning `1`, `trap=0xf000001c`
+returning `0`, repeating without end). Not a crash, not unmapped
+memory -- a real "wait until some condition becomes true" polling
+loop that our static, canned-response stubs can never satisfy, since
+neither response ever changes.
+
+Both slots committed (`22b80a3`). No regression on Peggle or Double
+Dragon; 250/250 tests pass each time.
+
+**This is a different, and arguably more fundamental, kind of wall
+than every other gap fixed in this file so far.** Every previous fix
+(the ARM Extend instructions, the stack/module collision, all
+eighteen static-base slots, the per-frame callback registration)
+unblocked *reaching* more real code. This one is different: the real
+code *is* reached, runs correctly, and is *waiting on a real
+condition this codebase cannot satisfy* without actually implementing
+whatever the polling loop is checking for -- almost certainly tied to
+the ROM-manifest loading this same callback was just seen walking
+through moments earlier. This connects back to (and validates) the
+`.pkg`/romset question this investigation set aside two rounds ago:
+it looks like actually implementing real romset loading -- or at
+least making the specific condition this loop checks become true --
+is what real further progress needs now, not another static-base slot
+or missing class. Not attempted this round; a substantially bigger
+undertaking than the incremental fixes so far, and a reasonable place
+to pause given how much ground this session has already covered.
