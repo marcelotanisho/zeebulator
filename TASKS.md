@@ -1250,6 +1250,27 @@ playable start-to-finish at full speed, standalone build.
       emulated CPU execution hitting a self-inflicted data corruption
       bug in the module's own relocation logic, not a missing HLE call
       or CPU instruction. See PHASE8_LOG.md for the full mechanism.
+      **Correction: that framing was premature.** A one-shot watchpoint
+      on the very first corrupting write found it happens during the
+      game's first, ordinary pass through its own relocation loop, not
+      a replay. **The real cause: this tool's emulated stack pointer is
+      a fixed `kBase + 0x200000` offset that safely cleared Double
+      Dragon's and Peggle's much smaller `.mod` files, but lands
+      *inside* Super BurgerTime's 2.8MB `.mod` — specifically inside
+      the exact address range its own real relocation-fixup table
+      occupies.** Reading that table off this tool's empty stack
+      returns zero mid-walk, and the loop's own real logic degenerates
+      into repeatedly corrupting its own relocation base (the `uxth`
+      instruction) before it executes — one root cause explaining every
+      symptom from both entries above. **Fixed** by sizing the stack
+      offset relative to the real module (`kBase + mod_size +
+      0x200000`) so it can't collide with any module regardless of
+      size. **Verified**: `AEEMod_Load` now completes cleanly,
+      `CreateInstance` succeeds too, and execution reaches 40,095 real
+      steps into `HandleEvent(EVT_APP_START)` before a new, unrelated,
+      much later gap (a coprocessor instruction/SWI encoding at module
+      offset `0xa0`). No regression on Peggle or Double Dragon; 250/250
+      tests pass. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

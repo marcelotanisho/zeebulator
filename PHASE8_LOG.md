@@ -2294,3 +2294,58 @@ understood. A reasonable pause point given the depth already reached
 this round -- the precise mechanism is now fully mapped for whoever
 continues, down to the exact two loop addresses and the exact
 corrupted value chain.
+
+---
+
+**Correction to the entry above: the "root-caused precisely" claim was
+premature.** The double-relocation-pass mechanism described is real
+and was verified, but framing it as *the* root cause assumed (without
+directly checking) that it only happened during a coincidental
+re-entry after an earlier, still-unexplained wander. A one-shot
+watchpoint on the very first write that ever corrupts module offset
+`0x9c` found the opposite: it happens during the game's first, only,
+and completely ordinary pass through its own relocation-fixup loop --
+`lr=0xf0000000` (this tool's own initial harness value, not a replay)
+and `sp=0x2ffff0` (an entirely normal, in-range stack address, not the
+`sp=0` seen during the later coincidental-re-entry symptom). There is
+no earlier, hidden bug in the relocation logic itself.
+
+**The real cause is much simpler and, in hindsight, obvious**: this
+tool hard-codes the emulated stack pointer to `kBase + 0x200000`,
+which safely cleared Double Dragon's (462,748-byte) and Peggle's
+(274,124-byte) `.mod` files, but Super BurgerTime's `.mod` is
+2,832,292 bytes -- large enough that this fixed offset lands *inside*
+the loaded module, specifically inside the exact address range
+(`0x2d9684`-`0x329f44`, confirmed via the real, file-embedded literals
+driving the relocation loop) the module's own relocation-fixup table
+occupies. Since this tool's stack there is essentially empty, the
+table reads back as zero partway through the real walk, and the
+loop's own real "read entry, add relocation base, write back" logic
+degenerates into repeatedly corrupting its own relocation base address
+-- which happens to be the `uxth` instruction -- before it's ever
+executed. This one root cause explains every symptom already
+documented across both of the last two entries: the garbage frame
+pointer, the eventual null return, and the "double pass" (which was
+real, but is a second-order effect of the *same* collision recurring
+after the wander this fix also happens to prevent, not an independent
+mystery).
+
+**Fixed** by sizing the stack offset relative to the real module
+(`kBase + mod_size + 0x200000`) instead of a fixed guess, so it cannot
+collide with any real module regardless of size. Committed (`8d907a2`).
+
+**Verified against real Super BurgerTime**: `AEEMod_Load` now completes
+cleanly, `IModule::CreateInstance` succeeds too (even with a guessed
+ClsId -- the folder name, `279125`, not yet confirmed as the *real*
+class ID the same way Peggle's/Double Dragon's were), and execution
+reaches deep into `HandleEvent(EVT_APP_START)` (40,095 real steps)
+before hitting a new, unrelated, much later real gap: a coprocessor
+instruction / SWI encoding at module offset `0xa0`. Confirmed no
+regression: Peggle still reaches its real event loop; Double Dragon's
+much smaller `.mod` was never near the fixed offset to begin with.
+250/250 tests pass.
+
+**Lesson for future titles**: a fixed-offset scratch stack is fragile
+by construction -- any sufficiently large real `.mod` can trigger this
+exact class of bug again. Sizing it relative to the real module (as
+fixed here) removes the whole category, not just this one instance.
