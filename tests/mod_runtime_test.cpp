@@ -230,9 +230,29 @@ TEST(ModRuntime, GetUpTimeMsStartsAtZeroAndAdvancesWithTick) {
   uint32_t get_uptime_ms_fn = cpu.GetMemory().Read32(kTableAddress + kGetUpTimeMsSlotOffset);
 
   EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 0u);
+  // Each read above also self-advances the clock by 1ms (see
+  // GetUpTimeMsImpl's doc comment) -- account for that alongside Tick's
+  // own external advances.
   mod_runtime.Tick(16);
   mod_runtime.Tick(16);
-  EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 32u);
+  EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 33u);
+}
+
+TEST(ModRuntime, GetUpTimeMsSelfAdvancesOnEveryReadEvenWithoutTick) {
+  // A real busy-wait loop that polls elapsed time entirely within a
+  // single native HLE call (no opportunity for the outer per-frame
+  // Tick() to run in between -- confirmed by real disassembly, see
+  // TASKS.md Phase 8) must still see time pass, or it can never
+  // observe its own deadline and would spin forever.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t get_uptime_ms_fn = cpu.GetMemory().Read32(kTableAddress + kGetUpTimeMsSlotOffset);
+
+  EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 0u);
+  EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 1u);
+  EXPECT_EQ(hle.CallArmFunction(get_uptime_ms_fn), 2u);
 }
 
 TEST(ModRuntime, MemsetFillsExactlyTheRequestedRangeAndReturnsDest) {

@@ -284,7 +284,27 @@ void ModRuntime::GetAppContextImpl(IArmCore& core) {
   core.SetRegister(kR0, context_address_);
 }
 
-void ModRuntime::GetUpTimeMsImpl(IArmCore& core) { core.SetRegister(kR0, uptime_ms_); }
+void ModRuntime::GetUpTimeMsImpl(IArmCore& core) {
+  core.SetRegister(kR0, uptime_ms_);
+  // Real code that busy-waits on elapsed time (confirmed by real
+  // disassembly -- see TASKS.md Phase 8, Super BurgerTime's real
+  // ROM-readiness poll at static-base slot 0x184) calls this in a tight
+  // loop entirely within a single native HLE call, with no opportunity
+  // for the outer per-frame Tick() below to ever run in between. A
+  // clock that only Tick() can move would stay frozen for the loop's
+  // entire lifetime, so any such real busy-wait can never see its own
+  // deadline pass and would spin forever -- not a real device's
+  // behavior, just an artifact of our clock only being driven
+  // externally. Self-advancing by a small synthetic amount on every
+  // read keeps this fully deterministic (same call sequence always
+  // produces the same values, unlike a genuine wall-clock read would)
+  // while still letting real elapsed-time busy-waits make forward
+  // progress and eventually resolve, the same way they would on real
+  // hardware given enough real wall-clock time. The 1ms-per-read rate
+  // is an inferred, not measured, choice -- plausible for a real
+  // "checked once per real hardware poll iteration" loop.
+  uptime_ms_ += 1;
+}
 
 void ModRuntime::Tick(uint32_t elapsed_ms) { uptime_ms_ += elapsed_ms; }
 

@@ -327,7 +327,10 @@ class ModRuntime {
   // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot
   // returns. Deterministic and tick-driven (not a real wall-clock read)
   // to match how the rest of the emulator's timing works (see
-  // IShellHle::Tick).
+  // IShellHle::Tick). GETUPTIMEMS itself also self-advances this same
+  // counter by a small synthetic amount on every read, independent of
+  // Tick() -- see GetUpTimeMsImpl's doc comment for why a purely
+  // externally-driven clock isn't enough.
   void Tick(uint32_t elapsed_ms);
 
   // Writes `table_address` at `module_base - 4` and populates the
