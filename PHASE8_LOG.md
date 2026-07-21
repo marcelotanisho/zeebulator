@@ -2641,3 +2641,63 @@ looked so far, not in a separate ticking mechanism at all. Not yet
 distinguished; the concrete next step is determining which of these
 two shapes is real before investing further in either the timer-gate
 question or the `.pkg` format itself.
+
+---
+
+**Resolved: `HandleEvent` runs a short, one-time init sequence (38
+real HLE calls total, confirmed via a full `hle_trace` of the call,
+temporary, reverted) and returns cleanly -- it does not run the whole
+game loop synchronously. The real per-frame driving mechanism is a
+still-unidentified class's own method, not `ISHELL_SetTimer`
+directly.**
+
+The very last real call before `HandleEvent` returns is on the class
+this log's previous entry just registered a generic scaffold for
+(`0x01001017`): its own slot 7 (byte offset `0x1c`) is called with
+`(this, flag=0x4000, callback=0x11c06c, user_data=0)`. Disassembling
+`0x11c06c` directly: it's real ARM code (`push {r4,r5,r6,lr}`,
+...), not data, and its body is unambiguous -- dereference a real
+module-global list head; if the list is empty, return immediately;
+otherwise walk the list calling a real vtable method (slot `0x2c`) on
+each entry. That is exactly the shape of a real "run one engine tick"
+function for a generic object/entity list, matching this title's own
+suspected "generic arcade-emulation-core" architecture (the `.pkg`/
+`"roms\neogeo"` strings from the previous entry).
+
+**The generic no-op scaffold this class had been given silently
+discarded this registration** -- it returned success without storing
+or scheduling the callback anywhere, so `0x11c06c` was never invoked
+even once. This is why nothing progressed past `HandleEvent`: the
+real "process a frame" function existed and was reachable, but nothing
+in this codebase's emulation was driving it.
+
+**Fixed, deliberately marked experimental**: added
+`IShellHle::ScheduleTimer` (refactored out of the existing
+`SetTimerImpl`, same identity-based re-arm semantics already
+documented and relied on for Double Dragon/Peggle), and overrode this
+one class's slot 7 to call it with the real `callback`/`user_data`
+this specific call site provides, on an *inferred* 16ms cadence
+(matching this file's own `kTickMs`) -- the real call site doesn't
+provide an explicit interval the way `ISHELL_SetTimer`'s own `dwCount`
+parameter does, so the cadence itself is a reasoned guess, clearly
+flagged as such in the code, not a confirmed real value. Committed
+(`3e66bdb`).
+
+**Verified empirically, not just plausible**: tick 0 now fires for the
+first time in this title's entire investigation, and real code inside
+the callback runs (real `MALLOC` calls, real initialization -- visible
+directly in the `hle_trace` output) before hitting a new, different,
+deeper real gap 95 steps into the callback's own execution (another
+wander to zero, this time not finding its way back within the
+5,000,000-step budget -- genuinely new, unexplored territory, not a
+repeat of anything already mapped). No regression on Peggle or Double
+Dragon (`ScheduleTimer`'s extraction is a pure refactor of
+`SetTimerImpl`'s existing behavior). 250/250 tests pass.
+
+**Not investigated further this round.** This is a natural, well-
+verified stopping point: a genuine structural hypothesis (this class's
+slot 7 is a real per-frame callback registration point) proposed from
+static disassembly evidence, then confirmed empirically by observing
+real, previously-unreachable code execute. The next concrete step is
+tracing the new gap 95 steps into `0x11c06c`'s own real body -- a
+fresh investigation thread, not yet started.

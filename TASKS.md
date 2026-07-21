@@ -1367,6 +1367,30 @@ playable start-to-finish at full speed, standalone build.
       (an old-style polling loop) rather than the event-driven
       `SetTimer` model the other two titles use — not yet
       distinguished. See PHASE8_LOG.md for full evidence.
+      **Resolved**: `HandleEvent` is short (38 real HLE calls total,
+      confirmed) and returns cleanly — not a synchronous full game
+      loop. Its very last real call is on the class the previous round
+      registered a generic scaffold for (`0x01001017`): slot 7 (byte
+      offset `0x1c`) called with `(this, flag=0x4000,
+      callback=0x11c06c, user_data=0)`. `0x11c06c` is real ARM code
+      whose body is a textbook "process a list of registered objects,
+      or return immediately if empty" shape — a real per-frame "run
+      one engine tick" function, matching the arcade-core structure
+      already suspected. The generic no-op scaffold silently discarded
+      this registration, so the callback was never invoked. **Fixed**:
+      added `IShellHle::ScheduleTimer` (refactored out of the existing
+      `SetTimerImpl`) and scheduled this specific callback through the
+      same real timer mechanism Double Dragon/Peggle's own loops use,
+      on an *inferred* 16ms cadence (the real call site doesn't
+      provide an explicit interval) — marked clearly as an inference,
+      not confirmed real behavior. **Verified empirically**: tick 0
+      now fires for the first time in this title's investigation, and
+      real code runs inside the callback (real `MALLOC` calls) before
+      hitting a new, deeper gap 95 steps in — direct confirmation the
+      hypothesis was correct, not just plausible. No regression on
+      Peggle/Double Dragon; 250/250 tests pass. Tracing the new gap
+      inside `0x11c06c`'s own body is the next concrete step — a fresh
+      thread, not yet started. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
