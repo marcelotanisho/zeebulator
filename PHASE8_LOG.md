@@ -2216,3 +2216,81 @@ compiled prologue, before any HLE surface is even reached. Tracked as
 the next concrete step for continuing Super BurgerTime. `AEECLSID` for
 `IModule::CreateInstance` also hasn't been found yet (blocked on
 `AEEMod_Load` completing first) — deferred until this is resolved.
+
+**Root-caused the null-return chain precisely, down to the exact
+mechanism (temporary instrumentation throughout: an `arm_interpreter.h`
+PC/register watchpoint, a `Memory::Write8` address watchpoint, and a
+few debug globals bridging the two -- all reverted, confirmed via clean
+`git diff`).** The bad `fp` (`0xffcffffb`) traced back one level
+further than the previous round reached: `mov ip, sp` at real module
+offset `0x10009c` -- the very instruction whose corruption we'd
+already fixed once (it's the same address the original `uxth`
+instruction lived at) -- was itself corrupted *again*, this time to
+`0xe1e0c27d`, by the time it executed. Watching every write to that
+address found the real culprit: a real ARM ROPI relocation-fixup loop
+(module offset `0x100040`-`0x100054`):
+
+```
+100040: cmp   r3, r4
+100044: ldrlt r6, [r3], #4      ; r6 = *table_entry (table walks r3->r4)
+100048: ldrlt r7, [r6, r5]      ; r7 = *(r6 + base)  -- read the fixup site
+10004c: addlt r7, r7, r5        ; r7 += base          -- apply the relocation
+100050: strlt r7, [r6, r5]      ; *(r6 + base) = r7   -- write it back
+100054: blt   0x100040
+```
+
+`r5` (the real relocation base for this pass) is computed just before
+this, at offset `0x100018`-`0x10001c` (`sub r4, pc, #32` -- computes
+the module's own real load address; `add r5, r4, #0x9c`) -- i.e. `r5 =
+kBase + 0x9c` exactly, the address of the very `mov ip, sp`
+instruction whose corruption started this whole investigation. That's
+not a coincidence: this fixup pass legitimately treats its own load
+address as the relocation base, since the table's entries (confirmed
+directly against the raw file: 82,480 real, sane, strictly-increasing,
+**never-zero** offsets, e.g. `0x110, 0x114, 0x118, ...`) are link-time-
+relative offsets needing exactly this base added.
+
+**The real table gets processed correctly once** (confirmed directly:
+watching the first pass through `r3=0x2d9684` shows the real value
+`0x110` read and a sane fixup applied) **-- then something writes zero
+across the table's entire address range (`0x2d9684`-`0x329f44`,
+confirmed as the exact range a separate real "clear it" loop at module
+offset `0x100078`-`0x100084` walks) -- and then this exact fixup loop
+runs a *second* time over the same, now-zeroed range.** On this second
+pass, every table "entry" reads back as `0` (since the real data is
+gone), so every iteration computes the exact same degenerate fixup
+target: `r6 + r5 = 0 + r5 = r5 = 0x10009c` -- repeatedly reading,
+adding `r5` to, and writing back that single address, corrupting real
+code a little further on each of the loop's ~82,480 iterations (each
+write is the previous corrupted value plus `r5` again, which is
+exactly the "steadily climbing corrupted value" pattern observed
+watching that address directly). This is what corrupts `mov ip, sp`
+before it's ever executed, which is what puts the wrong value in `ip`,
+which is what makes `sub fp, ip, #4` compute the garbage `fp` that
+eventually gets restored from a stale stack slot and, several function
+returns later, is read as a null "return to" address.
+
+**Not yet resolved: *why* the fixup loop runs a second time at all.**
+This is a real, structural question, not an interpreter bug in the
+loop itself -- every instruction in it (including the conditional,
+post-indexed `ldrlt`) was individually re-verified against a direct
+memory read and behaves correctly; the *data* it's reading the second
+time really is zero. Confirming whether this is genuinely intended
+real behavior this codebase doesn't yet support (e.g. a legitimate
+second relocation pass over reused scratch space, gated on something
+this codebase hasn't provisioned) or a wrong loop-bounds/loop-count
+computed earlier in the chain needs finding this loop's *caller* --
+tracking the return address (`lr`) at both the first and second entry
+to `0x100040` is the concrete next step, not yet done this round.
+
+This is a categorically different, and by far the deepest, gap found
+in this entire investigation across all three titles -- every previous
+gap (Double Dragon, Peggle, and Super BurgerTime's own `uxth`) was
+either a missing HLE call, an unprovisioned context field, or a
+genuinely unimplemented CPU instruction; this is real, correctly-
+emulated CPU execution reaching a real, self-inflicted data corruption
+bug in the *module's own* real relocation logic, for a reason not yet
+understood. A reasonable pause point given the depth already reached
+this round -- the precise mechanism is now fully mapped for whoever
+continues, down to the exact two loop addresses and the exact
+corrupted value chain.

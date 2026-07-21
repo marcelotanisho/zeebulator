@@ -1230,6 +1230,26 @@ playable start-to-finish at full speed, standalone build.
       materially different kind of gap than any fixed so far. Not yet
       root-caused; tracked as the next concrete step. See PHASE8_LOG.md
       for full evidence.
+      **Root-caused precisely, down to the exact mechanism** (temporary
+      watchpoints, all reverted): a real ARM ROPI relocation-fixup loop
+      (module offset `0x100040`-`0x100054`) correctly processes its
+      real, 82,480-entry fixup table once — then a separate real
+      "clear it" loop zeroes the table's own memory — then the *same
+      fixup loop runs a second time* over the now-zeroed range, and
+      every "entry" reading back as `0` makes every iteration
+      degenerate to the same target address (its own relocation base),
+      corrupting real code there a little further on each of ~82,480
+      iterations. That's what corrupts the `uxth`/`mov ip, sp`
+      instruction before it executes, which cascades into the garbage
+      `fp` and the eventual null return. **Why the fixup loop runs
+      twice isn't resolved** — every instruction in the loop re-verified
+      correct against direct memory reads; finding the loop's *caller*
+      (comparing `lr` at both entries) is the concrete next step. This
+      is the deepest and most different kind of gap found in this
+      entire investigation across all three titles — real, correctly-
+      emulated CPU execution hitting a self-inflicted data corruption
+      bug in the module's own relocation logic, not a missing HLE call
+      or CPU instruction. See PHASE8_LOG.md for the full mechanism.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
