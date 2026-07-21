@@ -1284,15 +1284,29 @@ playable start-to-finish at full speed, standalone build.
       Rd=R15 (SPSR restore)` exception at `pc=0x3000000b`, an address
       far outside any real range — some upstream register computation
       produced outright garbage rather than the usual clean null.
-      Not yet traced; the next concrete step. Overall this round: went
-      from unable to execute a single real instruction past the common
-      prologue to reaching deep into `HandleEvent` across four
-      independent, verified fixes. Super BurgerTime is substantially
-      harder than Double Dragon/Peggle were at the same stage — a much
-      larger `.mod`, a different still-uncracked asset container
-      (`.pkg`), and a whole new bug category (the stack/module
-      collision) neither prior title triggered. See PHASE8_LOG.md for
-      full evidence.
+      **Traced back precisely: it's the same clean null-pointer wander
+      as always, but the root cause is a materially different kind of
+      gap.** The null itself comes from `r2` (dereferenced two calls
+      deep) being read from a real module global, `0x2e28fc`, that
+      falls *inside* the relocation table's own reclaimed scratch
+      range — real code expects some other, not-yet-executed real
+      initialization to have turned that memory into real BSS/heap
+      data by now, and nothing in this codebase's current execution
+      path does. Unlike the sixteen static-base slots (missing
+      *system* function pointers, safely stubbable), this is a missing
+      piece of the *game's own* init sequence — guessing a placeholder
+      value here risks silent wrong behavior, not a clean crash, so
+      deliberately not guessed at. Finding what real code should
+      populate it (likely needs tracing `CreateInstance`'s own body,
+      not yet disassembled this deep) is the next concrete step.
+      Overall this round: went from unable to execute a single real
+      instruction past the common prologue to reaching deep into
+      `HandleEvent` across four independent, verified fixes. Super
+      BurgerTime is substantially harder than Double Dragon/Peggle
+      were at the same stage — a much larger `.mod`, a different
+      still-uncracked asset container (`.pkg`), and a whole new bug
+      category (the stack/module collision) neither prior title
+      triggered. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

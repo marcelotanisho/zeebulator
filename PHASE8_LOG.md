@@ -2404,3 +2404,48 @@ Peggle were at the equivalent stage -- its `.mod` is far larger, uses
 a different, still-uncracked asset container (`.pkg`), and has already
 surfaced a whole category of bug (the stack/module collision) neither
 prior title ever triggered.
+
+---
+
+**Traced the `S=1/Rd=R15` garbage-address wall back to its real
+source (temporary trace, reverted): it is the same clean "null
+function pointer -> wander through zero" pattern as every other gap in
+this table, not a new kind of bug.** The wander that eventually lands
+on the garbage `0x3000000b` address starts, as always, at a step where
+`pc` first becomes exactly `0`. Tracing that exact step: real code
+does `ldr ip,[r2]` then `ldr pc,[ip,#0x1c]` -- at first glance another
+unconfirmed static-base slot (`0x1c`), matching the same shape as the
+`0x40`/`0xc` gaps just fixed. It isn't: `r2` itself is already `0` at
+that point, read two instructions earlier via `ldr r2,[r5]` with
+`r5 = 0x2e28fc`.
+
+**`0x2e28fc` is not a static-base table slot at all -- it falls
+*inside* the relocation-fixup table's own real address range
+(`0x2d9684`-`0x329f44`, the same range this log's write-up on the
+stack/module collision fix already establishes)**, i.e. it's part of
+the real scratch memory the module's own "clear it after use" loop
+(`0x100078`-`0x100084`) zeroes once the relocation table has been
+consumed. Real code evidently expects some *other*, not-yet-executed
+piece of real initialization to have since written a real, meaningful
+pointer into that same reclaimed memory (turning it into real BSS/heap
+storage) before `HandleEvent` ever reads it back out through `r5`.
+Nothing in this codebase's execution path so far writes there.
+
+**This is a materially different kind of gap than the fourteen (now
+sixteen) static-base table slots**: those are all missing *system-
+provided* function pointers, safely stubbable in isolation. This is a
+missing piece of the *game's own* initialization sequence -- some real
+code, reached from somewhere other than the `AEEMod_Load` ->
+`CreateInstance` -> `HandleEvent(EVT_APP_START)` chain this tool
+drives (or reached from within one of those but not yet executed due
+to an earlier, still-undiagnosed branch), that's supposed to populate
+this specific piece of reclaimed scratch memory. Guessing a placeholder
+value here would be exactly the kind of unfounded guess this log has
+avoided throughout -- unlike a null function pointer (safe to stub with
+a no-op), a wrong *data* value here risks silently wrong behavior
+rather than a clean, diagnosable crash. Not resolved this round --
+finding what real code is supposed to write to `0x2e28fc` (or the
+broader reclaimed region around it) before `HandleEvent` runs is the
+next concrete step, and likely needs tracing back through
+`CreateInstance`'s own real body (not yet disassembled in this depth)
+rather than `HandleEvent` itself.
