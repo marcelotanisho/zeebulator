@@ -493,6 +493,50 @@ void ArmInterpreter::ExecuteMultiply(uint32_t instr) {
   }
 }
 
+void ArmInterpreter::ExecuteExtend(uint32_t instr) {
+  // ARMv6 "Extend (and add)" instructions: cond 0110 op[24:20] Rn Rd
+  // rotate[11:10] 00 0111 Rm. Confirmed real encoding (not hand-derived
+  // from the ARM ARM's prose) by assembling each real mnemonic with
+  // arm-none-eabi-as and reading back the actual bytes: UXTB/UXTAB =
+  // op 0x0E, UXTH/UXTAH = 0x0F, SXTB/SXTAB = 0x0A, SXTH/SXTAH = 0x0B --
+  // Rn=0b1111 selects the plain (non-accumulate) form, any other Rn
+  // selects the accumulate form (Rd = Rn + extended Rm). Needed for
+  // Super BurgerTime's real `AEEMod_New` (TASKS.md Phase 8): a real
+  // `uxth r0, r0` at module offset 0xdc, previously unimplemented and
+  // falling into the same "Undefined instruction space" catch-all as
+  // truly-reserved media-instruction encodings.
+  uint32_t op = (instr >> 20) & 0xF;
+  uint32_t rn = (instr >> 16) & 0xF;
+  uint32_t rd = (instr >> 12) & 0xF;
+  uint32_t rotate = (instr >> 10) & 0x3;
+  uint32_t rm = instr & 0xF;
+
+  // is_immediate_shift=false: the Extend family's 2-bit rotate field
+  // means true "no rotation" at 0, unlike the general shifter operand's
+  // "ROR #0 encodes RRX" special case (see ShiftWithCarry's doc
+  // comment) -- passing true here would wrongly rotate-through-carry
+  // instead of leaving the value untouched.
+  bool carry_out_unused;
+  uint32_t rotated = ShiftWithCarry(ReadOperandRegister(rm), /*type=*/3 /*ROR*/, rotate * 8,
+                                     GetFlag(kCpsrC), carry_out_unused,
+                                     /*is_immediate_shift=*/false);
+  uint32_t extended;
+  switch (op) {
+    case 0x0E: extended = rotated & 0xFF; break;    // UXTB/UXTAB
+    case 0x0F: extended = rotated & 0xFFFF; break;  // UXTH/UXTAH
+    case 0x0A:                                      // SXTB/SXTAB
+      extended = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(rotated & 0xFF)));
+      break;
+    case 0x0B:  // SXTH/SXTAH
+      extended =
+          static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(rotated & 0xFFFF)));
+      break;
+    default:
+      throw UnimplementedInstruction("Reserved media-instruction encoding");
+  }
+  regs_[rd] = (rn == 0xF) ? extended : ReadOperandRegister(rn) + extended;
+}
+
 uint32_t ArmInterpreter::ReadThumbOperandRegister(uint32_t index) const {
   // Thumb's PC-as-operand rule (format 5 hi-register ops are the only
   // way to read R15 in Thumb state) differs from ARM's: +4, word-
@@ -956,10 +1000,23 @@ void ArmInterpreter::Step() {
 
     if (bits27_25 == 0b101) {
       ExecuteBranch(instr);
-    } else if (bits27_25 == 0b011) {
-      if ((instr & 0x10) != 0) {
+    } else if (bits27_25 == 0b011 && (instr & 0x10) != 0) {
+      // ARMv6 "Media instructions" space. Only the Extend (and add)
+      // family (SXTB/SXTH/UXTB/UXTH and their accumulate forms) is
+      // implemented -- see ExecuteExtend's doc comment for the real,
+      // confirmed encoding. Everything else in this space (parallel
+      // arithmetic, SIMD, saturate, USAD8, ...) is genuinely
+      // unimplemented, not yet needed by any real game probed so far.
+      uint32_t bits27_20 = (instr >> 20) & 0xFF;
+      uint32_t bits9_4 = (instr >> 4) & 0x3F;
+      bool is_extend = bits9_4 == 0b000111 &&
+                        (bits27_20 == 0x6A || bits27_20 == 0x6B || bits27_20 == 0x6E ||
+                         bits27_20 == 0x6F);
+      if (!is_extend) {
         throw UnimplementedInstruction("Undefined instruction space");
       }
+      ExecuteExtend(instr);
+    } else if (bits27_25 == 0b011) {
       ExecuteSingleDataTransfer(instr);
     } else if (bits27_25 == 0b010) {
       ExecuteSingleDataTransfer(instr);

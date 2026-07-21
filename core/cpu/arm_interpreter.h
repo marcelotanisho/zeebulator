@@ -86,6 +86,7 @@ class ArmInterpreter : public IArmCore {
   void ExecuteBranchExchange(uint32_t instr);
   void ExecuteHalfwordTransfer(uint32_t instr);
   void ExecuteMultiply(uint32_t instr);
+  void ExecuteExtend(uint32_t instr);
 
   // Sets PC from an interworking write (BX/BLX in either state, LDR/LDM
   // into PC in ARM state, POP into PC in Thumb state, and the BLX(1)

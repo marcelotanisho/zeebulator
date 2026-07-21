@@ -436,3 +436,85 @@ TEST(Cpu, PushThenPopRoundTripsMultipleRegisters) {
   EXPECT_EQ(cpu.GetRegister(kR1), 0x22222222u);
   EXPECT_EQ(cpu.GetRegister(kSP), 0x5000u) << "SP restored to original";
 }
+
+// --- Extend (and add): SXTB/SXTH/UXTB/UXTH and accumulate forms ---
+// Encodings confirmed by assembling the real mnemonics with
+// arm-none-eabi-as and reading back the actual bytes (see
+// ArmInterpreter::ExecuteExtend's doc comment) -- not hand-derived.
+
+TEST(Cpu, UxthZeroExtendsLowHalfword) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0xABCD1234);
+  cpu.GetMemory().Write32(0, 0xE6FF0070);  // UXTH R0, R0
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0x00001234u);
+}
+
+TEST(Cpu, UxtbZeroExtendsLowByte) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0xABCD1234);
+  cpu.GetMemory().Write32(0, 0xE6EF0070);  // UXTB R0, R0
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0x00000034u);
+}
+
+TEST(Cpu, SxtbSignExtendsNegativeByte) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x00000080);  // low byte 0x80 -- negative as int8
+  cpu.GetMemory().Write32(0, 0xE6AF0070);  // SXTB R0, R0
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0xFFFFFF80u);
+}
+
+TEST(Cpu, SxthSignExtendsNegativeHalfword) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x00008000);  // low halfword 0x8000 -- negative as int16
+  cpu.GetMemory().Write32(0, 0xE6BF0070);  // SXTH R0, R0
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0xFFFF8000u);
+}
+
+TEST(Cpu, UxtbRotatesSourceBeforeExtracting) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR2, 0x12345678);
+  cpu.GetMemory().Write32(0, 0xE6EF1472);  // UXTB R1, R2, ROR #8
+  cpu.Step();
+  // ROR #8 of 0x12345678 is 0x78123456; low byte is 0x56.
+  EXPECT_EQ(cpu.GetRegister(kR1), 0x00000056u);
+}
+
+TEST(Cpu, UxthRotatesSourceBeforeExtracting) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR4, 0x12345678);
+  cpu.GetMemory().Write32(0, 0xE6FF3874);  // UXTH R3, R4, ROR #16
+  cpu.Step();
+  // ROR #16 of 0x12345678 is 0x56781234; low halfword is 0x1234.
+  EXPECT_EQ(cpu.GetRegister(kR3), 0x00001234u);
+}
+
+TEST(Cpu, UxtabAddsExtendedByteToAccumulator) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0x00000100);
+  cpu.SetRegister(kR2, 0x000000FF);
+  cpu.GetMemory().Write32(0, 0xE6E10072);  // UXTAB R0, R1, R2
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0x000001FFu);
+}
+
+TEST(Cpu, UxtahAddsExtendedHalfwordToAccumulator) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0x00001000);
+  cpu.SetRegister(kR2, 0x0000FFFF);
+  cpu.GetMemory().Write32(0, 0xE6F10072);  // UXTAH R0, R1, R2
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR0), 0x00010FFFu);
+}
+
+TEST(Cpu, OtherMediaInstructionSpaceStillUnimplemented) {
+  // REV R0, R0 -- same bits[27:20] family as SXTH (0x6B) but a different
+  // bits[9:4] pattern, confirming the Extend-family check doesn't
+  // over-match neighboring, still-unimplemented media encodings.
+  ArmInterpreter cpu;
+  cpu.GetMemory().Write32(0, 0xE6BF0F30);  // REV R0, R0
+  EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
+}
