@@ -534,7 +534,14 @@ int main(int argc, char** argv) {
   // first instruction is `STR LR,[SP,#-4]!`; without this, that write
   // corrupts memory near address 0 and every stack-relative access after
   // it, matching exactly the convention tools/mod_probe.cpp already uses.
-  cpu.SetRegister(zeebulator::kSP, kBase + 0x00200000);
+  // Sized relative to the real module (a fixed `kBase + 0x200000` offset
+  // silently collided with real module data for Super BurgerTime's own
+  // 2.8MB `.mod` -- see PHASE8_LOG.md for the full real evidence: a real
+  // ROPI relocation-fixup table computed from real, file-embedded
+  // literals landed squarely inside where that fixed offset put SP,
+  // making the table read back as zero mid-walk and self-corrupting
+  // real code well before any HLE surface was ever reached).
+  cpu.SetRegister(zeebulator::kSP, kBase + mod_size + 0x00200000);
 
   // AEEMod_Load must be the first thing in the module (real BREW
   // requirement, confirmed against AEEModGen.c in Phase 3) -- and
