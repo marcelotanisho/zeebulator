@@ -1313,14 +1313,40 @@ playable start-to-finish at full speed, standalone build.
       own real control flow upstream of the crash site — not yet
       disassembled that deep; picking this back up should start from
       `HandleEvent`'s own entry (`0x0010b5b4`), not the crash site.
+      **Followed through, and Super BurgerTime now reaches its real
+      steady-state event loop.** Traced `HandleEvent` forward from its
+      own entry: it's a thin real `AEEApplet`-template wrapper that
+      calls the game's own handler (stored at applet+`0x18` by
+      `CreateInstance`) before doing further built-in processing —
+      and *that* built-in processing calls
+      `ISHELL_CreateInstance(shell, ClsId=0x01001017, ppObj=&g_2e28fc)`,
+      the same global this investigation already proved was otherwise
+      untouched. `0x01001017` wasn't registered, so `CreateInstanceImpl`
+      correctly failed and correctly left the output unwritten — but
+      real code never checks the status and dereferences the still-null
+      result two instructions later. **Not a new kind of gap after
+      all** — the same "unchecked CreateInstance failure" pattern
+      already solved for Peggle and Double Dragon. Fixed with the same
+      generic scaffold treatment. **Verified**: `HandleEvent` now
+      returns real success, and execution reaches "Reached the event
+      loop with no unhandled instruction!" — the same milestone already
+      hit for Double Dragon and Peggle, now on a third, independently-
+      compiled title, stable over a 30-second run. No regression on
+      either prior title; 250/250 tests pass.
       Overall this round: went from unable to execute a single real
-      instruction past the common prologue to reaching deep into
-      `HandleEvent` across four independent, verified fixes. Super
-      BurgerTime is substantially harder than Double Dragon/Peggle
-      were at the same stage — a much larger `.mod`, a different
-      still-uncracked asset container (`.pkg`), and a whole new bug
-      category (the stack/module collision) neither prior title
-      triggered. See PHASE8_LOG.md for full evidence.
+      instruction past the common prologue to a third real commercial
+      title reaching its steady-state event loop, across six
+      independent, verified fixes (the ARM Extend instruction family,
+      the stack/module address collision, three static-base slots, and
+      this unidentified class). Super BurgerTime was substantially
+      harder than Double Dragon/Peggle were at the same stage — a much
+      larger `.mod`, a different still-uncracked asset container
+      (`.pkg`), and a whole new bug category (the stack/module
+      collision) neither prior title triggered.
+      `resources.bar`/`.pkg`-style asset loading remains uncracked for
+      this title (same as Peggle) — the natural next phase now that the
+      steady-state milestone itself is reached. See PHASE8_LOG.md for
+      full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

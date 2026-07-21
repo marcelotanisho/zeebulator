@@ -2501,3 +2501,76 @@ picking this back up should start from `HandleEvent`'s own entry
 (`0x0010b5b4`, per the confirmed vtable slot), not from the crash site
 backward, since backward tracing from the crash has now been pushed as
 far as it profitably goes without new evidence.
+
+---
+
+**Followed through: traced `HandleEvent` forward from its own real
+entry, and Super BurgerTime reaches its real steady-state event
+loop.** A full, from-the-start trace (temporary, reverted) of the
+`HandleEvent(EVT_APP_START)` call confirms the structural shape
+guessed at above: `0x0010b5b4` is a thin, real `AEEApplet`-template
+wrapper (`push {lr}`, `uxth` the two 16-bit args, call `ldr pc,[r0,
+#24]` -- the game's own real handler, stored at applet offset `0x18`
+by `CreateInstance`'s own construction of the applet struct) that
+forwards to the real per-game handler (`0x0011bd88`) before doing
+further built-in processing of its own once that returns.
+
+**The real source of the `0x2e28fc` gap, found precisely**: partway
+through that built-in processing (`supbtime.mod` offset `0x11be90`-
+`0x11be98`), real code calls `ISHELL_CreateInstance(shell,
+ClsId=0x01001017, ppObj=&g_2e28fc)` -- a completely ordinary real
+`ISHELL_CreateInstance` call whose *output slot* happens to be the
+same module global this investigation already proved is otherwise
+never written. `0x01001017` was not a registered class, so
+`IShellHle::CreateInstanceImpl` correctly returned failure and
+correctly left `*ppObj` untouched (matching real `AEEShell.h`
+semantics -- this HLE implementation was never the bug). Real code,
+exactly as seen at least four times before in this project's history
+(Peggle's self-propagating-stub investigation, Double Dragon's
+`0x01002001`), never checks the returned status: two instructions
+later it dereferences `*(0x2e28fc)` (still `0`) as if it were a valid
+object, calls a method on the resulting null, and crashes. **Not a new
+kind of gap after all** -- the "materially different" framing in the
+previous two entries was itself premature; once traced to its actual
+source it's the same well-understood, well-precedented pattern as
+every other unidentified-class gap in this log.
+
+**Fixed the same way as every prior instance**: registered a generic,
+deliberately-unguessed `BuildGenericStubObject` scaffold for ClsId
+`0x01001017`, confirmed via a memory watchpoint spanning the entire
+run (temporary, reverted) that this one real call site is the only
+thing that ever touches `g_2e28fc`. Committed (`60a6057`).
+
+**Verified against real Super BurgerTime**: `HandleEvent(EVT_APP_
+START)` now returns `1` (real success), and execution reaches
+**"Reached the event loop with no unhandled instruction! Window will
+stay open."** -- the exact same steady-state milestone already
+achieved for Double Dragon and Peggle, now on a third, independently-
+compiled title. Confirmed stable over a sustained 30-second run (no
+wander, no exception -- the same "success can look like a hang"
+signature already trusted for the other two titles). No regression on
+Peggle or Double Dragon (both re-checked, still reach their own event
+loops). 250/250 tests pass.
+
+**Incidental finding, not yet acted on**: while locating a fresh
+address for this new scaffold object, noticed `shell_hle.RegisterInstance`
+is called with the literal `0x01014bc4` twice in `tools/game_probe.cpp`
+-- once for the real, confirmed `AEECLSID_EGL`, and again (from the
+earlier Peggle "try new class, fall back to old" investigation) for an
+unrelated, unidentified class that happens to share the same real
+numeric ID. The second registration silently overwrites the first.
+Given Peggle still reaches its event loop cleanly with this collision
+in place, it isn't an active regression, but it's a latent
+correctness issue worth a closer look in a future round -- not
+investigated further this round to stay focused on Super BurgerTime.
+
+**Overall shape of the Super BurgerTime investigation this round**:
+started completely unable to execute a single real instruction past
+the common module prologue; ends with a third real, independently-
+compiled commercial title reaching the same real steady-state
+milestone as Double Dragon and Peggle, across six independent,
+verified fixes (the ARM Extend instruction family, the stack/module
+address collision, three static-base slots, and this unidentified
+class). `resources.bar`/`.pkg`-style asset loading remains uncracked
+for this title, same as it does for Peggle -- the natural next phase
+now that the steady-state milestone itself is reached.
