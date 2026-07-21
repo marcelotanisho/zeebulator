@@ -15,7 +15,16 @@
  * real compiled games will get to skip.
  */
 
-typedef unsigned short AECHAR;
+/* AECHAR is a real single 8-bit byte per character on real Zeebo/BREW
+ * hardware -- not the 16-bit UTF-16 code unit real BREW's AEEText.h
+ * documents as the general case (see IDisplayHle::DrawText's own doc
+ * comment, core/brew/idisplay.cpp, for the real evidence this was
+ * corrected against: a real Double Dragon DrawText call site's in-memory
+ * string only decodes to legible English text when read one byte per
+ * character). Matches real hardware rather than the generic
+ * documentation on purpose, since this fixture exists to test
+ * loader/HLE compatibility with real compiled code. */
+typedef unsigned char AECHAR;
 typedef unsigned int uint32;
 typedef int boolean;
 

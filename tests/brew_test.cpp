@@ -45,13 +45,17 @@ class TestBackend : public Backend {
   std::vector<uint16_t> last_frame;
 };
 
-void WriteUtf16String(zeebulator::Memory& mem, uint32_t addr,
-                       const std::string& text) {
+// AECHAR is a real single 8-bit byte per character on this real Zeebo/BREW
+// build, not the 16-bit UTF-16 code unit real BREW's AEEText.h documents
+// as the general case -- see IDisplayHle::DrawText's own doc comment for
+// the real evidence (a real Double Dragon DrawText call site's in-memory
+// string only decodes to legible English text when read one byte per
+// character).
+void WriteAeeCharString(zeebulator::Memory& mem, uint32_t addr, const std::string& text) {
   for (size_t i = 0; i < text.size(); ++i) {
-    mem.Write16(addr + static_cast<uint32_t>(i) * 2,
-                static_cast<uint16_t>(text[i]));
+    mem.Write8(addr + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
   }
-  mem.Write16(addr + static_cast<uint32_t>(text.size()) * 2, 0);
+  mem.Write8(addr + static_cast<uint32_t>(text.size()), 0);
 }
 
 }  // namespace
@@ -169,7 +173,7 @@ TEST(IDisplayHle, DrawTextThenUpdatePushesCorrectFrame) {
   uint32_t display_obj =
       display.Build(cpu.GetMemory(), hle, kVtableAddr, kObjectAddr);
 
-  WriteUtf16String(cpu.GetMemory(), 0x3000, "HI");
+  WriteAeeCharString(cpu.GetMemory(), 0x3000, "HI");
 
   // Stack args beyond R0-R3: x, y, prcBackground, dwFlags.
   cpu.SetRegister(zeebulator::kSP, 0x9000);
@@ -268,7 +272,7 @@ TEST(IDisplayHle, SetColorChangesDrawTextColorAndReturnsPrevious) {
       hle.CallArmFunction(set_color_sentinel, display_obj, /*clr=*/0, /*rgb=*/0x000000FF);  // blue
   EXPECT_EQ(previous, 0x00FFFFFFu) << "default color is white before any SetColor call";
 
-  WriteUtf16String(cpu.GetMemory(), 0x3000, "H");
+  WriteAeeCharString(cpu.GetMemory(), 0x3000, "H");
   cpu.SetRegister(zeebulator::kSP, 0x9000);
   cpu.GetMemory().Write32(0x9000, 0);  // x
   cpu.GetMemory().Write32(0x9004, 0);  // y

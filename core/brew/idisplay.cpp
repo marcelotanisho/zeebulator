@@ -37,12 +37,22 @@ void IDisplayHle::DrawText(IArmCore& core) {
   int32_t x = static_cast<int32_t>(HleRuntime::ReadStackArg(core, 0));
   int32_t y = static_cast<int32_t>(HleRuntime::ReadStackArg(core, 1));
 
-  // BREW convention: a negative nChars means "null-terminated" -- scan
-  // for a zero UTF-16 (AECHAR) code unit.
+  // AECHAR is a real, single 8-bit byte per character on this real
+  // Zeebo/BREW build -- NOT the 16-bit UTF-16 code unit real BREW's
+  // AEEText.h documents as the general-case definition. Found by
+  // decoding a real in-memory string at a real DrawText call site
+  // (Double Dragon, TASKS.md Phase 8): every other byte of the
+  // "16-bit code units" this was originally read as turned out to be
+  // an ordinary ASCII letter, never a padding zero -- e.g. the raw
+  // bytes spell "Failed in the initialization of the library." when
+  // read one byte per character, which is not possible for real
+  // ASCII-range UTF-16 (every high byte would have to be 0x00). A
+  // negative nChars means "null-terminated" -- scan for a single zero
+  // byte, not a zero 16-bit unit.
   int32_t len = n_chars;
   if (len < 0) {
     len = 0;
-    while (core.GetMemory().Read16(pc_text + static_cast<uint32_t>(len) * 2) != 0) {
+    while (core.GetMemory().Read8(pc_text + static_cast<uint32_t>(len)) != 0) {
       ++len;
     }
   }
@@ -52,7 +62,7 @@ void IDisplayHle::DrawText(IArmCore& core) {
   uint16_t color = ToRgb565(current_rgbval_);
   auto& mem = core.GetMemory();
   for (int i = 0; i < len; ++i) {
-    uint16_t code_unit = mem.Read16(pc_text + static_cast<uint32_t>(i) * 2);
+    uint8_t code_unit = mem.Read8(pc_text + static_cast<uint32_t>(i));
     char c = (code_unit < 128) ? static_cast<char>(code_unit) : '\0';
     if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
     const uint8_t* glyph = GetGlyph5x7(c);

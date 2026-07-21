@@ -388,10 +388,10 @@ int main(int argc, char** argv) {
   uint32_t unknown_0x01041207_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x8001E000, /*object=*/0x8001F000, /*slot_count=*/20);
   shell_hle.RegisterInstance(0x01041207, unknown_0x01041207_obj);
-  // Three more real, unidentified classes found investigating why
+  // Two more real, unidentified classes found investigating why
   // Peggle's tick loop settles into a fixed, non-progressing steady
-  // state (TASKS.md Phase 8). The first two are a real "try the newer
-  // class, fall back to the older one" pair: real disassembly
+  // state (TASKS.md Phase 8). The first is half of a real "try the
+  // newer class, fall back to the older one" pair: real disassembly
   // (`peggle.mod` offset 0x104a50-0x104aa0) shows `ISHELL_CreateInstance`
   // called with ClsId 0x0103d8ec first, and -- only if that fails --
   // ClsId 0x01014bc4 next, both immediately after an `AddRef`-shaped
@@ -400,29 +400,37 @@ int main(int argc, char** argv) {
   // second, independently-compiled real title
   // (`Super BurgerTime/mod/279125/supbtime.mod` offset 0x110e64-
   // 0x110ef4) -- strong evidence this is a real, standard SDK/compiler-
-  // emitted helper rather than anything Peggle-specific, though neither
-  // ID matches any class/interface ID in this repo's own reference BREW
-  // headers. The third, ClsId 0x01030766 (`peggle.mod` offset
+  // emitted helper rather than anything Peggle-specific. `0x01014bc4`
+  // is NOT a second unidentified class needing its own scaffold, though
+  // -- it's the already-real, already-registered `AEECLSID_EGL` above
+  // (confirmed via the bundled SDK headers, not a guess). A generic
+  // stub was mistakenly registered for it here too in an earlier round,
+  // silently shadowing the real EGL object for every title, including
+  // Double Dragon's own unrelated, direct `CreateInstance(AEECLSID_EGL)`
+  // call during real graphics init -- found by tracing exactly why that
+  // call's own `eglGetDisplay` was returning a blind 0 (TASKS.md Phase
+  // 8). The fallback class this stub existed for is dead code anyway:
+  // `0x0103d8ec` is itself an always-succeeding stub, so real code
+  // never actually reaches the ClsId 0x01014bc4 fallback branch at all.
+  // Only `0x0103d8ec` needs a scaffold here.
+  uint32_t unknown_0x0103d8ec_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80040000, /*object=*/0x80041000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x0103d8ec, unknown_0x0103d8ec_obj);
+  // The third class, ClsId 0x01030766 (`peggle.mod` offset
   // 0x10a208-0x10a24c), is reached via a real IShell pointer stored at
   // offset +12 of the function's own struct parameter -- the same
   // confirmed Shell-field convention as the ambient app context struct
   // -- with its result stored unconditionally (no failure check) into
-  // that struct's own offset +0x48. All three get the same generic,
-  // deliberately-unguessed scaffold treatment already established for
-  // `0x01002001` (see this file's/PHASE8_LOG.md's Double Dragon
-  // history): safe enough that CreateInstance succeeds and later method
-  // calls resolve cleanly, without assuming a real interface shape none
-  // of this project's evidence actually supports yet.
-  uint32_t unknown_0x0103d8ec_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80040000, /*object=*/0x80041000, /*slot_count=*/40);
-  shell_hle.RegisterInstance(0x0103d8ec, unknown_0x0103d8ec_obj);
-  uint32_t unknown_0x01014bc4_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80042000, /*object=*/0x80043000, /*slot_count=*/40);
-  shell_hle.RegisterInstance(0x01014bc4, unknown_0x01014bc4_obj);
+  // that struct's own offset +0x48. Same generic, deliberately-
+  // unguessed scaffold treatment already established for `0x01002001`
+  // (see this file's/PHASE8_LOG.md's Double Dragon history): safe
+  // enough that CreateInstance succeeds and later method calls resolve
+  // cleanly, without assuming a real interface shape none of this
+  // project's evidence actually supports yet.
   uint32_t unknown_0x01030766_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x80044000, /*object=*/0x80045000, /*slot_count=*/40);
   shell_hle.RegisterInstance(0x01030766, unknown_0x01030766_obj);
-  // A fourth real, unidentified class, found continuing the Super
+  // A third real, unidentified class, found continuing the Super
   // BurgerTime investigation past the stack/module collision and the
   // 0x40/0xc static-base slots (TASKS.md Phase 8): real code inside
   // `HandleEvent` (`supbtime.mod` offset 0x11be90-0x11be98) calls
