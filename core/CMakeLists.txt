@@ -13,6 +13,8 @@ add_library(zeebulator_core STATIC
   loader/mif.h
   loader/mod.cpp
   loader/mod.h
+  loader/obm1.cpp
+  loader/obm1.h
   loader/wav.cpp
   loader/wav.h
   loader/midi.cpp

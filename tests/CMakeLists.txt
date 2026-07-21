@@ -17,6 +17,7 @@ add_executable(zeebulator_tests
   ggz_test.cpp
   mif_test.cpp
   mod_test.cpp
+  obm1_test.cpp
   hle_runtime_test.cpp
   brew_test.cpp
   brew_lifecycle_test.cpp
