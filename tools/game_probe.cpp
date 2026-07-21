@@ -165,6 +165,18 @@ uint32_t SdlKeyToAvk(SDL_Keycode key) {
 
 int main(int argc, char** argv) {
   if (argc < 5) {
+    // cls_id is IModule::CreateInstance's real AEECLSID -- the literal
+    // the module's own code compares the passed ClsId against (found by
+    // tracing the first few real instructions of CreateInstance with
+    // trace=true; it's loaded via a PC-relative `ldr` right before the
+    // `cmp` that decides success/failure). NOT necessarily the game's
+    // download-catalog folder number: confirmed identical to it for
+    // Super BurgerTime (279125), but genuinely different for Double
+    // Dragon (274754 vs the real 0x0102f789) and Peggle (278962 vs the
+    // real 0x01099cd6) -- passing the folder number for those two makes
+    // CreateInstance return EFAILED immediately, with zero HLE calls,
+    // before anything resembling real progress happens. See
+    // PHASE8_LOG.md for how this was found.
     std::fprintf(stderr, "usage: %s <game.mod> <data.ggz> <sound.ggz> <cls_id_decimal>\n",
                   argv[0]);
     return 1;

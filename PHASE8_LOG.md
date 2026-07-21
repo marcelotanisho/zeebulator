@@ -2756,3 +2756,92 @@ is what real further progress needs now, not another static-base slot
 or missing class. Not attempted this round; a substantially bigger
 undertaking than the incremental fixes so far, and a reasonable place
 to pause given how much ground this session has already covered.
+
+---
+
+**Traced the infinite polling loop to its root cause -- not the
+romset-loading gap it was assumed to be waiting on, but a frozen
+emulated clock -- fixed it, and got real, if partial, further
+progress.**
+
+Rather than assume the loop was purely waiting on real romset data
+(the natural reading left off at last round), traced exactly which
+two static-base slots it alternates between using the trap address
+arithmetic `HleRuntime::Register` already documents (`index = (addr -
+trap_base) / 4`): `mod_runtime.cpp`'s `Install()` is the very first
+code in the whole program to call `hle_.Register()`, so its
+registration order maps directly onto trap indices -- the 7th call is
+`get_uptime_ms_fn`, the 17th is `unknown_0x184_fn`, matching
+`trap=0xf000001c`/`trap=0xf0000044` exactly. (The previous round's
+"returning 1"/"returning 0" phrasing for these traps was imprecise --
+`hle_trace`'s printout fires when PC lands on the trap address, before
+dispatch, so those are each call's *arguments*, not the *previous*
+call's return value. Confirmed by re-running with `hle_trace` enabled
+for real: slot `0x184` is called `(flag=1, 0, table, table)` every
+time, exactly as originally documented.)
+
+`GetUpTimeMsImpl` simply returns `uptime_ms_`, a counter only
+`ModRuntime::Tick()` ever advances -- and `Tick()` is only called once
+per outer per-frame loop iteration in `game_probe.cpp`, never from
+inside a single `CallArmFunctionChecked` call. This specific polling
+loop calls `GetUpTimeMs` on every single iteration, entirely within
+one such call -- so `Tick()` never gets a chance to run in between,
+and the clock stays frozen at whatever value it had when the call
+began, for that call's entire (up to 5,000,000-step) lifetime. A real
+busy-wait checking elapsed time against this permanently-frozen clock
+can never see its own deadline pass. Not a romset-loading gap at all
+-- an artifact of how this codebase's timing happens to be driven.
+
+**Fix**: `GetUpTimeMsImpl` now also self-advances `uptime_ms_` by 1ms
+on every read, independent of `Tick()`. Still fully deterministic
+(same call sequence always produces the same values, unlike a genuine
+wall-clock read would), while letting real elapsed-time busy-waits
+make forward progress instead of spinning forever, the same way real
+hardware's own continuously-advancing uptime clock would let them
+resolve given enough real wall-clock time. The 1ms-per-read rate is
+inferred, not measured -- plausible for a real "checked once per real
+hardware poll iteration" loop, not confirmed against any real timing
+constant.
+
+**Verified against real Super BurgerTime**: the first ROM-poll spin
+now resolves after roughly 50 iterations instead of hanging forever.
+Real code goes on to make five more genuine HLE calls -- a real
+`strcpy`, `AddRef`/method calls on the SBT-specific class object
+(`0x01001017`, ClsId ppObj address `0x80047000`), and a touch of the
+earlier `unknown_0x0103d8ec` scaffold -- concrete evidence of real,
+new forward progress, not a fluke. It then lands in a **second**,
+structurally identical polling loop (same two slots, same call shape)
+that does **not** resolve even with the clock now advancing --
+exceeds the 5,000,000-step budget instead. This is the meaningful
+result: the first loop really was just "has any time passed yet"
+(trivially satisfiable once the clock moves at all), while the second
+is checking something else the self-advancing clock alone can't
+satisfy -- almost certainly real ROM-data readiness, consistent with
+the romset-loading question already on record. Confirms rather than
+replaces last round's framing: actually implementing romset loading
+(or whatever specific condition this second loop checks) is still the
+next real undertaking, not attempted this round.
+
+**A methodology correction, found while re-verifying no regression on
+Peggle/Double Dragon**: both appeared to newly fail at the very first
+`IModule::CreateInstance` call (`returned 1`, zero HLE calls made --
+suspicious for something previously confirmed to run real, in-bounds
+code). Tracing the first ~20 real instructions of `CreateInstance`
+with `trace=true` showed real code loading a literal via PC-relative
+`ldr` and comparing it against the passed ClsId before doing anything
+else -- i.e. this codebase's own `game_probe.cpp` usage convention of
+passing each game's download-catalog *folder number* as `cls_id` was
+never actually correct in general; it just happened to coincide with
+Super BurgerTime's real embedded ClsId (`279125` in both roles).
+Double Dragon's real literal is `0x0102f789` (16971657), not the
+folder number `274754`; Peggle's is `0x01099cd6` (17407190), not
+`278962`. Passing the real literal for each, both titles reach the
+event loop cleanly, same as always -- **not a regression** from this
+round's `GetUpTimeMs` change (reproduced identically all the way back
+at commit `473758e`, well before this round's edits), just a latent
+gap in how this dev tool was being invoked for these two titles
+specifically. `tools/game_probe.cpp`'s usage message now documents
+this distinction so it doesn't cost another investigation next time.
+
+Committed (`b285214`). 251/251 tests pass (one new test added for the
+self-advance behavior).

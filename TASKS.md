@@ -1413,6 +1413,26 @@ playable start-to-finish at full speed, standalone build.
       incremental fixes so far; not attempted this round. No
       regression on Peggle/Double Dragon; 250/250 tests pass. See
       PHASE8_LOG.md for full evidence.
+      **Traced the polling loop instead of assuming its cause**: root
+      cause was a frozen emulated clock, not romset loading directly —
+      `GetUpTimeMs` only ever advanced via the outer per-frame `Tick()`,
+      which this loop's tight, single-native-call busy-wait never gave
+      a chance to run. Fixed by having `GetUpTimeMsImpl` self-advance
+      1ms on every read (still deterministic, inferred rate). Real
+      code then breaks the first spin (~50 iterations, was infinite),
+      makes 5 more genuine HLE calls (real `strcpy`, method calls on
+      the SBT-specific class object), then hits a **second**,
+      identically-shaped loop that does *not* resolve even with the
+      clock advancing — confirms that one really is waiting on ROM-data
+      readiness, not just elapsed time. Romset loading remains the
+      next real undertaking. Also found and documented, while
+      re-verifying no regression: this tool's `cls_id` argument must be
+      each module's *real* embedded ClsId (found via trace, a literal
+      compared against ClsId in `CreateInstance`'s first ~20
+      instructions), not its download-folder number — the two only
+      coincide for Super BurgerTime; Double Dragon/Peggle need
+      `0x0102f789`/`0x01099cd6`, not `274754`/`278962`. 251/251 tests
+      pass. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
