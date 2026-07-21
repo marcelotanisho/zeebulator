@@ -410,6 +410,27 @@ int main(int argc, char** argv) {
   uint32_t unknown_0x01030766_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x80044000, /*object=*/0x80045000, /*slot_count=*/40);
   shell_hle.RegisterInstance(0x01030766, unknown_0x01030766_obj);
+  // A fourth real, unidentified class, found continuing the Super
+  // BurgerTime investigation past the stack/module collision and the
+  // 0x40/0xc static-base slots (TASKS.md Phase 8): real code inside
+  // `HandleEvent` (`supbtime.mod` offset 0x11be90-0x11be98) calls
+  // `ISHELL_CreateInstance(shell, ClsId=0x01001017, ppObj=&g_2e28fc)`
+  // -- a real module-global variable, not a stack slot -- and, like
+  // every other real `CreateInstance` call site in this project's
+  // history that turned out to matter, never checks the returned
+  // status before dereferencing `*ppObj` two instructions later. Since
+  // this class wasn't registered, `IShellHle::CreateInstanceImpl`
+  // correctly returned failure and correctly left `*ppObj` untouched
+  // (matching real `AEEShell.h` semantics) -- but real code reads it
+  // anyway, calls a method on the resulting null "object", and crashes.
+  // Confirmed via a live memory watchpoint on `g_2e28fc` spanning the
+  // entire run (temporary, reverted) that nothing else ever writes
+  // there -- this call site is the one and only real source of that
+  // value. Same generic, deliberately-unguessed scaffold treatment as
+  // every other unidentified class in this file.
+  uint32_t unknown_0x01001017_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80046000, /*object=*/0x80047000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x01001017, unknown_0x01001017_obj);
   // Real code fetches "the current app's IShell"/"IDisplay" from an
   // ambient context (the static-base table's offset-0xc0 slot) in many
   // places, not just via the pIShell argument explicitly passed to
