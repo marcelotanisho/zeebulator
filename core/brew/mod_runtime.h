@@ -252,9 +252,37 @@ namespace zeebulator {
 // confirmed. Registered as a safe no-op, same rationale as the
 // fifteenth slot.
 //
-// Only these sixteen table slots are confirmed by real disassembly so
-// far. Every other offset is left unmapped -- a real .mod hitting one
-// would fetch from unwritten memory, which tools/game_probe.cpp's
+// A seventeenth slot, offset 0xd0, was found one real level deeper:
+// reached only once the real per-frame callback this title's
+// `HandleEvent` registers (see tools/game_probe.cpp's own real
+// evidence for that, and IShellHle::ScheduleTimer) actually starts
+// running. Its one real call site passes `(name="boot", heap_object)`
+// -- `name` points directly at a real, in-module string table
+// (`supbtime.mod` offset 0x18ee50: `"boot\0boot.rom\0zupa_p1.rom\0
+// zupa_s1.rom..."`, a literal ROM manifest -- "zupapa" is this
+// arcade original's real Japanese title, confirming this is the
+// generic arcade-core's own real romset-loading code, not a guess),
+// and `heap_object` is a real pointer this codebase's own MALLOC slot
+// (0x68) had just returned moments earlier. Very likely something
+// like "register/hash this named ROM chunk" given the shape, but not
+// confirmed -- registered as a safe no-op, same rationale as every
+// other unidentified slot above.
+//
+// An eighteenth slot, offset 0x184, was found continuing that same
+// real per-frame callback's own execution once the seventeenth slot
+// stopped it from wandering: 2,788 more real steps in (up from the
+// seventeenth slot's own 95, itself up from nothing before that --
+// each fix unlocking substantially more real, evidenced execution,
+// including a real repeating pass through the classic-arcade-core's
+// own ROM-manifest string table found earlier in this investigation,
+// e.g. real calls with `"roms"`/`"roms\neogeo"`/etc. as arguments).
+// Its one real call site passes just `(flag=1, 0, table)`, too thin a
+// shape to identify -- registered as a safe no-op, same rationale as
+// every other unidentified slot above.
+//
+// Only these eighteen table slots are confirmed by real disassembly
+// so far. Every other offset is left unmapped -- a real .mod hitting
+// one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
 // loudly rather than silently misbehave.
 class ModRuntime {
