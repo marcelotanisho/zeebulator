@@ -2449,3 +2449,55 @@ broader reclaimed region around it) before `HandleEvent` runs is the
 next concrete step, and likely needs tracing back through
 `CreateInstance`'s own real body (not yet disassembled in this depth)
 rather than `HandleEvent` itself.
+
+---
+
+**Followed that lead: traced `CreateInstance`'s own real body directly
+(a live-traced run of just that call, plus a memory watchpoint on
+`0x2e28fc` spanning the entire run, both temporary and reverted).**
+Two real findings, one useful, one a dead end correctly ruled out:
+
+- **`CreateInstance`'s own real body performs completely ordinary,
+  sensible real work** with the guessed ClsId (`279125`, this title's
+  download-folder name): it reaches a small real class-dispatch table
+  lookup, then real applet-object construction (writing several real
+  fields into the newly-malloc'd applet struct), then a genuine real
+  `ISHELL_CreateInstance` call for class `0x01001001` -- the exact
+  same real `AEECLSID_DISPLAY` value already confirmed for Double
+  Dragon. A dispatcher silently accepting a wrong/unmatched class ID
+  and still doing this much real, structured initialization work would
+  be surprising; this looks like a real, valid, matched code path, not
+  a degenerate fallback -- **the guessed ClsId is very likely correct**,
+  or at minimum isn't the source of this specific gap. Not proven with
+  the same certainty as Peggle's own live-read-the-real-comparison
+  technique (no explicit `cmp` against the literal `0x44255` was
+  spotted in the traced instructions), so still technically unconfirmed,
+  but no longer the leading suspect.
+- **The watchpoint spanning the entire run (`AEEMod_Load` ->
+  `CreateInstance` -> `HandleEvent`, up to the crash) confirms `0x2e28fc`
+  is written to exactly twice, both during `AEEMod_Load`'s own
+  relocation bootstrap** (once by the initial file load, once by the
+  real "clear the table after use" loop) **-- never again.** Neither
+  `CreateInstance` nor anything in `HandleEvent` before the crash point
+  writes there. This rules out "wrong ClsId routes to a code path that
+  skips real initialization" as the explanation and narrows the gap to
+  exactly what the previous entry already suspected: something inside
+  `HandleEvent`'s own real control flow, upstream of the crash site,
+  is either supposed to populate this reclaimed memory and doesn't
+  (because of some other, still-unfound micro-gap changing which
+  branch real code takes), or this specific field is populated by real
+  code this codebase doesn't drive at all (e.g. a second, later
+  `HandleEvent` call, or genuine OS/firmware-level initialization
+  outside any `.mod` this project can disassemble).
+
+**Deliberately stopping the live trace here for this round.** Fully
+resolving this needs walking `HandleEvent`'s entire real control flow
+from its own start (not yet disassembled at this depth) to find the
+specific branch point that should lead to populating `0x2e28fc` --
+substantially more real disassembly than the two dead-end checks just
+done. Both checks were real, evidence-producing, and narrow the
+remaining search space precisely rather than leaving it open-ended;
+picking this back up should start from `HandleEvent`'s own entry
+(`0x0010b5b4`, per the confirmed vtable slot), not from the crash site
+backward, since backward tracing from the crash has now been pushed as
+far as it profitably goes without new evidence.

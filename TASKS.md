@@ -1299,6 +1299,20 @@ playable start-to-finish at full speed, standalone build.
       deliberately not guessed at. Finding what real code should
       populate it (likely needs tracing `CreateInstance`'s own body,
       not yet disassembled this deep) is the next concrete step.
+      **Followed that lead**: `CreateInstance`'s own real body, traced
+      directly, does completely ordinary real work with the guessed
+      ClsId (a real class-dispatch lookup, real applet-struct
+      construction, a genuine `ISHELL_CreateInstance(0x01001001)` call
+      — the same real `AEECLSID_DISPLAY` Double Dragon confirmed) —
+      looks like a real, matched code path, not a silently-accepted
+      wrong guess. A memory watchpoint spanning the entire run confirms
+      `0x2e28fc` is written to exactly twice, both during `AEEMod_
+      Load`'s own relocation bootstrap, never by `CreateInstance` or
+      anything in `HandleEvent` before the crash. This rules out "wrong
+      ClsId" as the explanation and narrows the gap to `HandleEvent`'s
+      own real control flow upstream of the crash site — not yet
+      disassembled that deep; picking this back up should start from
+      `HandleEvent`'s own entry (`0x0010b5b4`), not the crash site.
       Overall this round: went from unable to execute a single real
       instruction past the common prologue to reaching deep into
       `HandleEvent` across four independent, verified fixes. Super
