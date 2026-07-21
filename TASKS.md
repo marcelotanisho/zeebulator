@@ -995,6 +995,18 @@ playable start-to-finish at full speed, standalone build.
       (including a live memory watchpoint tracing the dialog's real
       `applet+0x24` status field back through the real call chain to
       the exact failing `eglGetDisplay` call).
+      **Confirmed the fix's real impact and found the next wall**: real
+      code now genuinely streams through `sound.ggz` end-to-end for the
+      first time (a real backward walk through its GGZ table, real
+      variable-sized compressed-audio reads), completing within the
+      first few ticks, then settles into a new steady state that
+      neither more real time (90s, no change) nor a full sweep of
+      every real AVK key code this codebase's dispatcher recognizes
+      unblocked. That sweep was inconclusive, not a dead end — either
+      the real "continue" input isn't in that code range or the gate
+      isn't input-shaped at all; needs real disassembly tracing to
+      answer, same method that found the EGL bug, not more guessing.
+      Not attempted this round. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`

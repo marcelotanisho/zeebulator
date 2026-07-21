@@ -3172,3 +3172,54 @@ All investigation instrumentation (the render-path prints, the
 both the failure and the fix) added and fully reverted before
 committing -- `git diff --stat` clean on every file except the two
 real fixes, the two test updates, and the regenerated fixture.
+
+---
+
+**Pushed forward past the EGL fix: confirmed real, sustained asset
+streaming now happens, then hit a new steady state that a plausible
+input sweep didn't unblock.**
+
+Re-added temporary `OpenFile`/`Read`/`GlTexImage2D` tracing (reverted
+after) and re-ran real Double Dragon with the corrected ClsId. Real
+code now genuinely streams through `sound.ggz`: `OpenFile("sound.ggz")`
+followed by a real walk backward through its GGZ table (`Read(want=8)`
+at strictly decreasing 8-byte-stride positions, matching the table's
+real entry stride) and, for each entry, a real variable-sized read of
+raw compressed audio data straight off "disk" (sizes from ~500 bytes
+to ~146KB, matching real compressed-audio-resource scale) -- exactly
+the "opens its own packed resource archive as a raw file, streams
+gzip members directly" behavior this project documented from Double
+Dragon's disassembly many rounds ago, now actually executing
+end-to-end for the first time. This completes within the first few
+real ticks, then the game settles into a new, different steady state
+(the same small housekeeping trap pattern seen before the dialog fix,
+not the resource-loading pattern) -- checked directly against real
+memory (not assumed): no `OpenFile("data.ggz", ...)` and no
+`GlTexImage2D` calls, across a 90-real-second run (materially longer
+than the ~5 seconds letting sound-loading complete needed, ruling out
+"just hasn't had enough time yet").
+
+**Tested the "waiting for a title-screen button press" hypothesis
+directly**: injected synthetic `HandleEvent(EVT_KEY_DOWN/UP, avk)`
+calls for the entire real AVK range this codebase's own `SdlKeyToAvk`
+already documents Double Dragon's dispatcher recognizing
+(`0xe021`-`0xe036`, 22 codes, confirmed via real disassembly in an
+earlier round). Every single code returned identically (`down.r0=1`,
+`up.r0=1`) and none produced a new file open or texture upload --
+inconclusive rather than a real answer: either this specific code
+range isn't what a "start"/"continue" input actually needs, or the
+real gate isn't input-shaped at all. Not chased further this round --
+reverted the injection (a genuine experiment, not a claimed real
+input-handling improvement) rather than guess further without new
+evidence.
+
+**Where this leaves things**: the EGL fix's value is now doubly
+confirmed -- it didn't just clear a startup dialog, it unblocked real,
+correct, sustained asset-streaming logic that had never executed
+before this session. What comes after sound-loading (why it stops
+progressing, what real condition would let it continue toward
+`.obm1`/texture loading) is a genuinely new question, not yet
+answered, and would need the same kind of real-disassembly tracing
+that found the EGL bug -- not more input guessing. All experimental
+instrumentation reverted; no functional changes landed this round
+beyond what was already committed. 259/259 tests pass (unchanged).
