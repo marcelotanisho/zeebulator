@@ -464,15 +464,42 @@ int main(int argc, char** argv) {
   // clearly as an inference rather than confirmed real behavior: the
   // *fact* that a callback gets registered here is directly evidenced;
   // the specific interval chosen to drive it is not.
-  uint32_t unknown_0x01001017_obj = zeebulator::BuildStubObjectWithOverride(
-      cpu.GetMemory(), hle, /*vtable=*/0x80046000, /*object=*/0x80047000, /*slot_count=*/40,
-      /*override_slot=*/7, [&shell_hle](zeebulator::IArmCore& core) {
-        constexpr uint32_t kInferredTickMs = 16;
-        uint32_t callback = core.GetRegister(zeebulator::kR2);
-        uint32_t user_data = core.GetRegister(zeebulator::kR3);
-        shell_hle.ScheduleTimer(kInferredTickMs, callback, user_data);
-        core.SetRegister(zeebulator::kR0, 0);  // SUCCESS
-      });
+  //
+  // A second override, on slot 11 (byte offset 0x2c) -- confirmed via
+  // real disassembly of `0x11c06c` itself (see above) to be the "tick"
+  // method called on each entry of its module-global task list -- is
+  // needed for a real, different reason: that list is a single-entry
+  // list whose one entry is this very object (`ppObj` from the
+  // `CreateInstance` call above, real address `0x002e28fc` --
+  // confirmed live and stable via a temporary memory watchpoint
+  // spanning a full run, TASKS.md Phase 8), and `0x11c06c`'s loop has
+  // no exit *except* that address reading back 0. Nothing else in this
+  // codebase, real or stubbed, ever writes to it after `CreateInstance`
+  // -- a real implementation of this "tick" would presumably do so
+  // itself, once whatever real work it represents (almost certainly the
+  // romset load this class is tied to) finishes. Since that real work
+  // isn't implemented, the minimal, honestly-labeled placeholder that
+  // unblocks forward progress without pretending to model real loading
+  // time is to clear it immediately, on the very first tick -- not a
+  // claim that real loading finishes in one frame, just the simplest
+  // choice that doesn't require inventing an arbitrary frame count.
+  constexpr uint32_t kSbtTaskListHeadAddress = 0x002e28fc;
+  std::vector<zeebulator::HleRuntime::HleFunction> sbt_methods(
+      40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
+  sbt_methods[7] = [&shell_hle](zeebulator::IArmCore& core) {
+    constexpr uint32_t kInferredTickMs = 16;
+    uint32_t callback = core.GetRegister(zeebulator::kR2);
+    uint32_t user_data = core.GetRegister(zeebulator::kR3);
+    shell_hle.ScheduleTimer(kInferredTickMs, callback, user_data);
+    core.SetRegister(zeebulator::kR0, 0);  // SUCCESS
+  };
+  sbt_methods[11] = [](zeebulator::IArmCore& core) {
+    core.GetMemory().Write32(kSbtTaskListHeadAddress, 0);
+    core.SetRegister(zeebulator::kR0, 0);
+  };
+  uint32_t unknown_0x01001017_obj = zeebulator::BuildInterfaceObject(
+      cpu.GetMemory(), hle, /*vtable_address=*/0x80046000, /*object_address=*/0x80047000,
+      sbt_methods);
   shell_hle.RegisterInstance(0x01001017, unknown_0x01001017_obj);
   // Real code fetches "the current app's IShell"/"IDisplay" from an
   // ambient context (the static-base table's offset-0xc0 slot) in many
