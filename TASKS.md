@@ -1449,6 +1449,24 @@ playable start-to-finish at full speed, standalone build.
       actual next step. Not attempted this round — diagnosis only, all
       trace instrumentation reverted, no functional changes. See
       PHASE8_LOG.md for full evidence.
+      **Implemented the minimal fix and it worked**: a live memory
+      watchpoint confirmed `0x2e28fc` (the same address `CreateInstance`
+      writes the SBT object into) is real code's one and only exit
+      condition, never cleared by anything reachable. Added a second
+      override (slot 11 / byte offset `0x2c`, confirmed to be the real
+      "tick" method) that clears it on the first call — an honest,
+      minimal placeholder, not a claim about real loading time.
+      **Super BurgerTime now reaches "Reached the event loop with no
+      unhandled instruction!"**, matching Double Dragon/Peggle. Past
+      it, hits a new, different gap ~1M real steps into the first tick:
+      an `UnimplementedInstruction` at module offset `0x9c` where the
+      *live* instruction word doesn't match the raw `.mod` file's
+      content at the same address — a real return address whose target
+      memory changed between call and return. Not yet understood; flagged
+      as the next thread, deliberately not chased this round. No
+      regression on Peggle/Double Dragon; 251/251 tests pass (fix is
+      entirely in `tools/game_probe.cpp`, not core HLE). See
+      PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

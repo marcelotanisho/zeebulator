@@ -2939,3 +2939,79 @@ well beyond its current generic scaffold. Not attempted this round;
 all trace instrumentation reverted, no functional changes. `git diff
 --stat` empty on `tools/game_probe.cpp` before this entry was
 committed.
+
+---
+
+**Fixed the task-list wall -- Super BurgerTime now reaches its real
+event loop, and past it hits a genuinely new, different kind of gap.**
+
+A live memory watchpoint (temporary, on `Memory::Write32`/`Write8`,
+bridged to the current PC via a small `g_debug_last_pc` global the
+step loop updates each iteration, reverted after -- same technique
+used earlier this project for similar questions) on `0x2e28fc`
+confirmed precisely what was suspected last round: it's written
+exactly once, by `IShellHle::CreateInstanceImpl` (`trap=0xf0000158`,
+value `0x80047000` -- our SBT object), during the module's own
+zero-init pass just before that (module offset `0x7c`, part of the
+already-documented "clear it after use" loop), and never again. The
+neighboring "flag" byte (`0x2e28f0`) is separately zeroed once by real
+code right at the `CreateInstance` call site (`0x11be88`) and also
+never changes -- confirming every single pass through `0x11c06c`
+necessarily takes the expensive message-pump path, exactly as
+suspected.
+
+(Getting to these two confirmed addresses took a wrong turn worth
+recording: an earlier pass at this same question, checking `pc ==
+mod_base + 0x11c074`, doubled up an already-absolute address with
+`mod_base` -- objdump's `--adjust-vma=0x100000` output for that region
+already included the module base, unlike the raw-file-offset
+disassembly used for the `0xea40` region earlier. The resulting
+"list_head" address, `0x5b3714`, was coincidentally close to this
+run's own SP placement and briefly looked like a second real
+stack/data collision bug. It wasn't -- just a debugging arithmetic
+slip, caught by cross-checking the live register value against a
+directly-verified control address before acting on it.)
+
+**Fix**: `unknown_0x01001017_obj` now overrides a second vtable slot
+(11, byte offset `0x2c` -- confirmed by disassembly to be exactly the
+"tick" method `0x11c06c` calls on its one list entry) alongside the
+existing slot-7 `ScheduleTimer` wiring. The override writes 0 directly
+to `0x2e28fc` -- the real, confirmed, live address -- and returns 0.
+Honestly labeled as a minimal placeholder, not a claim about real
+timing: a real implementation would presumably clear that address
+itself once whatever real work "tick" represents (almost certainly the
+romset load) finishes; since that work isn't implemented, clearing it
+on the very first tick is the simplest choice that unblocks forward
+progress without inventing an arbitrary frame count.
+
+**Verified against real Super BurgerTime**: `AEEMod_Load` ->
+`CreateInstance` -> `HandleEvent(EVT_APP_START)` -> **"Reached the
+event loop with no unhandled instruction!"** -- the same milestone
+Double Dragon and Peggle already reach. Past that, the first real
+timer tick now runs substantially further before hitting a **new**,
+different gap: `UnimplementedInstruction("Miscellaneous instruction
+space (MRS/MSR/etc.)")` at module offset `0x9c`, roughly a million
+real steps in. Checked directly against live memory (not the static
+file -- learned that lesson this round) rather than assumed: the
+instruction word actually present at that address at fault time
+(`0xa3668ba7`) does **not** match what's in the raw `.mod` file at the
+same offset (`0xe1a0c00d`, an ordinary `mov ip, sp`), reached via an
+indirect `bx r3` return where `r3` had earlier been saved as exactly
+that address -- i.e. a real return address whose target memory holds
+different content by the time control returns to it. Not yet
+understood *why* (self-modifying code is not a real, ordinary feature
+of this kind of compiled BREW app, so this is much more likely a
+second, distinct emulator-side data/relocation issue than a genuine
+`MRS`/`MSR` instruction) -- flagged as the next concrete investigation
+thread, deliberately not chased further this round after already
+landing one substantial, verified fix.
+
+No regression on Peggle/Double Dragon (re-verified with their real
+ClsIds from last round). 251/251 tests pass (unchanged -- this fix
+lives entirely in `tools/game_probe.cpp`, the dev harness, not core
+HLE code). Committed (`798d1b9`). All debug/trace instrumentation
+(the watchpoint, the double-counted-address checks, a temporary
+`trace=true` on tick calls used to read the live faulting instruction
+directly) reverted before committing; `git diff --stat` empty on
+`core/memory/memory.cpp`/`.h` and clean on `tools/game_probe.cpp`
+except the actual fix.
