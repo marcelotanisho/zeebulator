@@ -221,7 +221,38 @@ namespace zeebulator {
 // *ptr, size_t size)`'s real contract. See ReallocImpl for how it's
 // implemented against this allocator's no-free-list bump allocator.
 //
-// Only these fourteen table slots are confirmed by real disassembly so
+// A fifteenth slot, offset 0x40, is unidentified: found probing a
+// third real game (Super BurgerTime -- TASKS.md Phase 8), the first
+// static-base call reached once a real stack/module address collision
+// in tools/game_probe.cpp's own scratch-stack placement (unrelated to
+// this table) was fixed. The one real call site found so far
+// (`supbtime.mod`, reached from `HandleEvent(EVT_APP_START)`) calls it
+// with `(this=the current real applet pointer, buffer=a 512-byte local
+// stack buffer, size=0x200)` -- a shape consistent with some kind of
+// "fill this buffer, up to size bytes" real BREW API, but not yet
+// matched to any specific confirmed one (the established string/memory
+// helpers at other slots all take fixed, non-"this"-shaped argument
+// lists). Registered as a safe no-op (matching the twelfth slot's own
+// precedent) rather than guessed at further -- unblocks real execution
+// past this specific call site without claiming to know what it does.
+//
+// A sixteenth slot, offset 0xc, is also unidentified: found immediately
+// after the fifteenth (Super BurgerTime's `HandleEvent`, once the
+// fifteenth slot's own call site no longer wandered). Reached through a
+// small standalone trampoline (`supbtime.mod` offset `0x11b200`-
+// `0x11b214`: fetch the static-base table via the same real relocated-
+// literal idiom, then `ldr pc,[table,#0xc]`) rather than the more common
+// direct call shape, but functionally identical. Sits in the same
+// tightly-packed cluster as the confirmed MEMCPY(0x0)/MEMSET(0x4)/
+// STRCPY(0x8)/STRLEN(0x14) slots, and its one real call site passes
+// `(dest=the same 512-byte stack buffer the fifteenth slot was given,
+// src=a real, low, module-relative literal address)` -- a shape
+// consistent with a sibling C-runtime string function (STRCAT/STRCMP
+// are both plausible given the two-pointer-argument shape) but not
+// confirmed. Registered as a safe no-op, same rationale as the
+// fifteenth slot.
+//
+// Only these sixteen table slots are confirmed by real disassembly so
 // far. Every other offset is left unmapped -- a real .mod hitting one
 // would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
