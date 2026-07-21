@@ -51,6 +51,17 @@ class IShellHle {
 
   uint32_t Build(uint32_t vtable_address, uint32_t object_address);
 
+  // Schedules `callback`/`user_data` exactly the way a real
+  // ISHELL_SetTimer(ms, callback, user_data) call would (same re-arm-
+  // by-re-registering-the-same-identity semantics as SetTimerImpl),
+  // without needing to fake a full ARM call through the real trap.
+  // EXPERIMENTAL, added for one specific real, evidenced case (TASKS.md
+  // Phase 8, Super BurgerTime): a real per-frame update function
+  // reached via a still-unidentified class's method, not through
+  // ISHELL_SetTimer directly -- see tools/game_probe.cpp for the real
+  // disassembly evidence this is grounded in.
+  void ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data);
+
   // A pending SetTimer callback whose deadline Tick() determined has now
   // been reached. The caller is responsible for actually invoking it
   // (e.g. via HleRuntime::CallArmFunction(callback, user_data)) -- this

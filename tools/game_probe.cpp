@@ -426,10 +426,41 @@ int main(int argc, char** argv) {
   // Confirmed via a live memory watchpoint on `g_2e28fc` spanning the
   // entire run (temporary, reverted) that nothing else ever writes
   // there -- this call site is the one and only real source of that
-  // value. Same generic, deliberately-unguessed scaffold treatment as
-  // every other unidentified class in this file.
-  uint32_t unknown_0x01001017_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80046000, /*object=*/0x80047000, /*slot_count=*/40);
+  // value.
+  //
+  // Its one real call site (`supbtime.mod` offset 0x11be90-0x11be98,
+  // immediately after `CreateInstance` succeeds) calls this object's
+  // own slot 7 (byte offset 0x1c) with `(this, flag=0x4000,
+  // callback=0x11c06c, user_data=0)`. `0x11c06c` is real, disassembled
+  // ARM code, not data -- and its own body is a textbook "process a
+  // list of registered objects once per call" shape: dereference a
+  // real module-global list head; if empty, return immediately; else
+  // walk the list calling a vtable method on each entry. That's
+  // exactly what a real per-frame "run one engine tick" function looks
+  // like, matching this title's own "generic arcade-core" structure
+  // (TASKS.md Phase 8) -- and it's registered here but never actually
+  // invoked, since a plain no-op stub just returns success without
+  // scheduling it, and nothing else in this run ever calls it.
+  //
+  // EXPERIMENTAL, and a real step beyond every other generic scaffold
+  // in this file: rather than leave slot 7 a no-op, this schedules the
+  // given callback through the existing, already-real `IShellHle`
+  // timer mechanism (the same one Double Dragon/Peggle's own
+  // self-rearming `SetTimer` callbacks run through), on the same
+  // 16ms cadence `kTickMs` uses elsewhere in this file -- an inferred
+  // interval, not one the real call site actually provides. Marked
+  // clearly as an inference rather than confirmed real behavior: the
+  // *fact* that a callback gets registered here is directly evidenced;
+  // the specific interval chosen to drive it is not.
+  uint32_t unknown_0x01001017_obj = zeebulator::BuildStubObjectWithOverride(
+      cpu.GetMemory(), hle, /*vtable=*/0x80046000, /*object=*/0x80047000, /*slot_count=*/40,
+      /*override_slot=*/7, [&shell_hle](zeebulator::IArmCore& core) {
+        constexpr uint32_t kInferredTickMs = 16;
+        uint32_t callback = core.GetRegister(zeebulator::kR2);
+        uint32_t user_data = core.GetRegister(zeebulator::kR3);
+        shell_hle.ScheduleTimer(kInferredTickMs, callback, user_data);
+        core.SetRegister(zeebulator::kR0, 0);  // SUCCESS
+      });
   shell_hle.RegisterInstance(0x01001017, unknown_0x01001017_obj);
   // Real code fetches "the current app's IShell"/"IDisplay" from an
   // ambient context (the static-base table's offset-0xc0 slot) in many

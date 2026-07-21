@@ -33,11 +33,7 @@ void IShellHle::CreateInstanceImpl(IArmCore& core) {
   core.SetRegister(kR0, 0);  // SUCCESS
 }
 
-void IShellHle::SetTimerImpl(IArmCore& core) {
-  // int SetTimer(IShell *ps, uint32 dwCount, PFNNOTIFY pfnNotify, void *pUser)
-  uint32_t ms = core.GetRegister(kR1);
-  uint32_t callback = core.GetRegister(kR2);
-  uint32_t user_data = core.GetRegister(kR3);
+void IShellHle::ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data) {
   // Re-registering the same (callback, user_data) pair reschedules it
   // rather than creating a duplicate -- matches the real self-rearming
   // timer pattern (see class doc comment) where the callback calls
@@ -45,11 +41,15 @@ void IShellHle::SetTimerImpl(IArmCore& core) {
   for (auto& timer : timers_) {
     if (timer.callback == callback && timer.user_data == user_data) {
       timer.remaining_ms = ms;
-      core.SetRegister(kR0, 0);  // SUCCESS
       return;
     }
   }
   timers_.push_back(PendingTimer{ms, callback, user_data});
+}
+
+void IShellHle::SetTimerImpl(IArmCore& core) {
+  // int SetTimer(IShell *ps, uint32 dwCount, PFNNOTIFY pfnNotify, void *pUser)
+  ScheduleTimer(core.GetRegister(kR1), core.GetRegister(kR2), core.GetRegister(kR3));
   core.SetRegister(kR0, 0);  // SUCCESS
 }
 
