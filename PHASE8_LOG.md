@@ -2574,3 +2574,70 @@ address collision, three static-base slots, and this unidentified
 class). `resources.bar`/`.pkg`-style asset loading remains uncracked
 for this title, same as it does for Peggle -- the natural next phase
 now that the steady-state milestone itself is reached.
+
+---
+
+**Started on `.pkg`, found a real, structural lead, then a
+correction: the format isn't the actual next blocker.**
+
+Re-examined the raw `.pkg` bytes directly (`50 41 43 4B`/"PACK" magic
+at offset 0, two little-endian `uint32`s at offset 4/8: `7` and
+`579390`; naively read as Quake's classic 12-byte-header
+`(dirofs,dirlen)` convention these don't parse coherently, confirming
+the earlier survey's caution about assuming a byte-exact match).
+Scanning `supbtime.mod` for related strings turned up a real,
+substantial, and unexpected cluster: `"roms\neogeo"`, `"%s\%s.pkg"`,
+`"%s\%s\%s"`, `"rb"`, `"Loading romset %s"`, and the `"PACK"` magic
+itself (as a real 4-byte literal, `0x4B434150`, embedded at file
+offset `0x18ebe0`) all sitting together in the same literal-pool
+region. This strongly suggests the classic-arcade titles in this
+project's format survey (Super BurgerTime among them) embed a real,
+generic, **multi-system arcade-emulation core** (the `"neogeo"`
+reference implies it supports more than one real arcade platform) that
+loads its own ROM data through a conventional `"romset"` `.pkg`
+container -- exactly matching this project's earlier structural guess
+("built on an embedded classic-arcade-hardware emulation core bundling
+original ROM data"), now with much more specific, real textual
+evidence.
+
+**Checked whether any code in this compiled binary actually references
+these strings, and found none** -- an exhaustive search for PC-relative
+loads targeting any of these exact literal addresses came up empty.
+Combined with the next finding, this is best read as: this shared
+core's real `.pkg`-loading code path is linked into the binary but not
+actually exercised by anything this project's harness has driven so
+far (not necessarily provably dead forever, but not reachable from
+where execution currently gets to).
+
+**More importantly: nothing reaches file loading of *any* kind yet.**
+Drove the real steady-state loop for 30 real seconds with a live watch
+on every `IFILEMGR_OpenFile`/`Test` call (temporary, reverted) --
+zero hits, not even the individual loose asset files (`Dark.tex`,
+`ding.wav`, etc.) that don't need `.pkg` cracked at all to load. Traced
+further back: **`ISHELL_SetTimer` is never called even once** across
+the same window (temporary watch on `SetTimerImpl`, reverted) --
+meaning, unlike Double Dragon and Peggle (both of which call
+`SetTimer` at least once during their own real `HandleEvent(EVT_APP_
+START)`), this title's real per-frame driving mechanism either doesn't
+use `ISHELL_SetTimer` at all, or is gated behind something upstream
+that this codebase doesn't yet provide -- the same *kind* of question
+Peggle's own timer-rearm investigation answered, but a different,
+not-yet-identified specific cause here.
+
+**Correcting the previous round's framing**: cracking `.pkg` is not
+actually the next concrete step -- reaching *any* asset load, packed
+or loose, requires first understanding what drives this title's loop
+forward at all after `HandleEvent(EVT_APP_START)` returns. That's a
+new, `SetTimer`-shaped investigation (or the discovery of a
+completely different real driving mechanism, possibly connected to
+the "arcade core" structure just found), not a file-format one. Given
+the arcade-core framing, it's also plausible this title's real
+architecture runs its whole per-frame loop *synchronously inside* a
+single `HandleEvent` call (an old-style polling loop, common for
+ported arcade engines) rather than the event-driven `SetTimer` model
+-- in which case the real blocker may already sit somewhere inside
+`HandleEvent`'s own body, past where this project's tracing has
+looked so far, not in a separate ticking mechanism at all. Not yet
+distinguished; the concrete next step is determining which of these
+two shapes is real before investing further in either the timer-gate
+question or the `.pkg` format itself.

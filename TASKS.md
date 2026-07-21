@@ -1347,6 +1347,26 @@ playable start-to-finish at full speed, standalone build.
       this title (same as Peggle) — the natural next phase now that the
       steady-state milestone itself is reached. See PHASE8_LOG.md for
       full evidence.
+      **Correction after starting on it**: cracking `.pkg` isn't
+      actually the next concrete step. Found a real, substantial lead
+      first — a string cluster (`"roms\neogeo"`, `"%s\%s.pkg"`,
+      `"Loading romset %s"`, the real `"PACK"` magic literal) strongly
+      suggesting this title embeds a generic, real, multi-system
+      arcade-emulation core that loads ROM data via a conventional
+      `.pkg` "romset" container, matching the project's earlier format
+      survey — but no code in the compiled binary references these
+      strings, and (more importantly) **nothing reaches file loading
+      of any kind, packed or loose, and `ISHELL_SetTimer` is never
+      called even once** across a 30-second driven run (both checked
+      live, temporary instrumentation reverted) — unlike Double Dragon
+      and Peggle, which both call `SetTimer` at least once. Reaching
+      any asset load needs first understanding what drives this
+      title's loop forward at all post-`HandleEvent`; given the
+      arcade-core framing, it's also plausible the whole real game
+      loop runs synchronously *inside* a single `HandleEvent` call
+      (an old-style polling loop) rather than the event-driven
+      `SetTimer` model the other two titles use — not yet
+      distinguished. See PHASE8_LOG.md for full evidence.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
