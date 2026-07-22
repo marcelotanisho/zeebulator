@@ -1040,6 +1040,23 @@ playable start-to-finish at full speed, standalone build.
       it now needs a deliberate choice (teach the HID scaffold to
       report a fake connected controller for testing) rather than more
       tracing; not attempted this round. See PHASE8_LOG.md.
+      **Made that choice.** Reporting a connected device unlocked two
+      real, previously-latent bugs (both fixed): `IHID_CreateDevice`
+      (real vtable slot 3) was a blind stub leaving its output
+      `IHIDDevice*` null -- the same unchecked-`CreateInstance`-style
+      pattern this project has hit repeatedly -- and the device
+      scaffold it now returns needed 40 vtable slots, not this file's
+      10-slot default, since real code calls the device's own slot 11.
+      Also registered a third real class (`0x01005511`) only reachable
+      through this path. `CreateInstance` completes cleanly again and
+      reaches the event loop. The title screen still doesn't advance,
+      but for a fully expected reason now: a connected-but-idle
+      controller correctly reports no buttons held. Simulating an
+      actual button press (capturing and directly invoking the real
+      registered callback, address `0x11beac`, already seen live) is
+      the next well-scoped step, not attempted this round. No
+      regression on Peggle/Super BurgerTime; 259/259 tests pass. See
+      PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`

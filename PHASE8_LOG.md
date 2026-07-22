@@ -3372,3 +3372,73 @@ a reflexive next step) rather than a blocker. All instrumentation
 (the `applet+0xa20` nonzero-write watchpoint, the `CreateInstance`
 cls_id/ppObj trace) reverted; `git diff --stat` clean. 259/259 tests
 pass (unchanged).
+
+---
+
+**Made the deliberate choice: simulated a connected HID joystick. It
+immediately exposed two real, previously-latent bugs in this project's
+own HID scaffold, both now fixed -- and confirmed, precisely, that
+what's left to reach real gameplay is simulating an actual button
+press, not another scaffold gap.**
+
+Changed `GetConnectedDevices` to report one simulated device instead
+of the honest zero-devices answer. First attempt (just that one
+change) immediately wandered to `pc=0` mid-`CreateInstance`, ~1715
+steps in -- a regression from the previous round's clean run, but an
+expected, informative one: reporting a device unlocks real code paths
+that were never reachable before.
+
+Traced it with `hle_trace` (temporary, reverted): real code's very
+next step is `IHID_CreateDevice(pIHID, nHandle, &ppDevice)` (real
+vtable slot 3, matching the confirmed slot ordering from the
+`AEEIHID.h` walkthrough already on record) -- and, exactly like every
+other unchecked-`CreateInstance`-style call this project has hit
+repeatedly (Peggle's self-propagating stub, Double Dragon's own
+`0x01002001`/`0x01001017`/EGL-shadowing history, Super BurgerTime's
+class `0x01001017`), the blind stub answering slot 3 left `*ppDevice`
+null and real code wandered into it a few calls later. Fixed by
+overriding slot 3 too, handing back a second, separate generic
+scaffold object.
+
+That surfaced a **second** bug immediately: the new device scaffold,
+built at this file's usual 10-slot default, wandered again -- traced
+(a one-shot PC watch on the crash site, temporary, reverted) to real
+code calling the *device's own* vtable slot 11 (byte offset 44), past
+what a 10-slot object has room for. Reading past its own vtable into
+unmapped memory decoded as a null function pointer, the exact same
+failure shape one level removed. Resized to 40 slots (this file's
+usual size for a real-but-unconfirmed interface) and the wander
+stopped for good.
+
+Along the way, reporting a connected device also unlocked a **third**
+real, previously-unreachable class: `ISHELL_CreateInstance(ClsId=
+0x01005511, ...)`, unconfirmed against any header, unchecked the same
+way as every other real `CreateInstance` call site here. Registered as
+a generic scaffold too.
+
+**Verified**: `CreateInstance` now completes cleanly again and reaches
+"Reached the event loop with no unhandled instruction!" -- fully
+recovered from the intermediate crash, with a real, live, simulated
+joystick now connected throughout. The title screen's stable state
+(`0x12095c`/`0x105f98`, TASKS.md Phase 8) still doesn't advance,
+sampled over a 60-real-second run -- but for a fully expected,
+different reason than before: a connected-but-idle controller
+correctly, honestly reports no buttons held, so the real gate
+(`applet+0x361c` bit `0x100`, traced two rounds ago) still can't
+legitimately open. This is real progress, not a stall: the "is a
+device connected" question is now fully and correctly answered;
+what's left is a narrower, well-defined question -- simulating an
+actual button *press* -- not "does a controller exist at all."
+
+Concretely, that would mean capturing the real callback function
+pointer real code registers via `ISignalCBFactory_CreateSignal` for
+button events (already observed live in this round's own traces,
+address `0x11beac`) and invoking it directly from `tools/game_probe.cpp`
+after seeding a simulated "pressed" state, rather than implementing a
+real `ISignal`/`ISignalCtl` firing mechanism from scratch. Not
+attempted this round -- a distinct, well-scoped next step. All
+temporary trace instrumentation (`hle_trace` on `CreateInstance`,
+the render-path `OpenFile`/`GlTexImage2D` prints, the state-transition
+print, a one-shot PC watch) reverted; the two real HID fixes and the
+new class registration are the only surviving diff. No regression on
+Peggle/Super BurgerTime; 259/259 tests pass.
