@@ -3223,3 +3223,89 @@ answered, and would need the same kind of real-disassembly tracing
 that found the EGL bug -- not more input guessing. All experimental
 instrumentation reverted; no functional changes landed this round
 beyond what was already committed. 259/259 tests pass (unchanged).
+
+---
+
+**Did the real disassembly tracing the previous round flagged as the
+next step. Found a real, multi-stage per-frame update pipeline and
+traced the title-screen gate to a genuine open question: what real
+subsystem feeds it, since it isn't the classic key-event path.**
+
+Re-traced the steady-state loop's real per-tick handler with LR
+capture (temporary, reverted). It's a real, substantial function
+(module offset `0x104ab0`), not idle busywork: measures real frame
+time via two `GETUPTIMEMS` calls bracketing its own body, and --
+newly reachable now that the EGL/dialog fix landed -- initializes a
+real 5-entry actor-slot array (two parallel structures, zeroed each)
+and calls through two real, data-driven function pointers stored at
+`applet+0x50`/`applet+0x54`. Confirmed these are a real state-machine
+pair (not fixed code): they hold four different real addresses across
+the first few ticks (`0x120938`→`0x12095c`→`0x1209c0`→`0x120a0c`),
+then settle permanently on one pair (`0x12095c`/`0x105f98`) for
+1602/1607 sampled ticks -- a real, stable "waiting" state, not a
+timing artifact (confirmed unchanged across a 90-real-second run in
+the previous round).
+
+**Disassembled the stable state's handler (`0x12095c`)**: it's gated
+on a single, simple check -- `tst` bit `0x100` of a real word at
+`applet+0x361c`; if clear, return immediately without doing anything
+else. If set, it transitions to the next real state (the same
+`0x1209c0` seen briefly at boot) and clears a bit in a separate real
+flag word.
+
+**Tested the direct approach first**: force-writing `0x100` straight
+into `applet+0x361c` got silently overwritten within the same tick.
+Tracing why (a live memory watchpoint, temporary, reverted -- and a
+correction to the previous round's own read of it: an early check
+using `sort -u` on the watch log collapsed many identical-looking
+lines into what looked like one write; it's actually rewritten every
+single tick, not once at startup) found the real reason: a small real
+function at `0x11a340`-`0x11a3ac` recomputes `applet+0x361c` fresh
+every tick as `(source_a | source_b)` from two other real fields
+(`applet+0x35f4`, `applet+0x3608`). Poking the destination directly
+can never stick against that.
+
+**Traced one level deeper**: those two source fields are themselves
+written every tick by another real function (`0x11a2ec`), which loops
+twice (once per real "input source" index) copying three fields each
+from a real per-index struct at `applet+0xa20` (64-byte stride, i.e.
+`applet+0xa20` and `applet+0xa60`) into the two OR-source locations.
+Re-aiming the injection at this level (writing `0x100` into the
+`applet+0xa20`-area fields every tick, so the copy would carry it
+through) still didn't move the state forward -- and a live HLE trace
+showed real `MEMSET(..., 0, 10)` calls landing in the same general
+`applet+0xa4x`-`0xab0` address range every tick, i.e. this whole
+region is itself cleared and presumably re-populated from some real
+source *within* the same tick, before the copy/combine/gate sequence
+reads it. Real disassembly of `HandleEvent`'s own dispatcher
+(`0x10c5e0`, reached via a real, data-driven `applet+24` trampoline --
+`HandleEvent` itself, vtable slot 2, is just `ldr ip,[r0,#24]; bx ip`,
+not a fixed implementation) confirms it writes real per-key bits into
+a *different* pair of fields, `applet+0x28`/`+0x2c`/`+0x30`, via a
+real, fully-mapped `wParam`→bit jump table (`0x11a3c4`; confirmed AVK
+`0xe029`, i.e. the numeral key `'8'`, maps to bit `0x100` there,
+matching the earlier session's own documented jump-table discovery
+almost exactly) -- but that's a *separate* real system from the
+`applet+0xa20` one the gate actually reads. The numeric match (`0x100`
+in both) looks like it should mean something and might be pure
+coincidence; not resolved either way this round.
+
+**Where this leaves things**: the title screen's real "waiting" state
+is now understood in real, mechanical detail -- exact gate, exact
+address, exact three-stage recompute pipeline -- but the true root
+(what real code populates `applet+0xa20`, and whether it's driven by
+`HandleEvent`'s classic AVK key path at all or a separate real
+input/HID/touch subsystem this codebase doesn't implement yet) is
+still open. Given Zeebo is a 2009 touch-capable device, not a classic
+AVK keypad, a real touch/pointer event type distinct from `EVT_KEY_*`
+is a live possibility, not yet checked. This needs either finding what
+writes `applet+0xa20` directly (a live watchpoint on that exact
+region, not yet done -- today's tracing only established that it gets
+cleared, not what refills it) or identifying the real event type/HLE
+surface Zeebo's own input model actually uses. A concrete, well-scoped
+next thread -- not chased further this round. All instrumentation
+(the LR-capture hle_trace, the state-pointer print, the `applet+24`
+trampoline print, the `0x80303640`/`0x80303618`/`0x8030362c` and
+`applet+0xa20`-area watch/injection experiments, the `OpenFile`/
+`GlTexImage2D` prints) added and fully reverted; `git diff --stat`
+clean. 259/259 tests pass (unchanged -- no functional code touched).

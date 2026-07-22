@@ -1007,6 +1007,24 @@ playable start-to-finish at full speed, standalone build.
       isn't input-shaped at all; needs real disassembly tracing to
       answer, same method that found the EGL bug, not more guessing.
       Not attempted this round. See PHASE8_LOG.md.
+      **Did that tracing.** The stable title-screen state gates on one
+      bit (`0x100`) of a real word (`applet+0x361c`) recomputed every
+      tick as the OR of two fields, themselves copied every tick from a
+      real per-input-source struct at `applet+0xa20` (64-byte stride,
+      2 sources) — and that struct is itself cleared (real `memset`)
+      every tick, presumably meant to be refilled from a real input
+      poll this codebase doesn't drive. `HandleEvent`'s own real key
+      dispatch (confirmed: itself just a trampoline through a real,
+      data-driven `applet+24` pointer) writes into a *different* pair
+      of fields (`applet+0x28`/`+0x2c`/`+0x30`) that never feed this
+      gate at all — so the AVK-key path from two rounds ago was never
+      going to work, not a matter of trying more codes. Real root cause
+      (what actually populates `applet+0xa20` — a distinct real input/
+      touch/HID subsystem, given Zeebo is a 2009 touch device not a
+      classic AVK keypad, is the live hypothesis) not yet found; needs
+      a watchpoint on that struct directly, not yet done. Well-scoped
+      next thread. All instrumentation reverted; 259/259 tests pass
+      (no functional changes this round). See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
