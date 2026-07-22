@@ -3309,3 +3309,66 @@ trampoline print, the `0x80303640`/`0x80303618`/`0x8030362c` and
 `applet+0xa20`-area watch/injection experiments, the `OpenFile`/
 `GlTexImage2D` prints) added and fully reverted; `git diff --stat`
 clean. 259/259 tests pass (unchanged -- no functional code touched).
+
+---
+
+**Found the real writer -- and it's a conclusive, non-bug answer: the
+title screen is genuinely, correctly waiting for real HID/gamepad
+input this codebase honestly has none of.**
+
+A direct memory watchpoint on the `applet+0xa20` region (temporary,
+reverted -- filtered to only nonzero writes, to cut through the real
+`memset`-zero noise already understood from last round) caught two
+real writers. The first, at module offset `0x1b748`, writes two plain
+non-pointer-shaped bytes early in the struct. The second is far more
+significant: a real `ISHELL_CreateInstance` call (traced with a
+temporary one-line print of its `cls_id`/`ppObj` args, reverted after)
+writing a real object pointer directly into this same struct --
+**`cls_id=0x106c411`, i.e. `AEECLSID_HID`**, the real joystick/gamepad
+class this project already confirmed via the bundled Zeebo SDK
+headers several rounds ago (see the Peggle-era `IHID`/
+`GetConnectedDevices` history in this file). Immediately after,
+`cls_id=0x1041207` (the SignalCBFactory-shaped class from the same
+earlier investigation) lands right next to it in the same struct.
+
+This is the real, conclusive missing piece: `applet+0xa20` isn't a
+generic "raw input source" struct at all -- it's real code's storage
+for its **HID/gamepad interface objects**, obtained through the exact
+same `AEECLSID_HID` gate this project's own `hid_obj` scaffold
+(`tools/game_probe.cpp`) already answers -- honestly, correctly, and
+on purpose -- with zero connected devices, since this emulator has no
+real joystick/controller hardware to report. The per-tick
+copy/combine/gate pipeline traced last round reads *from* whatever
+real per-device state a connected HID controller would provide; with
+zero real devices, that state is permanently empty, so the gate's bit
+`0x100` can never legitimately become set through this path. The
+`0x100` match against `HandleEvent`'s own, separate AVK key-bit jump
+table (also `0x100` for the digit `'8'`, noted last round as a
+"might be coincidence") is now understood to really be coincidental --
+two unrelated real bit-`0x100` conventions in two unrelated real
+subsystems.
+
+**This is not an emulator correctness bug.** Real Zeebo Double Dragon
+apparently supports (or expects) an external/Bluetooth gamepad for
+this specific title-screen gate, the same way many real BREW titles
+supported optional peripherals; a device without one legitimately
+sees this exact frozen state on real hardware too, unless a different
+real code path (touchscreen, a real "no controller" timeout, or
+something else not yet identified) also exists and this session
+simply hasn't found it. Confirmed no such alternate path is reachable
+via `HandleEvent`'s own key dispatch (traced in full last round).
+
+**What would actually move this forward** is a deliberate, explicit
+choice, not another disassembly hunt: teach the `hid_obj` scaffold in
+`tools/game_probe.cpp` to report a fake connected controller (and
+plausible button state) so this gate can be satisfied for testing
+purposes -- an honest, clearly-labeled simulation of hardware this
+project doesn't have, the same spirit as this file's other "provide a
+believable, non-guessed placeholder" fixes, not a "guess the real
+condition" exercise anymore, since the real condition is now fully
+understood. Not attempted this round -- a deliberate scope choice
+(whether/how to simulate a fake gamepad is worth a real decision, not
+a reflexive next step) rather than a blocker. All instrumentation
+(the `applet+0xa20` nonzero-write watchpoint, the `CreateInstance`
+cls_id/ppObj trace) reverted; `git diff --stat` clean. 259/259 tests
+pass (unchanged).

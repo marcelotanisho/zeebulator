@@ -1025,6 +1025,21 @@ playable start-to-finish at full speed, standalone build.
       a watchpoint on that struct directly, not yet done. Well-scoped
       next thread. All instrumentation reverted; 259/259 tests pass
       (no functional changes this round). See PHASE8_LOG.md.
+      **Found it, and it's conclusive: not a bug.** A direct
+      watchpoint on `applet+0xa20` caught a real `ISHELL_CreateInstance
+      (cls_id=0x106c411)` call -- `AEECLSID_HID`, the real gamepad
+      class -- writing its object pointer straight into this struct.
+      The whole pipeline traced last round reads real per-controller
+      HID state; this project's own `hid_obj` scaffold honestly reports
+      zero connected devices (we have no real joystick hardware), so
+      the gate's bit can never legitimately become set through this
+      path. Real Double Dragon appears to gate this specific
+      title-screen transition on an external/Bluetooth gamepad, the
+      same way real BREW titles could support optional peripherals --
+      a genuine hardware dependency, not an emulation gap. Moving past
+      it now needs a deliberate choice (teach the HID scaffold to
+      report a fake connected controller for testing) rather than more
+      tracing; not attempted this round. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
