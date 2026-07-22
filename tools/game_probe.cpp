@@ -161,6 +161,18 @@ uint32_t SdlKeyToAvk(SDL_Keycode key) {
   }
 }
 
+// EXPERIMENTAL: a fake connected-joystick handle, reported by the HID
+// scaffold below instead of the honest "zero devices" answer this
+// project used through TASKS.md Phase 8's Double Dragon investigation.
+// Found (real disassembly, see PHASE8_LOG.md) that Double Dragon's
+// title screen genuinely, correctly waits for real HID/gamepad input
+// before proceeding -- not an emulator bug, a real hardware dependency
+// this dev tool has no real controller to satisfy. Any nonzero, stable
+// value works as the "handle" -- real code only ever uses it as an
+// opaque token passed back into IHID_CreateDevice/GetDeviceInfo, never
+// interprets it directly.
+constexpr uint32_t kSimulatedDeviceHandle = 1;
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -361,20 +373,62 @@ int main(int argc, char** argv) {
   // vtable slot 7 (INHERIT_IQI's 3 slots + CreateDevice/GetDeviceInfo/
   // GetNextConnectEvent/RegisterForConnectEvents/GetConnectedDevices).
   // We have no real joystick hardware to enumerate, so honestly
-  // reporting zero connected devices (not a guess -- it's the true
-  // answer here) is enough to satisfy this gate.
-  uint32_t hid_obj = zeebulator::BuildStubObjectWithOverride(
-      cpu.GetMemory(), hle, /*vtable=*/0x8001C000, /*object=*/0x8001D000, /*slot_count=*/10,
-      /*override_slot=*/7,
-      [](zeebulator::IArmCore& core) {
-        // AEEResult GetConnectedDevices(IHID*, int nDeviceType,
-        //   int *pnDevHandles, int pnDevHandlesLen, int *pnDevHandlesLenReq)
-        uint32_t num_handles_req_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
-        if (num_handles_req_addr != 0) {
-          core.GetMemory().Write32(num_handles_req_addr, 0);
-        }
-        core.SetRegister(zeebulator::kR0, 0);  // AEE_SUCCESS
-      });
+  // reporting zero connected devices was the original, correct answer
+  // here.
+  //
+  // EXPERIMENTAL escalation (TASKS.md Phase 8): reports one simulated
+  // joystick instead, to see what real code does with an actually-
+  // connected device -- see kSimulatedDeviceHandle's own doc comment
+  // near main()'s top for why. Real disassembly of what followed
+  // (`ddragonz.mod`, traced live, not guessed) showed real code
+  // immediately calling real vtable slot 3,
+  // `IHID_CreateDevice(pIHID, nHandle, &ppDevice)`, and -- like every
+  // other unchecked-result call site in this project's history --
+  // dereferencing `*ppDevice` shortly after without checking the
+  // return code. A blind stub answering slot 3 (the same "return 0,
+  // touch nothing else" default every other slot here still uses)
+  // left `*ppDevice` null, and real code wandered into it. Slot 3 is
+  // now also overridden, handing back a second, separate generic
+  // scaffold object (real `IHIDDevice` shape not confirmed against any
+  // header, same deliberately-unguessed treatment as this file's other
+  // unknown interfaces) instead of leaving the output pointer
+  // untouched. That scaffold needs 40 slots, not this file's usual
+  // 10-slot default for a *known*, fully-specified small interface:
+  // real disassembly (also traced live) showed real code calling
+  // IHIDDevice's own vtable slot 11 (byte offset 44) next, which a
+  // 10-slot object doesn't have room for -- reading past its own
+  // vtable into unmapped memory decoded as a null function pointer and
+  // wandered exactly the same way.
+  constexpr uint32_t kHidDeviceVtable = 0x80063000;
+  constexpr uint32_t kHidDeviceObject = 0x80064000;
+  uint32_t hid_device_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, kHidDeviceVtable, kHidDeviceObject, /*slot_count=*/40);
+  std::vector<zeebulator::HleRuntime::HleFunction> hid_methods(
+      10, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
+  hid_methods[3] = [hid_device_obj](zeebulator::IArmCore& core) {
+    // AEEResult CreateDevice(IHID*, int nHandle, IHIDDevice **ppDevice)
+    uint32_t ppdevice = core.GetRegister(zeebulator::kR2);
+    if (ppdevice != 0) {
+      core.GetMemory().Write32(ppdevice, hid_device_obj);
+    }
+    core.SetRegister(zeebulator::kR0, 0);  // AEE_SUCCESS
+  };
+  hid_methods[7] = [](zeebulator::IArmCore& core) {
+    // AEEResult GetConnectedDevices(IHID*, int nDeviceType,
+    //   int *pnDevHandles, int pnDevHandlesLen, int *pnDevHandlesLenReq)
+    uint32_t device_handles_addr = core.GetRegister(zeebulator::kR2);
+    uint32_t device_handles_len = core.GetRegister(zeebulator::kR3);
+    uint32_t num_handles_req_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
+    if (device_handles_addr != 0 && device_handles_len >= 1) {
+      core.GetMemory().Write32(device_handles_addr, kSimulatedDeviceHandle);
+    }
+    if (num_handles_req_addr != 0) {
+      core.GetMemory().Write32(num_handles_req_addr, 1);
+    }
+    core.SetRegister(zeebulator::kR0, 0);  // AEE_SUCCESS
+  };
+  uint32_t hid_obj = zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, /*vtable_address=*/0x8001C000,
+                                                       /*object_address=*/0x8001D000, hid_methods);
   shell_hle.RegisterInstance(/*AEECLSID_HID=*/0x0106c411, hid_obj);
   // A second class this same routine unconditionally requires next
   // (gated on GetConnectedDevices' own success, not on device count --
@@ -388,6 +442,20 @@ int main(int argc, char** argv) {
   uint32_t unknown_0x01041207_obj = zeebulator::BuildGenericStubObject(
       cpu.GetMemory(), hle, /*vtable=*/0x8001E000, /*object=*/0x8001F000, /*slot_count=*/20);
   shell_hle.RegisterInstance(0x01041207, unknown_0x01041207_obj);
+  // A real, previously-unreachable class found while testing the
+  // simulated-connected-joystick change above (TASKS.md Phase 8):
+  // once GetConnectedDevices reports a device, real code goes on to
+  // call `ISHELL_CreateInstance(shell, ClsId=0x01005511, ...)` --
+  // unconfirmed against any real header, but reached only through this
+  // real HID-device code path, and -- like every other real
+  // `CreateInstance` call site in this project's history -- not
+  // checked for failure before its result gets used, wandering into
+  // unmapped memory when left unregistered. Generic scaffold, same
+  // deliberately-unguessed treatment as every other unidentified class
+  // here.
+  uint32_t unknown_0x01005511_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80060000, /*object=*/0x80061000, /*slot_count=*/20);
+  shell_hle.RegisterInstance(0x01005511, unknown_0x01005511_obj);
   // Two more real, unidentified classes found investigating why
   // Peggle's tick loop settles into a fixed, non-progressing steady
   // state (TASKS.md Phase 8). The first is half of a real "try the
