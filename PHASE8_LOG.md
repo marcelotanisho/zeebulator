@@ -3564,3 +3564,59 @@ condition this project hasn't found yet, possibly the entry-flags
 attempted this round — downloaded comparison files live under
 `/tmp` (this session's scratchpad), not this repo; no research/ or
 core/ files changed. 259/259 tests pass (no functional changes).
+
+---
+
+**Took that next step — disassembled the real static table backing
+the op-code-2 preload loop, and it settles the question.** Traced
+`0x11c248` (the op-code-2 handler dispatched from `0x11c168`'s jump
+table) in full: it recomputes the current list entry's pointer, then
+loads a real ROPI-relative literal at `0x11c3e4`, adds it to `pc` at
+`0x11c260` to compute an absolute address — `0x14e1cc` — and passes
+*that* as the `table_ptr` argument to `0x11c964`, alongside a fixed
+`r3=81`. This is a genuine compiled-in constant array baked into
+`ddragonz.mod` itself, not a per-tick or per-entry dynamic structure.
+
+Dumped all 81 real 4-byte entries at `0x14e1cc` directly from the
+`.mod` file (no emulation involved, plain Python + `struct`): every
+value is a GGZ resource index, range 0-73 inclusive, and **all 74
+distinct indices (0 through 73) appear at least once** across the 81
+slots (some duplicated — e.g. index 73 itself appears twice, at table
+slots 17 and 18 — presumably background tracks reused across more
+than one in-game context). Cross-checked against `0x11c964`'s own
+disassembly (already covered above): the loop is strictly all-or-
+nothing — any single call returning 0 aborts the whole batch
+immediately (`beq 0x11c9c0`), with no per-slot skip or conditional
+short-circuit anywhere in the function.
+
+**Conclusion: this is a real, deterministic, unconditional
+requirement, baked directly into the compiled game code, that every
+one of the 74 real GGZ resources in `sound.ggz` — including entry 73,
+`bgm_9.mid` — be fully readable.** No interpreter, however correct,
+can execute this exact compiled binary against this exact file
+without hitting this failure; it isn't an artifact of anything this
+project's HLE does or doesn't model. Combined with three independent
+byte-for-byte-identical public copies of `sound.ggz` (this repo's
+original, `zeebo-arquivista`, and now the `OpenZeebo` compilation),
+the most parsimonious real-world explanation is that the original
+capture of this file — whatever tool first dumped it off real Zeebo
+hardware/flash, years before any of these preservation efforts —
+stopped a few hundred bytes short of the end, and every subsequent
+public copy has propagated that same short capture forward. Tuxality's
+Infuse reportedly reaching a playable Double Dragon is not in tension
+with this: it would require either a different, complete `sound.ggz`
+this project's searches haven't turned up, or divergent (non-fatal)
+handling of this same short read on Infuse's part — either way, not
+something resolvable without access to Infuse's own asset set or
+source, neither of which exists publicly.
+
+**This closes the investigative thread — there is nothing in
+Zeebulator to fix here.** The LOAD ERROR dialog is real, correct
+behavior given the actual bytes available; moving past it needs a
+more complete `sound.ggz` than any public source currently provides,
+not a code change. No further sourcing attempted this round beyond
+what was already done (per this project's practice of confirming
+before searching for game assets). All work this round was read-only
+disassembly and a standalone Python script reading raw file bytes —
+no instrumentation added, nothing to revert; `git diff --stat` clean
+until this doc update. 259/259 tests pass (no functional changes).

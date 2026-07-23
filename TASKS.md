@@ -1099,6 +1099,29 @@ playable start-to-finish at full speed, standalone build.
       in the first place. Not attempted this round; no repo files
       touched (comparison files stayed in scratchpad). 259/259 tests
       pass. See PHASE8_LOG.md.
+      **Did that, and it closes the thread: there's nothing to fix.**
+      Disassembled the real static table backing the op-code-2 preload
+      loop (`0x11c964`, called from `0x11c248`) — a genuine compiled-in
+      constant array in `ddragonz.mod` at `0x14e1cc`, 81 entries, real
+      GGZ resource indices. All 74 distinct indices (0-73) appear at
+      least once, entry 73 (`bgm_9.mid`) among them, and the loop is
+      strictly all-or-nothing (any single failure aborts the whole
+      batch, no per-slot skip exists anywhere in the function). This is
+      an unconditional requirement baked directly into the compiled
+      game code: no correct interpreter can run this exact binary
+      against this exact file without hitting this failure. Combined
+      with three independent byte-identical public copies of
+      `sound.ggz`, the most parsimonious explanation is that the
+      original real-hardware capture of this file — whatever tool
+      first dumped it, long before any preservation effort — itself
+      stopped a few hundred bytes short, and every public copy since
+      has propagated that same short capture. Not a Zeebulator gap;
+      moving past this dialog needs a more complete `sound.ggz` than
+      any public source currently provides, not a code change. No
+      further sourcing attempted (already searched once this round per
+      this project's ask-first practice). 259/259 tests pass (no
+      functional changes — read-only disassembly and a standalone
+      script only). See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
