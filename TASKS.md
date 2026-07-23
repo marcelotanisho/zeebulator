@@ -1080,6 +1080,25 @@ playable start-to-finish at full speed, standalone build.
       somehow. Not resolved this round — a deliberate stopping point,
       not a guess. 259/259 tests pass (investigation only, no
       functional changes). See PHASE8_LOG.md.
+      **Found a third, independent source — points away from "shipped
+      defect."** Archive.org item `Zeebo` ("OpenZeebo" compilation, a
+      different curation than `zeebo-arquivista`) has its own Double
+      Dragon dump (`274754.7z`); pulled just that entry via HTTP range
+      reads instead of the full 653MB zip. All three real asset files
+      (`ddragonz.mod`/`data.ggz`/`sound.ggz`) are SHA-256-identical to
+      this repo's copies — a third independent match, making a bad
+      download effectively impossible. Also found that Tuxality's
+      independent, closed-source Infuse emulator is on record reaching
+      a **playable** state on Double Dragon (May 2025), almost
+      certainly against this same public dump, since no other is known
+      to exist. A correct implementation evidently doesn't get stuck
+      on this LOAD ERROR using these exact bytes — favors "real
+      Zeebulator gap" over "shipped defect," though not proven (Infuse's
+      source isn't inspectable). Next concrete step: find what should
+      stop real code from ever needing GGZ entry 73's full 1034 bytes
+      in the first place. Not attempted this round; no repo files
+      touched (comparison files stayed in scratchpad). 259/259 tests
+      pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`

@@ -3516,3 +3516,51 @@ guess, per this project's practice of grounding every conclusion in
 evidence rather than picking the more convenient explanation. All
 temporary instrumentation reverted (`git diff --stat` clean); 259/259
 tests pass (no functional changes this round, investigation only).
+
+---
+
+**Went looking for a third, genuinely independent source to settle
+which of those two hypotheses holds — found one, and it points away
+from "shipped defect."** Searched the web (not just this project's
+already-sanctioned archive.org sources) for another Double Dragon
+Zeebo dump. Found archive.org item `Zeebo` ("Zeebo (All Games + Dev
+Tools)", https://archive.org/details/Zeebo) — a completely different
+curation ("OpenZeebo" Game & App Compilation) from the already-checked
+`zeebo-arquivista` item, packaged as per-title 7z archives inside one
+653MB zip rather than per-title raw files. Rather than downloading the
+full zip, read its central directory over HTTP range requests
+(`requests` + a small custom seekable-file shim wrapping `zipfile`) to
+pull just `274754.7z` (3,163,914 bytes — `274754` being Double
+Dragon's own real download-catalog ID, already confirmed in this
+project) directly, without touching the other 64 entries. Extracted
+and hashed all three real asset files (`ddragonz.mod`, `data.ggz`,
+`sound.ggz`) against this repo's copies: **all three SHA-256-identical
+to this repo's existing files**, `sound.ggz` included — a third
+independent source now agrees byte-for-byte with the original repo
+copy and the `zeebo-arquivista` copy checked two rounds ago. This
+makes "one bad download" essentially impossible; the truncated final
+GGZ entry really is baked into the one dump of this game that exists
+in public circulation.
+
+That still doesn't prove which hypothesis is right, but it does shift
+the weight: Tuxality's independent, closed-source Infuse emulator
+(already investigated once for an unrelated class-ID lookup, see
+above) is on record (its own project pages, confirmed by a fresh web
+search this round) as reaching a **playable** state on Double Dragon
+as of its May 2025 build — almost certainly against this exact same
+public dump, since no other is known to exist. A correct
+implementation evidently does not get stuck at this LOAD ERROR dialog
+using these bytes, which favors hypothesis (a) from above (a real,
+still-unidentified Zeebulator-side gap causes this codebase to reach
+or mishandle the final GGZ entry in a way real/correct behavior
+doesn't) over (b) (a genuine shipped defect). Not proven — Infuse's
+source is unavailable to inspect, so this is corroborating evidence,
+not a confirmed mechanism. The concrete next step this opens up:
+find what should prevent real code from ever needing entry 73's full
+1034 bytes in the first place (e.g., a real early-exit/terminal
+condition this project hasn't found yet, possibly the entry-flags
+`0x80000000` bit noted earlier, or a different real value in
+`applet+0x36b2`'s path that this project's HLE computes wrong). Not
+attempted this round — downloaded comparison files live under
+`/tmp` (this session's scratchpad), not this repo; no research/ or
+core/ files changed. 259/259 tests pass (no functional changes).
