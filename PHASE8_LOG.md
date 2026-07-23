@@ -3442,3 +3442,77 @@ the render-path `OpenFile`/`GlTexImage2D` prints, the state-transition
 print, a one-shot PC watch) reverted; the two real HID fixes and the
 new class registration are the only surviving diff. No regression on
 Peggle/Super BurgerTime; 259/259 tests pass.
+
+---
+
+**Answered a direct question ("should the title screen be rendered at
+this point?") by tracing what's actually on screen right now, and it
+turned out to be a completely different, parallel real blocker from
+the HID gate above — not a manifestation of it.** With the simulated
+joystick connected but idle, real code draws a genuine "CARREGANDO..."
+(Portuguese "LOADING...") animated spinner, then settles into a
+persistent, real "LOAD ERROR" / "ERROR CODE:6" / "LIST COUNT:3"
+dialog, redrawn every tick — not the title screen at all.
+
+Traced the full real call chain via live LR-capture and disassembly
+(temporary `DrawText`/`DrawRect` prints, a `g_debug_last_pc` bridge
+added to `core/memory/memory.{h,cpp}` for a write watchpoint, and a
+temporary trace in `core/brew/file_hle.cpp`'s `OpenFileImpl`/
+`ReadFromHandle`/`SeekImpl` — all reverted after use, `git diff --stat`
+clean): a real per-tick "process one resource-list entry" dispatcher
+(`0x11c168`-`0x11c3dc`) indexes a 76-byte-stride entry array by
+`applet+0x36b2` ("list count"); the entry at index 2 has real
+operation-code 2, whose handler calls a real bounded loop (`0x11c964`,
+literal `mov r3,#81`) that opens `sound.ggz` fresh on each iteration,
+seeks into it, and reads a small chunk — walking the file's own real
+GGZ header table forward. The watchpoint caught the real writer of
+`error_code` (`applet+0x36c4`, set to `6` at `pc=0x11c274`) firing
+immediately after the 74th (last) such iteration's `Read` call
+returned fewer bytes than requested.
+
+**Confirmed via a standalone script reading the raw file bytes —
+no emulation involved — that this is a property of the file itself,
+not a Zeebulator bug.** `sound.ggz`'s header table is 74 real entries
+(8 bytes each, big-endian `{offset, length}`, entries 0-73 at file
+byte 0, 8, 16, ..., 584 — matches exactly, since entry 0's declared
+data offset, 592, equals the byte right after the table ends), each
+naming a gzip-compressed sub-resource (recovered real embedded
+filenames via the gzip FNAME field, e.g. `bgm_9.mid` for entry 73).
+Six of the last seven entries (indices 68-73) declare `offset+length`
+past the file's actual 1,928,097-byte end; entry 73 specifically
+declares `offset=1927592 length=1034` (end `1928626`) but only 505
+bytes remain before EOF — exactly the 505-byte partial read the live
+trace caught, followed by the 0-byte read that trips the failure path
+up through `0x10739c` → `0x11bfd0` → `0x11c964` → `0x11c248` →
+`error_code=6`. This directly extends (not merely repeats) the
+"entry-74 EOF mismatch" open question from two rounds ago: at the
+time, only the crude fact "the file appears short at the very end"
+was known; now the exact byte offsets, the real container's own
+internal accounting, and the live real-code trace showing this exact
+entry is the one Double Dragon's own logic reaches and fails on are
+all pinned down.
+
+**This does not close that open question — it sharpens it into a
+real puzzle.** Two rounds ago, re-downloading Double Dragon from an
+independent archive.org source and comparing all 5 real files
+byte-for-byte (SHA-256) found `sound.ggz` identical, which at the time
+was read as "ruling out an incomplete research-asset dump." That
+still holds — this file's `sound.ggz` genuinely is the shipped,
+byte-verified-authentic asset — but it means the truncation-past-EOF
+in the file's own internal header table isn't a research-asset
+artifact at all: it's baked into the real, authentic, shipped file.
+That leaves two live, undistinguished hypotheses, neither confirmed:
+(a) real hardware never actually reaches this specific entry during
+ordinary play — i.e., something upstream of `list_count` reaching 2
+behaves differently on real hardware than in this emulator, and this
+project has an as-yet-unfound real gap that causes it to take a path
+real code wouldn't; or (b) the real retail build genuinely ships with
+this defect (an unused/orphaned final BGM track reference,
+`bgm_9.mid`, whose data was truncated at mastering time) and real
+Zeebo hardware has some error-recovery behavior around a short file
+read that this project doesn't yet model. No further attempt made to
+distinguish these this round — a deliberate stopping point, not a
+guess, per this project's practice of grounding every conclusion in
+evidence rather than picking the more convenient explanation. All
+temporary instrumentation reverted (`git diff --stat` clean); 259/259
+tests pass (no functional changes this round, investigation only).

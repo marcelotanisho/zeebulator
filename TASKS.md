@@ -1057,6 +1057,29 @@ playable start-to-finish at full speed, standalone build.
       the next well-scoped step, not attempted this round. No
       regression on Peggle/Super BurgerTime; 259/259 tests pass. See
       PHASE8_LOG.md.
+      **Turns out what's currently on screen isn't the title screen at
+      all — a separate, parallel real blocker.** With the joystick
+      connected but idle, real code shows a genuine "CARREGANDO..."
+      spinner, then a persistent "LOAD ERROR"/"ERROR CODE:6" dialog.
+      Traced it end-to-end (live watchpoints and a temporary
+      `OpenFile`/`Read`/`Seek` trace, all reverted) to a real per-tick
+      resource loader whose 74-entry `sound.ggz` GGZ header table is,
+      by its own internal accounting, short: entries 68-73 (the last
+      6) declare more data than the 1,928,097-byte file actually
+      contains — entry 73 (`bgm_9.mid`) is missing 529 of its declared
+      1034 bytes. Confirmed via a standalone script reading the raw
+      file, no emulation involved. This refines, but doesn't resolve,
+      the open question from the Peggle section below: a byte-for-byte
+      SHA-256 match against an independent archive.org copy already
+      showed this `sound.ggz` is the authentic shipped file, not a
+      research-asset gap — so the truncation is baked into the real
+      asset itself. Two live, undistinguished hypotheses: either this
+      project has an unfound real gap that makes it reach this entry
+      when real hardware wouldn't, or the retail build genuinely ships
+      with this defect and real hardware papers over a short read
+      somehow. Not resolved this round — a deliberate stopping point,
+      not a guess. 259/259 tests pass (investigation only, no
+      functional changes). See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
