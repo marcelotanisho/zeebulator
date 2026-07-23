@@ -1122,6 +1122,30 @@ playable start-to-finish at full speed, standalone build.
       this project's ask-first practice). 259/259 tests pass (no
       functional changes — read-only disassembly and a standalone
       script only). See PHASE8_LOG.md.
+      **Reopened after being asked directly to match what a real,
+      independent emulator (Infuse) does — and that pushed this all the
+      way to a real, working fix.** Ran Infuse's actual Linux binary
+      against this repo's own exact asset files; confirmed via `strace`
+      and a live screenshot that it hits the identical short read on
+      `sound.ggz` and still reaches the real splash screen. Chasing why
+      required real disassembly of `0x11bfd0` (the actual per-entry
+      reader, not `0x10739c` as assumed before): it's a plain
+      accumulate-until-`length`-or-EOF raw byte copy with **no
+      decompression at that level**, needing the file to physically
+      contain each entry's full declared length — even though the same
+      bytes are genuine, valid gzip streams (confirmed decompressible
+      standalone) that this project's own separate `core/loader/ggz.*`
+      already handles correctly for other purposes. **Fix**: `tools/
+      game_probe.cpp`'s `MergeGgzInto` now zero-pads the raw archive
+      blob (never the individually-extracted, correctly-decompressed
+      entries) out to the largest extent its own header table declares,
+      whenever the real file falls short. Verified: `list_count` now
+      reaches 3 with `error_code` staying 0 (previously 6); real
+      execution runs measurably further before hitting a new,
+      different, out-of-scope gap (an unimplemented MRS/MSR
+      instruction) — a distinct next thread. Scoped narrowly enough
+      that Peggle/Super BurgerTime (no GGZ format, unaffected either
+      way) can't regress from it. 259/259 tests pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`

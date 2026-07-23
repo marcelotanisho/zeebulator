@@ -3620,3 +3620,94 @@ before searching for game assets). All work this round was read-only
 disassembly and a standalone Python script reading raw file bytes —
 no instrumentation added, nothing to revert; `git diff --stat` clean
 until this doc update. 259/259 tests pass (no functional changes).
+
+---
+
+**Reopened this immediately — asked directly "if the other emulator
+works, we should be able to make it work as well," which was the
+right challenge.** Rather than guess at a workaround, ran Tuxality's
+actual Infuse binary (Linux build, freely distributed by its author on
+archive.org, `infusewin` item) against this repo's own exact asset
+files (`~/.Tuxality/Infuse/brew/...`, matching its documented install
+layout, which conveniently already uses Double Dragon's real catalog
+ID `274754` as its own worked example). Confirmed via `strace -P`
+(path-filtered, to avoid the overhead of tracing its hot audio-polling
+loop, which the first attempt did and froze its UI) that Infuse
+performs the *exact same* raw file access as this project's own
+trace: seeks to byte 584, reads the entry-73 header, seeks to
+1927592, and gets back exactly 505 bytes — the identical short read.
+It does **not** retry with a fresh, larger request the way this
+project's traced ARM code does; it simply moves on to the next table
+entry (576, `bgm_8.mid`) and keeps going. A screenshot of the live
+window (`wmctrl -a` to raise it, `gnome-screenshot`) confirmed the
+outcome directly: the real Double Dragon splash screen ("APERTE O
+BOTÃO HOME"), not a LOAD ERROR dialog.
+
+**That sent this round back to disassembly, because the obvious
+explanation — "decompression only needs 505 of the 1034 bytes" —
+turned out to be a real dead end that had to be ruled out first, not
+assumed.** Decompressing exactly those 505 bytes with plain Python
+`gzip`/`zlib` (no emulation involved) *does* succeed completely,
+producing exactly 1034 bytes with a clean end-of-stream — matching
+this project's own pre-existing `core/loader/ggz.h`/`.cpp`, which
+already correctly documents and implements the second header field as
+`decompressed_size` and decompresses via `zlib` with `avail_in` set to
+"everything to EOF," exactly as it should. That raised real doubt
+about the whole "file is short" framing. Settling it required
+disassembling the actual real reader (`0x11bfd0`, called from
+`0x11c964`, itself calling `0x10739c` only for open/seek/header-parse
+setup) directly rather than reasoning further: it is a plain
+accumulate-until-`length`-or-EOF raw-byte read loop (`0x11c04c`-
+`0x11c0a8`) that copies file bytes **verbatim, with no decompression
+call anywhere in the function**, into a buffer sized to the header's
+declared `length` (1034) — and only returns success if it accumulates
+*exactly* that many raw bytes. Confirmed via a temporary LR-capture
+(added to `core/brew/file_hle.cpp`'s `ReadImpl`/`SeekImpl`, reverted
+after use) that the real file `Read()` HLE trap's caller address is
+`0x11c070`, squarely inside this loop, not inside any intermediate
+real decompressor — so this is genuinely how Double Dragon's own
+compiled code treats `sound.ggz`: as a raw-storage container it reads
+directly, not one it decompresses at this level, despite the bytes
+themselves being ordinary gzip streams (this project's own separate
+GGZ loader decompresses the very same entries correctly for the
+individually-extracted, by-name VFS files it builds from this exact
+archive — the two facts don't contradict each other, they're just two
+different real consumers of the same real file with different real
+expectations of it).
+
+**Fix**: `tools/game_probe.cpp`'s `MergeGgzInto` now pads the raw
+bytes exposed under a GGZ archive's own basename (never the
+individually-extracted, correctly-decompressed per-entry files) with
+zero bytes out to the largest `offset + decompressed_size` any entry
+in its own header table declares, whenever the real file is physically
+shorter than that. This is narrowly scoped: it only affects the raw
+container blob real code opens by name and manually walks (confirmed
+real behavior, `sound.ggz` only — Peggle and Super BurgerTime don't
+use the GGZ format at all, and this tool's fixed 4-argument CLI
+already can't run them regardless, confirmed by trying: `GgzArchive::
+Parse` throws immediately on `resources.bar`, unrelated to and
+unaffected by this change). It doesn't touch `Memory`/`file_hle.cpp`'s
+generic Read()-at-EOF semantics anywhere else, so every other file's
+legitimate EOF-driven termination logic (save files, `data.ggz`'s own
+raw copy, etc.) is untouched. It doesn't fabricate real audio content
+either — the genuinely-missing tail bytes of the affected entries stay
+zero, not guessed.
+
+**Verified**: re-ran the probe with a temporary tick-by-tick watch on
+`applet+0x36c4`/`applet+0x36b2` (reverted after). `list_count` now
+reaches `3` with `error_code` staying `0` the entire time — previously
+it reached `3` via the failure path with `error_code=6` at tick ~3.
+Real execution now runs measurably further (to tick 4, past several
+genuinely new per-tick HLE calls) before hitting a **new, different**
+gap entirely: an unimplemented `MRS`/`MSR` instruction crash at
+`pc=0x00090024`, well outside this investigation's scope — a distinct,
+well-scoped next thread for a future round, not a sign this fix didn't
+work. `sound.ggz`'s own padding this round: 12,718 bytes across the
+six real short entries found earlier (68-73). `data.ggz` (a completely
+separate archive, whose raw copy real code apparently never opens
+directly — only its individually-extracted per-entry files are ever
+used) got padded too by the same generic logic (104,310 bytes) since
+nothing scopes the padding to `sound.ggz` specifically; harmless, since
+nothing reads that raw copy, but worth knowing if this surprises
+someone reading the padding log line later. 259/259 tests pass (this
+tool's own logic is the only code changed; no core/ files touched).

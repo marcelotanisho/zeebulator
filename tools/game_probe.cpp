@@ -61,6 +61,39 @@ void MergeGgzInto(zeebulator::VirtualFilesystem& vfs, const char* path) {
   for (const auto& entry : archive.Entries()) {
     vfs.AddFile(entry.name, archive.Extract(entry));
   }
+
+  // Double Dragon's own real code, when it opens "sound.ggz" itself
+  // (rather than going through this loop's per-entry extraction above),
+  // reads each entry's declared `decompressed_size` as a literal raw
+  // byte count straight from the file at `offset` -- no decompression
+  // at that level (confirmed via direct disassembly of ddragonz.mod
+  // 0x11bfd0/0x11c964, PHASE8_LOG.md) -- so it needs the *raw file* to
+  // physically contain that many bytes, not just a valid gzip stream
+  // that happens to decompress to that size. This repo's `sound.ggz`
+  // (byte-identical across three independent public sources) is short
+  // for its own last few entries -- e.g. entry 73 declares 1034 bytes
+  // at offset 1927592, but the file ends 529 bytes early. A real,
+  // independent Zeebo emulator (Infuse) plays Double Dragon successfully
+  // against this same file, which only makes sense if it tolerates this
+  // exact shortfall -- so this pads the raw copy exposed under the
+  // archive's own basename (never the individually-extracted, correctly
+  // decompressed entries above) with zero bytes out to the largest
+  // offset+decompressed_size any entry declares. This does not
+  // fabricate any real content (the genuinely missing tail of that one
+  // background track stays silent/garbage padding, not guessed audio)
+  // -- it only stops a short real file from producing a false EOF where
+  // a real, correct player evidently doesn't hit one.
+  uint32_t max_extent = static_cast<uint32_t>(raw.size());
+  for (const auto& entry : archive.Entries()) {
+    uint32_t extent = entry.offset + entry.decompressed_size;
+    if (extent > max_extent) max_extent = extent;
+  }
+  if (max_extent > raw.size()) {
+    std::printf("padding %s with %zu zero bytes (short by that much vs. its own header table)\n",
+                path, static_cast<size_t>(max_extent) - raw.size());
+    raw.resize(max_extent, 0);
+  }
+
   vfs.AddFile(BaseName(path), std::move(raw));
   std::printf("loaded %zu entries from %s\n", archive.Entries().size(), path);
 }
