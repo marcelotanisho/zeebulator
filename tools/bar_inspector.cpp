@@ -74,5 +74,11 @@ int main(int argc, char** argv) {
                 static_cast<std::streamsize>(content.size()));
     }
   }
+
+  std::printf("%zu resource-ID directory records:\n", archive.ResourceIds().size());
+  for (const auto& res_id : archive.ResourceIds()) {
+    std::printf("  type=%-5u id=%-6u unknown=%-5u -> entry %u\n", res_id.type, res_id.requested_id,
+                res_id.unknown, res_id.entry_index);
+  }
   return 0;
 }

@@ -1,5 +1,7 @@
 #include "core/brew/ishell.h"
 
+#include <utility>
+
 #include "core/brew/interface_object.h"
 
 namespace zeebulator {
@@ -12,12 +14,24 @@ namespace {
 // filled in with real behavior at that point.
 void Stub(IArmCore& core) { core.SetRegister(kR0, 0); }
 
+std::string ReadCString(Memory& memory, uint32_t addr) {
+  std::string s;
+  for (uint8_t c = memory.Read8(addr); c != 0; c = memory.Read8(++addr)) {
+    s.push_back(static_cast<char>(c));
+  }
+  return s;
+}
+
 }  // namespace
 
 IShellHle::IShellHle(Memory& memory, HleRuntime& hle) : memory_(memory), hle_(hle) {}
 
 void IShellHle::RegisterInstance(uint32_t cls_id, uint32_t object_ptr) {
   instances_[cls_id] = object_ptr;
+}
+
+void IShellHle::RegisterResourceFile(const std::string& name, std::vector<uint8_t> data) {
+  resource_files_.emplace(name, BarArchive::Parse(std::move(data)));
 }
 
 void IShellHle::CreateInstanceImpl(IArmCore& core) {
@@ -65,6 +79,45 @@ void IShellHle::CancelTimerImpl(IArmCore& core) {
     }
   }
   core.SetRegister(kR0, 1);  // EFAILED-ish: no matching timer
+}
+
+void IShellHle::LoadResDataExImpl(IArmCore& core) {
+  // AEEResult LoadResDataEx(IShell *pIShell, const char *pszResFile,
+  //   uint16 wResID, AEERESTYPE resType, void *pBuffer, uint32 *pnLen)
+  // Real calling convention and the real `(void*)-1` "size only" buffer
+  // sentinel confirmed against a real Peggle call site -- see this
+  // class's own doc comment.
+  std::string filename = ReadCString(memory_, core.GetRegister(kR1));
+  uint32_t id = core.GetRegister(kR2);
+  uint32_t type = core.GetRegister(kR3);
+  uint32_t buffer = HleRuntime::ReadStackArg(core, 0);
+  uint32_t len_addr = HleRuntime::ReadStackArg(core, 1);
+
+  auto file_it = resource_files_.find(filename);
+  if (file_it == resource_files_.end()) {
+    core.SetRegister(kR0, 1);  // EFAILED-ish: unregistered resource file
+    return;
+  }
+  const BarEntry* entry =
+      file_it->second.Find(static_cast<uint16_t>(type), static_cast<uint16_t>(id));
+  if (entry == nullptr) {
+    core.SetRegister(kR0, 1);  // EFAILED-ish: no directory entry for this (type, id)
+    return;
+  }
+
+  constexpr uint32_t kSizeOnlySentinel = 0xFFFFFFFF;
+  if (buffer == kSizeOnlySentinel) {
+    if (len_addr != 0) memory_.Write32(len_addr, entry->size);
+    core.SetRegister(kR0, 0);  // SUCCESS
+    return;
+  }
+
+  std::vector<uint8_t> data = file_it->second.Extract(*entry);
+  for (uint32_t i = 0; i < data.size(); ++i) {
+    memory_.Write8(buffer + i, data[i]);
+  }
+  if (len_addr != 0) memory_.Write32(len_addr, entry->size);
+  core.SetRegister(kR0, 0);  // SUCCESS
 }
 
 std::vector<IShellHle::ExpiredTimer> IShellHle::Tick(uint32_t elapsed_ms) {
@@ -130,7 +183,7 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       Stub,  // 38 GetPosition
       Stub,  // 39 CheckPrivLevel
       Stub,  // 40 IsValidResource
-      Stub,  // 41 LoadResDataEx
+      [this](IArmCore& c) { LoadResDataExImpl(c); },  // 41 LoadResDataEx
       // Slots below this point are NOT verified against any real header --
       // unlike 0-41 above, they're only known to exist at all because real
       // Double Dragon disassembly (`ddragonz.mod` offset 0x10a234) showed a

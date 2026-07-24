@@ -1614,6 +1614,29 @@ playable start-to-finish at full speed, standalone build.
       still nothing on screen. Investigation only, all temporary
       instrumentation reverted, 282/282 tests pass unchanged. See
       PHASE8_LOG.md.
+      **Found and fixed why `resources.bar` was never requested:
+      `ISHELL_LoadResDataEx` (real vtable slot 41) was a blind stub.**
+      A full instruction trace of a real call found the exact real
+      calling convention (query size via the real `-1` sentinel,
+      `malloc`, fetch for real) and a concrete real `(id=4000, type=1)`
+      pair. That pair turned out to be the key to `resources.bar`'s own
+      previously-unparsed 496-byte sub-table too: its 60th record reads
+      `{type=1, id=4000, entry_index=304}` -- an exact match, resolving
+      to the same real localized string this log already independently
+      confirmed at entry 304. **Promoted into a real
+      `BarArchive::Find(type,id)`** (not Peggle-specific — the same
+      real resource-ID directory format any `.bar` file presumably
+      uses) and a **real, working `LoadResDataEx` implementation** in
+      `core/brew/ishell.{h,cpp}`, backed by a new
+      `RegisterResourceFile`. 7 new tests. **Verified against real
+      Peggle**: with `resources.bar` supplied, execution takes a
+      genuinely new path — a new real gap after ~7,000 steps (a
+      previously-unseen two-handler event-dispatch mechanism), instead
+      of settling into the same ~500-call idle loop every time. No
+      regression on Double Dragon/Super BurgerTime/Peggle-without-
+      `resources.bar`. 289/289 tests pass. Doesn't reach a visible
+      frame yet, but for the first time a real BREW OS-level API has
+      real, non-stub, end-to-end behavior. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core

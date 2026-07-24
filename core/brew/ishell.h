@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "core/brew/hle_runtime.h"
+#include "core/loader/bar.h"
 #include "core/memory/memory.h"
 
 namespace zeebulator {
@@ -30,6 +32,16 @@ namespace zeebulator {
 // for an unrecognized/unimplemented class rather than a lying "success"
 // with an unwritten output pointer.
 //
+// LoadResDataEx (slot 41) is real too, backed by RegisterResourceFile:
+// confirmed end to end against real Peggle (`peggle.mod`, TASKS.md
+// Phase 8/PHASE8_LOG.md) -- a full instruction trace of a real per-tick
+// call found the exact real `(pIShell, pszResFile, wResID, resType,
+// pBuffer, pnLen)` calling convention, the real `-1` buffer sentinel
+// for a size-only query (matching the real documented
+// `ISHELL_GetResSize` macro), and, via `core/loader/bar.h`'s own
+// resource-ID directory, exactly which real `.bar` entry a given
+// `(resType, wResID)` pair resolves to.
+//
 // SetTimer/CancelTimer are real too: real BREW timers are one-shot, not
 // repeating -- confirmed against a real bundled SDK sample
 // (`research/samples/conftest_source/conftest/conftest.c`), whose own
@@ -48,6 +60,15 @@ class IShellHle {
   // for `cls_id`. Must be called before Build(), for any class the app
   // is expected to successfully create.
   void RegisterInstance(uint32_t cls_id, uint32_t object_ptr);
+
+  // Registers a real `.bar` resource file's raw bytes under the real
+  // filename `ISHELL_LoadResDataEx` requests it by (e.g.
+  // `"resources.bar"`), so real slot 41 calls can serve real resource
+  // data instead of a blind stub. Parses `data` immediately (throws
+  // std::runtime_error on a malformed archive, same contract as
+  // `BarArchive::Parse` -- see core/loader/bar.h). Optional: games that
+  // never call `LoadResDataEx` don't need this.
+  void RegisterResourceFile(const std::string& name, std::vector<uint8_t> data);
 
   uint32_t Build(uint32_t vtable_address, uint32_t object_address);
 
@@ -86,11 +107,13 @@ class IShellHle {
   void CreateInstanceImpl(IArmCore& core);
   void SetTimerImpl(IArmCore& core);
   void CancelTimerImpl(IArmCore& core);
+  void LoadResDataExImpl(IArmCore& core);
 
   Memory& memory_;
   HleRuntime& hle_;
   std::unordered_map<uint32_t, uint32_t> instances_;
   std::vector<PendingTimer> timers_;
+  std::unordered_map<std::string, BarArchive> resource_files_;
 };
 
 }  // namespace zeebulator

@@ -7,6 +7,7 @@
 #include "core/brew/idisplay.h"
 #include "core/brew/ishell.h"
 #include "core/cpu/arm_interpreter.h"
+#include "core/loader/bar.h"
 
 using zeebulator::ArmInterpreter;
 using zeebulator::Backend;
@@ -56,6 +57,50 @@ void WriteAeeCharString(zeebulator::Memory& mem, uint32_t addr, const std::strin
     mem.Write8(addr + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
   }
   mem.Write8(addr + static_cast<uint32_t>(text.size()), 0);
+}
+
+void AppendU32LE(std::vector<uint8_t>& out, uint32_t v) {
+  out.push_back(static_cast<uint8_t>(v));
+  out.push_back(static_cast<uint8_t>(v >> 8));
+  out.push_back(static_cast<uint8_t>(v >> 16));
+  out.push_back(static_cast<uint8_t>(v >> 24));
+}
+
+void AppendU16LE(std::vector<uint8_t>& out, uint16_t v) {
+  out.push_back(static_cast<uint8_t>(v));
+  out.push_back(static_cast<uint8_t>(v >> 8));
+}
+
+// A minimal, well-formed synthetic ".bar" archive with one directory
+// record and one resource -- see core/loader/bar.h/tests/bar_test.cpp
+// for the full real layout this mirrors.
+std::vector<uint8_t> BuildBarWithOneResource(uint16_t type, uint16_t id,
+                                              const std::vector<uint8_t>& resource) {
+  constexpr uint32_t kHeaderSize = 32;
+  constexpr uint32_t kSubHeaderSize = 16;
+  uint32_t table1_size = kSubHeaderSize + 8;  // one directory record
+  uint32_t table_start = kHeaderSize + table1_size;
+  uint32_t data_start = table_start + 2 * 4;  // one offset + one sentinel
+  uint32_t data_size = static_cast<uint32_t>(resource.size());
+
+  std::vector<uint8_t> out;
+  AppendU32LE(out, 0x00010011);
+  AppendU32LE(out, 0x003e0001);
+  AppendU32LE(out, kHeaderSize);
+  AppendU32LE(out, table1_size);
+  AppendU32LE(out, table_start);
+  AppendU32LE(out, 1);  // entry_count
+  AppendU32LE(out, data_start);
+  AppendU32LE(out, data_size);
+  out.resize(kHeaderSize + kSubHeaderSize, 0);
+  AppendU16LE(out, type);
+  AppendU16LE(out, id);
+  AppendU16LE(out, 0);  // unknown
+  AppendU16LE(out, 0);  // entry_index
+  AppendU32LE(out, data_start);
+  AppendU32LE(out, data_start + data_size);  // sentinel
+  out.insert(out.end(), resource.begin(), resource.end());
+  return out;
 }
 
 }  // namespace
@@ -163,6 +208,85 @@ TEST(IShellHle, CancelTimerFailsForNoMatchingTimer) {
 
   uint32_t cancel_timer = cpu.GetMemory().Read32(kVtableAddr + 12 * 4);
   EXPECT_EQ(hle.CallArmFunction(cancel_timer, kObjectAddr, /*pfn=*/0x1234, /*pUser=*/0x5678), 1u);
+}
+
+TEST(IShellHle, LoadResDataExWithSizeSentinelReportsRealSizeWithoutCopying) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  std::vector<uint8_t> resource = {1, 2, 3, 4, 5};
+  shell_hle.RegisterResourceFile("resources.bar", BuildBarWithOneResource(1, 4000, resource));
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t name_addr = 0x90000;
+  WriteAeeCharString(cpu.GetMemory(), name_addr, "resources.bar");
+  constexpr uint32_t kLenAddr = 0x90100;
+  cpu.GetMemory().Write32(kLenAddr, 0xDEADBEEF);
+  constexpr uint32_t kSpAddr = 0x90200;
+  cpu.SetRegister(zeebulator::kSP, kSpAddr);
+  cpu.GetMemory().Write32(kSpAddr, 0xFFFFFFFF);  // real "-1" size-only sentinel
+  cpu.GetMemory().Write32(kSpAddr + 4, kLenAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 41 * 4);
+  // int LoadResDataEx(IShell*, const char *pszResFile, uint16 wResID,
+  //   AEERESTYPE resType, void *pBuffer, uint32 *pnLen)
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, name_addr, /*id=*/4000, /*type=*/1), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read32(kLenAddr), 5u);
+}
+
+TEST(IShellHle, LoadResDataExWithARealBufferCopiesTheResourceBytes) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  std::vector<uint8_t> resource = {10, 20, 30, 40};
+  shell_hle.RegisterResourceFile("resources.bar", BuildBarWithOneResource(1, 4000, resource));
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t name_addr = 0x90000;
+  WriteAeeCharString(cpu.GetMemory(), name_addr, "resources.bar");
+  constexpr uint32_t kBufferAddr = 0x90300;
+  constexpr uint32_t kLenAddr = 0x90100;
+  constexpr uint32_t kSpAddr = 0x90200;
+  cpu.SetRegister(zeebulator::kSP, kSpAddr);
+  cpu.GetMemory().Write32(kSpAddr, kBufferAddr);
+  cpu.GetMemory().Write32(kSpAddr + 4, kLenAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 41 * 4);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, name_addr, /*id=*/4000, /*type=*/1), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read32(kLenAddr), 4u);
+  for (uint32_t i = 0; i < resource.size(); ++i) {
+    EXPECT_EQ(cpu.GetMemory().Read8(kBufferAddr + i), resource[i]);
+  }
+}
+
+TEST(IShellHle, LoadResDataExFailsForAnUnregisteredResourceFile) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t name_addr = 0x90000;
+  WriteAeeCharString(cpu.GetMemory(), name_addr, "resources.bar");
+  cpu.SetRegister(zeebulator::kSP, 0x90200);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 41 * 4);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, name_addr, /*id=*/4000, /*type=*/1), 1u);
+}
+
+TEST(IShellHle, LoadResDataExFailsForATypeIdPairNotInTheDirectory) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.RegisterResourceFile("resources.bar",
+                                  BuildBarWithOneResource(1, 4000, {1, 2, 3}));
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t name_addr = 0x90000;
+  WriteAeeCharString(cpu.GetMemory(), name_addr, "resources.bar");
+  cpu.SetRegister(zeebulator::kSP, 0x90200);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 41 * 4);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, name_addr, /*id=*/9999, /*type=*/1), 1u);
 }
 
 TEST(IDisplayHle, DrawTextThenUpdatePushesCorrectFrame) {

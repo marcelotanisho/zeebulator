@@ -4715,3 +4715,94 @@ All temporary instrumentation (the `FileHle`/`IDisplayHle` traces)
 reverted; `git diff --stat` clean (investigation only this round, no
 functional changes beyond what's already committed above). 282/282
 tests pass (unchanged).
+
+---
+
+**Followed the "resources.bar never requested" thread to its real
+cause and fixed it: `ISHELL_LoadResDataEx` (real vtable slot 41) was a
+blind stub the whole time.**
+
+A full instruction trace of one representative later, "idle" tick
+(temporary, reverted) found the exact real call: `ldr ip,[r2,#164]`
+-- byte offset 164 = slot 41 = `LoadResDataEx`, called **twice in a
+row with identical arguments**. Disassembling the surrounding real
+function end to end shows the complete, correct, textbook real
+pattern: call 1 passes the real documented `-1` buffer sentinel (`mvn
+r2,#0`) to query the resource's size only; the size comes back into a
+real stack slot; real code then calls a real allocator (`peggle.mod
+0x13ac38`) with that exact size; if allocation succeeds, call 2 passes
+the fresh buffer to actually fetch the bytes. Real code even checks
+the allocator's return for null and takes a real failure path if so --
+this is not sloppy or guessed, it's exactly what a real BREW resource
+load looks like. The real filename argument resolves to the literal
+string `"resources.bar"` in `peggle.mod`'s own data; the real
+`(id=4000, type=1)` argument pair was the concrete anchor that unlocked
+everything below.
+
+**This also finally explains `resources.bar`'s own first, previously-
+unparsed 496-byte sub-table (`core/loader/bar.h`'s "table1"): it's the
+real resource-ID directory `LoadResDataEx` needs.** Dumped all 60 real
+8-byte records directly: record 59 reads `{type=1, id=4000, unknown=3,
+entry_index=304}` -- an *exact* match, on both fields simultaneously,
+against the real call's own `(id=4000, type=1)` arguments, resolving to
+entry 304 -- independently confirmed earlier in this log as a real,
+legible localized string (`"English^Español^Portugu..."`). Not a
+coincidence by any reasonable standard. The other 59 records (all
+`type=6`, `id` 1000-6000, pointing at entries 58-249) are presumed
+image-resource lookups given this archive's image-heavy makeup, though
+not each individually cross-checked the same exacting way.
+
+**Promoted into `core/loader/bar.{h,cpp}` as a real, permanent
+`BarArchive::Find(type, id)`** (parses the real directory records,
+validates `entry_index` is in range, throws on a malformed directory
+the same way every other structural check in this class already does)
+-- not left as one-off Peggle-specific logic, since the directory
+format itself is presumably the same real, generic BREW resource
+mechanism every `.bar` file uses. 3 new tests (happy path, a missing
+`(type,id)` pair, an out-of-range `entry_index`); `tools/
+zeebulator_bar_inspector` extended to list the real directory too --
+verified all 60 real records parse and cross-reference cleanly against
+the real file.
+
+**Implemented `ISHELL_LoadResDataEx` for real in `core/brew/
+ishell.{h,cpp}`** (slot 41): a new `RegisterResourceFile(name, data)`
+parses a real `.bar` file's bytes into a `BarArchive` up front; the
+real slot then resolves `(pszResFile, wResID, resType)` via `Find`,
+honors the real `-1` size-only sentinel, and otherwise copies the real
+resource bytes into the caller's buffer -- the exact real contract
+traced above, not a guess at the edges. 4 new tests covering the size
+query, the real copy, an unregistered resource file, and an
+unmatched `(type,id)` pair. `tools/game_probe.cpp` gets a new optional
+7th CLI argument (a real `.bar` path, wired to `RegisterResourceFile`
+under its own real basename) -- same "take a real path at runtime,
+embed nothing" convention as every other asset argument.
+
+**Verified against real Peggle, and it's a genuine, different kind of
+result than every prior round on this title**: with `resources.bar`
+supplied, real execution takes a **new path it has never taken
+before** -- reaching a new real gap after only ~7,000 steps (previously
+the run settled into the same ~500-call idle pattern every time,
+`resources.bar` never even requested). The new gap is a real,
+previously-unseen two-handler event-dispatch mechanism (`peggle.mod`
+`0x125914`-`0x125950`: check a real "active handler" slot, call its
+vtable slot 25 if set, else fall back to a second slot's vtable slot
+26) -- real code now reaches and calls through a generic placeholder
+object that was never exercised this way before, and whatever it gets
+back leads to the by-now-familiar "wander through zero, hit real
+non-zero garbage" pattern. A genuinely new, not-yet-characterized
+thread -- not investigated further this round, flagged clearly for
+whoever continues. Confirmed **no regression**: Double Dragon, Super
+BurgerTime, and Peggle-without-`resources.bar` all behave identically
+to their established baselines -- this new behavior is real,
+opt-in-triggered forward motion, not a break. All temporary
+instrumentation (the tick-20 full trace) reverted. 289/289 tests pass
+(7 new -- 3 `BarArchive::Find`, 4 `LoadResDataEx`).
+
+**Significance**: this is the first time in this entire investigation
+that a real BREW OS-level API (`LoadResDataEx`) has real, working,
+non-stub behavior end to end, backed entirely by this project's own
+from-scratch format work. It doesn't reach a visible frame yet -- the
+new dispatch gap sits in the way -- but it's a materially different
+category of result than every previous "still nothing visible" finding
+on this title: real code is now doing something it structurally could
+never do before.

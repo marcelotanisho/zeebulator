@@ -10,6 +10,15 @@ struct BarEntry {
   uint32_t size = 0;
 };
 
+// One real resource-ID directory record -- see BarArchive's own doc
+// comment below for how this was confirmed.
+struct BarResourceId {
+  uint16_t type = 0;
+  uint16_t requested_id = 0;
+  uint16_t unknown = 0;
+  uint16_t entry_index = 0;
+};
+
 // Reads a real Zeebo/PopCap ".bar" resource archive (`resources.bar`,
 // Phase 2's originally-deferred "BAR file parser" task -- deferred
 // because Double Dragon's own dump doesn't have one; Peggle's does).
@@ -45,12 +54,24 @@ struct BarEntry {
 //              (file size minus offset 24; also a redundant check)
 //
 // At offset 32: a first sub-table (`offset 12` bytes long, real length
-// 496 in the one sample seen) whose own internal structure -- a 16-byte
-// sub-header followed by 60 real, 8-byte records with a monotonically
-// increasing final field that looks ID-like -- was *not* resolved this
-// pass (plausibly a string/UI-resource lookup table, distinct from the
-// binary asset table below; not needed to extract raw resource bytes
-// by index, so deliberately left unparsed rather than guessed at).
+// 496 in the one sample seen), now solved -- **this is the real
+// resource-ID directory `ISHELL_LoadResDataEx(pIShell, pszResFile,
+// wResID, resType, buffer, pnLen)` needs**: a 16-byte sub-header (still
+// unconfirmed -- not needed to use the directory correctly) followed by
+// `(offset 12 - 16) / 8` real, 8-byte records: `{uint16 type; uint16
+// requested_id; uint16 unknown; uint16 entry_index}`. Confirmed exactly
+// against a real, live `peggle.mod` call site (traced via a full
+// instruction trace, TASKS.md Phase 8): real code calls
+// `ISHELL_LoadResDataEx(shell, "resources.bar", id=4000, type=1, ...)`,
+// and this directory's own one `type=1` record reads `{1, 4000, 3,
+// 304}` -- entry **304** decodes (independently, before this directory
+// was even understood) to a real, legible localized UI string
+// (`"English^Español^Portugu..."`), an exact, non-coincidental match.
+// The other 59 records (all `type=6`, `requested_id` 1000-6000,
+// `entry_index` 58-249) are presumed image-resource lookups given the
+// image-heavy makeup of this archive's own entries, though not
+// individually cross-checked the same way. The third field's meaning
+// remains unconfirmed (preserved, not interpreted).
 //
 // At the real offset table (`offset 16`): `offset 20` consecutive
 // uint32 LE *absolute file offsets*, strictly increasing, one per real
@@ -82,14 +103,24 @@ class BarArchive {
   static BarArchive Parse(std::vector<uint8_t> data);
 
   const std::vector<BarEntry>& Entries() const { return entries_; }
+  const std::vector<BarResourceId>& ResourceIds() const { return resource_ids_; }
 
   // Returns entry's raw bytes, verbatim -- no decompression (there is
   // none at this layer) and no MIME-wrapper stripping.
   std::vector<uint8_t> Extract(const BarEntry& entry) const;
 
+  // Real `ISHELL_LoadResDataEx`-shaped lookup: finds the entry a real
+  // `(type, id)` request resolves to via the real resource-ID
+  // directory, or nullptr if no directory record matches (a real,
+  // possible outcome -- not every real resource in the file necessarily
+  // has a directory entry pointing at it, since only 60 of this
+  // sample's 308 real entries are covered).
+  const BarEntry* Find(uint16_t type, uint16_t id) const;
+
  private:
   std::vector<uint8_t> data_;
   std::vector<BarEntry> entries_;
+  std::vector<BarResourceId> resource_ids_;
 };
 
 }  // namespace zeebulator

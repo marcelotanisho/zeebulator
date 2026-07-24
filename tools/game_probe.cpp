@@ -283,7 +283,8 @@ int main(int argc, char** argv) {
     // before anything resembling real progress happens. See
     // PHASE8_LOG.md for how this was found.
     std::fprintf(stderr,
-                  "usage: %s <game.mod> <data.ggz> <sound.ggz> <cls_id_decimal> [boot.pkg]\n",
+                  "usage: %s <game.mod> <data.ggz> <sound.ggz> <cls_id_decimal> [boot.pkg] "
+                  "[resources.bar]\n",
                   argv[0]);
     return 1;
   }
@@ -346,6 +347,13 @@ int main(int argc, char** argv) {
   // ISHELL_CreateInstance(AEECLSID_DISPLAY, ...), not directly -- found
   // via real disassembly of AEEApplet_New's call chain (PHASE8_LOG.md).
   zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
+  // Real ISHELL_LoadResDataEx(shell, "resources.bar", id, type, ...)
+  // calls (real slot 41, confirmed live against Peggle -- see
+  // core/brew/ishell.h) need the real file's own bytes registered
+  // under its own real name to serve anything beyond a blind stub.
+  if (argc >= 7) {
+    shell_hle.RegisterResourceFile(BaseName(argv[6]), ReadFile(argv[6]));
+  }
   shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
   // ClsId 0x01002001: a real BREW class Double Dragon's own graphics-init
   // routine requires (ISHELL_CreateInstance failing for it is the
