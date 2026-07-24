@@ -4142,3 +4142,91 @@ one-shot notification injector are kept, permanent and documented, as
 a correct building block for that next round. All other temporary
 diagnostics (`DrawText` trace, the `applet+0x15ac` status print, the
 pre-invocation field dump) reverted. 259/259 tests pass.
+
+---
+
+**Switched to Super BurgerTime for a fresh angle (per user direction),
+picking up its one open, unstarted thread from where the previous
+round left it: an `UnimplementedInstruction("Miscellaneous instruction
+space (MRS/MSR/etc.)")` at module offset `0x9c`, roughly a million real
+steps into the first real timer tick, where the live instruction word
+doesn't match the raw `.mod` file's content at the same address.**
+
+Reproduced live with a temporary `Memory::Write8` watchpoint on
+`kBase+0x9c` (bridged via the same `g_debug_watch_addr`/`g_debug_last_pc`
+global pattern used throughout this log, both reverted after use): every
+single write comes from the exact same PC, `0x100050`, inside
+`supbtime.mod`'s own ROPI relocation-fixup loop (`0x100040`-`0x100054`,
+already fully characterized in this log's Super BurgerTime "stack/module
+collision" entries above) — confirming this is the *same* real veneer
+misbehaving a second time, not a new kind of bug. Roughly 80,000
+consecutive writes to the exact same address, each the previous value
+plus the relocation base (`0x10009c`), landed squarely on the log's
+already-known signature for "the table's own backing storage was
+already zeroed and reused as scratch, so every 'entry' reads as offset
+0, degenerating into repeatedly corrupting the relocation base itself."
+
+**The open question this log left unresolved — why the veneer runs a
+second time at all — is now answered.** A second temporary watchpoint,
+this time on entry to the veneer itself (`pc == 0x100014`), caught
+exactly two hits: the real, expected one at the very start of
+`AEEMod_Load` (`lr=0xf0000000`, this tool's own harness value), and a
+second one deep in tick 0 (`lr=0x0011c0d0`) — a *real* in-module return
+address, proving a real caller, not this tool, re-enters it. Tracing
+that call site (`supbtime.mod` `0x11c0bc`-`0x11c0cc`, part of the
+per-frame "task list" walker `0x11c06c` this log already identified)
+with a live register trace found the exact mechanism: `0x11c06c`'s
+per-entry body makes *three* real vtable calls on the same single-entry
+list every pass — slot `0x2c` ("tick", the one this project's own HLE
+overrides), then an unrelated object's slot `0x90` (fed slot `0x2c`'s
+return value via `r1` — a real, evidenced status hand-off this log
+hadn't previously noticed), then slot `0x28` again on the *same* object
+— all *before* the loop re-reads the list head to decide whether to
+exit. This project's existing fix for the "list never becomes empty"
+gap (documented earlier in this log) cleared the list head
+(`0x2e28fc`) from inside slot `0x2c`'s stub, immediately — meaning the
+very next call in the *same* pass (slot `0x28`, still against the now-
+null `[r4]`) dereferences a null vtable unconditionally: `r2=[r4]=0`,
+`r3=[r2]=0`, call target `=[r3+0x28]=[0x28]=0`, confirmed directly via
+the register trace at the call site. Jumping to address 0 triggers this
+codebase's own already-documented "wander through zeroed memory"
+behavior (`CallArmFunctionChecked`'s own doc comment, and Double
+Dragon/Peggle's earliest gaps): 262,144 harmless zero-decoded steps
+later, PC coincidentally lands back on `kBase` and re-runs the entire
+one-time relocation veneer over its already-consumed, now-zeroed table
+— which is exactly the corruption chain this round started by
+reproducing. The arithmetic matches exactly: the null-vtable call
+happened at step 2,275; the re-entry into the veneer at step 264,421;
+264,421 − 2,275 = 262,146 ≈ `kBase / 4` = 262,144.
+
+**Fixed** by moving the list-head clear from slot `0x2c` (byte offset,
+the first of the three per-pass sub-calls) to slot `0x28` (the *last*
+of the three) in `tools/game_probe.cpp`'s `sbt_methods` table for class
+`0x01001017`. Still the same honest, minimal placeholder this log
+already committed to (not a claim about which slot "really" owns
+cleanup) — just the latest-firing of the three already-being-called
+real slots, chosen specifically so nothing in the same pass
+dereferences the entry again afterward.
+
+**Verified against real Super BurgerTime**: a 45-second sustained run
+past "Reached the event loop..." produces no wander warning, no thrown
+exception, and a rich, varying stream of real HLE calls every tick
+(not the fixed, unchanging small loop Peggle's own investigation found
+and paused on) — needs external termination rather than exiting on its
+own, the same "success looks like a hang" signature this log already
+trusts. No regression: Double Dragon and Peggle both re-verified to
+still reach their own real event loops cleanly. 259/259 tests pass (the
+fix lives entirely in `tools/game_probe.cpp`, the dev harness, not core
+HLE code). All temporary watchpoints/traces (`Memory::Write8` watch,
+the veneer-entry trace, the call-site register dump) reverted before
+committing — `git diff --stat` clean except the intended fix.
+
+**Significance**: this resolves the deepest, longest-open gap in the
+Super BurgerTime investigation — a real, self-inflicted memory
+corruption bug this codebase's own earlier placeholder fix was
+triggering, not a genuinely unimplemented CPU feature or a missing HLE
+slot. Super BurgerTime now sustains real, varied per-tick execution the
+same way Double Dragon does, past the point where Peggle's own
+investigation paused for lack of further real evidence. `.pkg` asset
+loading remains the next real undertaking for this title, same as
+`resources.bar` does for Peggle.

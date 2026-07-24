@@ -696,24 +696,50 @@ int main(int argc, char** argv) {
   // *fact* that a callback gets registered here is directly evidenced;
   // the specific interval chosen to drive it is not.
   //
-  // A second override, on slot 11 (byte offset 0x2c) -- confirmed via
-  // real disassembly of `0x11c06c` itself (see above) to be the "tick"
-  // method called on each entry of its module-global task list -- is
-  // needed for a real, different reason: that list is a single-entry
-  // list whose one entry is this very object (`ppObj` from the
-  // `CreateInstance` call above, real address `0x002e28fc` --
-  // confirmed live and stable via a temporary memory watchpoint
-  // spanning a full run, TASKS.md Phase 8), and `0x11c06c`'s loop has
-  // no exit *except* that address reading back 0. Nothing else in this
-  // codebase, real or stubbed, ever writes to it after `CreateInstance`
-  // -- a real implementation of this "tick" would presumably do so
+  // A second override is needed for a real, different reason: that
+  // list is a single-entry list whose one entry is this very object
+  // (`ppObj` from the `CreateInstance` call above, real address
+  // `0x002e28fc` -- confirmed live and stable via a temporary memory
+  // watchpoint spanning a full run, TASKS.md Phase 8), and `0x11c06c`'s
+  // loop has no exit *except* that address reading back 0. Nothing
+  // else in this codebase, real or stubbed, ever writes to it after
+  // `CreateInstance` -- a real implementation would presumably do so
   // itself, once whatever real work it represents (almost certainly the
-  // romset load this class is tied to) finishes. Since that real work
-  // isn't implemented, the minimal, honestly-labeled placeholder that
-  // unblocks forward progress without pretending to model real loading
-  // time is to clear it immediately, on the very first tick -- not a
-  // claim that real loading finishes in one frame, just the simplest
-  // choice that doesn't require inventing an arbitrary frame count.
+  // romset load this class is tied to) finishes.
+  //
+  // First attempt put this clear on slot 11 (byte offset 0x2c, real
+  // disassembly of `0x11c06c` confirms it's the first of *three* real
+  // vtable calls `0x11c06c`'s per-entry body makes on this same object
+  // every single pass: slot 0x2c ("tick"), then an unrelated object's
+  // slot 0x90 (fed slot 0x2c's return value via r1 -- a real, evidenced
+  // status hand-off), then slot 0x28 again on this object, all *before*
+  // the loop re-reads the list head to decide whether to exit). Clearing
+  // the list head from inside slot 0x2c made the very next same-pass
+  // call (slot 0x28, still against the now-null `[r4]`) dereference a
+  // null vtable unconditionally -- confirmed via a live register trace
+  // at the exact call site (`supbtime.mod` 0x11c0cc): call target
+  // resolved to `[0x28]` = 0, jumping to address 0, then (this codebase's
+  // already-documented "wander through zeroed memory" behavior) walking
+  // 262,144 harmless zero-decoded steps until PC coincidentally lands
+  // back on the module's own real load address (`kBase`), re-entering
+  // and re-running its one-time ROPI relocation-fixup veneer a second
+  // time over a table whose backing storage was already zeroed and
+  // reclaimed as scratch after its first, legitimate use -- which
+  // self-corrupts real code (module offset `0x9c`) into what eventually
+  // decodes as an unimplemented `MRS`/`MSR`-space instruction. Not a new,
+  // separate CPU gap: a direct, traced consequence of clearing the list
+  // head one real sub-call too early.
+  //
+  // **Fixed** by moving the clear to slot 10 (byte offset 0x28) instead
+  // -- the *last* of the three real per-pass sub-calls, called after
+  // slot 0x2c and the other object's slot 0x90 have already run against
+  // a still-valid, non-null object. Still an honest, minimal placeholder
+  // (not a claim about which slot "really" owns cleanup, just the
+  // latest-firing of the three already-being-called real slots, chosen
+  // specifically so nothing in the same pass dereferences the entry
+  // again afterward) -- not a claim that real loading finishes in one
+  // frame, just the simplest choice that doesn't require inventing an
+  // arbitrary frame count.
   constexpr uint32_t kSbtTaskListHeadAddress = 0x002e28fc;
   std::vector<zeebulator::HleRuntime::HleFunction> sbt_methods(
       40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
@@ -724,7 +750,7 @@ int main(int argc, char** argv) {
     shell_hle.ScheduleTimer(kInferredTickMs, callback, user_data);
     core.SetRegister(zeebulator::kR0, 0);  // SUCCESS
   };
-  sbt_methods[11] = [](zeebulator::IArmCore& core) {
+  sbt_methods[10] = [](zeebulator::IArmCore& core) {
     core.GetMemory().Write32(kSbtTaskListHeadAddress, 0);
     core.SetRegister(zeebulator::kR0, 0);
   };

@@ -1784,6 +1784,28 @@ playable start-to-finish at full speed, standalone build.
       regression on Peggle/Double Dragon; 251/251 tests pass (fix is
       entirely in `tools/game_probe.cpp`, not core HLE). See
       PHASE8_LOG.md for full evidence.
+      **Root-caused and fixed that gap.** A live watchpoint found every
+      corrupting write came from the module's own ROPI relocation-fixup
+      loop, and a second watchpoint on the veneer's own entry found it
+      genuinely gets re-entered a second time, deep in tick 0, by real
+      code — not a tool artifact. Traced the real call chain precisely:
+      this project's own earlier placeholder fix (clearing the
+      single-entry task list's head pointer from inside vtable slot
+      `0x2c`, "tick") cleared it one real sub-call too early — the same
+      per-frame walker unconditionally calls slot `0x28` on the same
+      object immediately afterward, in the same pass, dereferencing the
+      now-null entry, jumping to address 0, wandering 262,144 harmless
+      steps, and coincidentally re-entering the module's own load
+      address — re-running the relocation veneer over its already-
+      consumed, zeroed table, which is what corrupts real code at
+      offset `0x9c`. **Fixed** by moving the list-head clear to slot
+      `0x28` (the last of the three per-pass sub-calls) instead of slot
+      `0x2c` (the first) — same honest placeholder, just later-firing.
+      **Verified**: a 45-second sustained run past the event loop
+      produces no wander, no crash, and a rich, varying real HLE call
+      stream every tick — not the fixed small loop Peggle's own
+      investigation paused on. No regression on Double Dragon/Peggle;
+      259/259 tests pass. See PHASE8_LOG.md for the full trace.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
