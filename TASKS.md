@@ -1578,6 +1578,30 @@ playable start-to-finish at full speed, standalone build.
       much larger, Peggle-specific reverse-engineering effort into its
       own per-tick game data — both bigger asks than the incremental
       fixes made so far. See PHASE8_LOG.md for full evidence.
+      **Picked back up once the full 61-title game collection became
+      available**, using the same cross-referencing technique that
+      found `boot.pkg`: found the still-unidentified real ID
+      `0x0101eb0b` also referenced in Zuma's Revenge's own `zumar.mod`,
+      at a real call site with the identical shape, going on to invoke
+      a helper function that's **byte-identical machine code** between
+      the two titles — confirmed shared, statically-linked SDK code,
+      not coincidence. Traced the real usage end to end in both:
+      `QueryInterface(ctx, 0x0101eb0b)` succeeds, then real code calls
+      the result's own real slot 4 (no output pointer — the *return
+      value* is a fresh object), and calls *that* object's own slot 3
+      repeatedly with `(this, buffer_ptr, size)` in chunks — a real
+      "write a stream of bytes" shape (very plausibly telemetry/
+      logging), distinct from the outer object's own already-confirmed
+      slot 3 meaning. **Fixed**: extended the existing self-propagating
+      stub machinery with this real slot 4 shape, returning a fresh,
+      independent, all-slots-stub object via `r0`. **Verified — a
+      dramatic change**: the per-tick loop's call count jumps from a
+      fixed ~20 to 500+ across the first 10 ticks, including **real
+      `IFileMgr` activity for the first time ever in this title's
+      investigation** — real code now opens a real save file,
+      `udata/game` (create, read-write, then read). No regression on
+      Double Dragon/Super BurgerTime. 282/282 tests pass. See
+      PHASE8_LOG.md for the full derivation.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core

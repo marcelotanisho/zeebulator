@@ -923,6 +923,38 @@ int main(int argc, char** argv) {
         40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
     methods[2] = propagate_into(zeebulator::kR2);
     methods[3] = propagate_into(zeebulator::kR1);
+    // Real slot 4 -- confirmed via a real ClsId this object's own slot 2
+    // (QueryInterface) is asked for, `0x0101eb0b` -- is called with no
+    // output-pointer argument at all (`this` only) and its *return
+    // value* is treated as a fresh object in its own right: real code
+    // (peggle.mod 0x109a54-0x109a94) immediately calls *that* object's
+    // own slot 3 repeatedly with `(this, buffer_ptr, size)`, in 1000-
+    // byte chunks, ending with a final `(this, 0, 0)` call -- a real
+    // chunked "write a stream of bytes" shape, not the `(this,
+    // ppOut@r1)` QueryInterface-child shape slot 3 means on *this*
+    // outer object. Confirmed as a real, shared pattern (not a Peggle
+    // quirk) by finding `0x0101eb0b` also referenced, via
+    // byte-identical statically-linked helper code, in Zuma's
+    // Revenge's own real `zumar.mod` (TASKS.md Phase 8 -- the user
+    // made the full 61-title dump collection available this round).
+    // Real meaning still unidentified (very plausibly telemetry/
+    // logging, given the "chunked write, nobody checks the result"
+    // shape), so this returns a plain, independent, all-slots-stub
+    // object rather than another self-propagating one -- correct
+    // *because* its own slot 3 needs (this, buf, size) write semantics
+    // (a safe no-op discard is honest and sufficient; nothing reads a
+    // return value from those writes), not QI-child semantics.
+    methods[4] = [&cpu, &hle](zeebulator::IArmCore& core) {
+      static uint32_t next_addr = 0x80038000;
+      uint32_t stub_vtable = next_addr;
+      uint32_t stub_object = next_addr + 0x800;
+      next_addr += 0x1000;
+      std::vector<zeebulator::HleRuntime::HleFunction> stub_methods(
+          40, [](zeebulator::IArmCore& c) { c.SetRegister(zeebulator::kR0, 0); });
+      uint32_t obj = zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, stub_vtable,
+                                                       stub_object, stub_methods);
+      core.SetRegister(zeebulator::kR0, obj);
+    };
     return zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, vtable_addr, object_addr,
                                              methods);
   };

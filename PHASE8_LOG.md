@@ -4576,3 +4576,84 @@ this container crack doesn't touch), but real asset loading — PNGs,
 WAV/MP3 audio, and now confirmed to be simple, uncompressed, directly
 extractable — is no longer a blocked, "device-firmware-only" format for
 this title.
+
+---
+
+**Turned the newly available game collection on Peggle's *other* long-
+standing open question — the still-unidentified per-tick loop ID,
+`0x0101eb0b` — using the exact cross-referencing technique that found
+`boot.pkg`: check whether another real title's own `.mod` references
+the same real ID.**
+
+Extracted `bjt.mod` (Bejeweled Twist) and `zumar.mod` (Zuma's Revenge)
+from their own real downloads. Bejeweled Twist's own binary doesn't
+reference `0x0101eb0b` (or any of the other three IDs Peggle's own
+investigation left open) at all. **Zuma's Revenge's does** — the exact
+same literal, at a real call site with the exact same shape Peggle's
+own does: `ldr r1,[r0]` (vtable) / `ldr r3,[r1,#8]` (real slot 2 =
+QueryInterface) / `ldr r1,[pc,#N]` (the `0x0101eb0b` literal) / `bx r3`.
+
+**Confirmed this is real, shared, statically-linked SDK code, not just
+a structural coincidence**: the tiny helper function both titles'
+real call sites go on to invoke (`peggle.mod 0x105b50` / `zumar.mod
+0x105540`) opens with **byte-identical machine code** in both binaries
+(`ldr r3,[r0]; ldr r3,[r3,#12]; bx r3` — a generic "tail-call vtable
+slot 3" thunk). Different games, same compiled bytes — about as strong
+a confirmation of a shared library as this kind of analysis can produce
+without a header.
+
+**Traced the real call shape end to end in both binaries and found the
+actual real usage pattern this project's own earlier "self-propagating
+stub" work hadn't yet covered**: after `QueryInterface(ctx, 0x0101eb0b,
+&out)` succeeds, real code calls `out`'s own real vtable **slot 4**
+with no output-pointer argument at all — its *return value* (not an
+output parameter) is a fresh object in its own right. Confirmed in
+Peggle (`peggle.mod 0x109a54`-`0x109a94`): that returned object's own
+real slot 3 gets called repeatedly, `(this, buffer_ptr, size)`, in
+1000-byte chunks, ending with a final `(this, 0, 0)` call — a real,
+unmistakable "write a stream of bytes" shape, most plausibly telemetry
+or logging given nothing anywhere checks the result. This is a
+*different* real slot-3 meaning than the outer arena object's own
+(confirmed earlier as a QueryInterface-child shape) — genuine evidence
+these are two distinct real interfaces, not the same self-propagating
+kind recursing.
+
+**Fixed**: added slot 4 to the existing self-propagating-stub machinery
+in `tools/game_probe.cpp` (`build_self_propagating_stub`), returning a
+fresh, independent, all-slots-safe-stub object via `r0` directly
+(deliberately *not* another self-propagating instance, since this
+object's own slot 3 needs write-stream semantics, not QI-child
+semantics — an honest no-op discard is correct here, not a
+misunderstanding papered over).
+
+**Verified against real Peggle, and the change is dramatic**: the
+per-tick loop's own call count jumps from a fixed ~20 (documented as
+"looping harmlessly on placeholders" two rounds ago) to 500+ calls
+across the first 10 ticks, including **real `IFileMgr` activity for
+the first time this title's entire investigation** — confirmed via a
+temporary `OpenFile` trace (reverted): real code now opens a real save
+file, `udata/game` (`CREATE`, then `READWRITE`, then later `READ`) —
+genuine forward progress, not another fixed loop, though by tick 7-9
+the *shape* of each tick's own call sequence does largely repeat again
+(with at least one real, tick-over-tick advancing value observed, a
+pointer growing by exactly 4 bytes per tick). No regression: Double
+Dragon still reaches its own event loop cleanly, and Super BurgerTime
+hits the exact same, already-documented wander point at the exact same
+step count (262,901) as before — this fix is correctly scoped to
+Peggle's own confirmed context field and doesn't touch either other
+title's behavior. 282/282 tests pass (unchanged — the fix lives
+entirely in `tools/game_probe.cpp`, the dev harness). All temporary
+instrumentation (the second `OpenFile` trace) reverted; `git diff
+--stat` clean except the real fix.
+
+**Significance**: this is real, verified, first-time-ever access to
+Peggle's own save-file I/O path — a genuinely new milestone, not a
+repeat of the "sustained execution but frozen game state" finding from
+two rounds ago. `0x0101eb0b`'s own real meaning is still not identified
+by name (very plausibly telemetry/logging, not confirmed), but that no
+longer matters for further progress: the object it produces is now
+handled correctly regardless of what it "really" is. The next concrete
+step is determining what real save-file *content* Peggle's own code
+expects to read back from `udata/game` (currently empty/freshly
+created in every run) — a new, narrower, well-characterized thread,
+not yet started.
