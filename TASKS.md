@@ -1657,6 +1657,23 @@ playable start-to-finish at full speed, standalone build.
       solved several times before. Not fixed this round (a fresh,
       well-characterized next thread). No regression; 289/289 tests
       pass. See PHASE8_LOG.md.
+      **Traced that null field to its real root cause**: real code
+      genuinely constructs a matching manager object at runtime (a real
+      message-dispatch handler -> a once-only construction gate -> a
+      real malloc-backed constructor, all confirmed executing live, in
+      order) — but it lands on this codebase's own heap allocator at
+      `0x80300024`, while the per-tick code that later needs it reads
+      it through `ModRuntime`'s `context+0x24` field, which this
+      codebase currently hardcodes to an unrelated, permanently-empty
+      placeholder (`kFourthContextObject`, `0x80020000`). The two real
+      and fake objects never meet. Not fixed this round — the real next
+      question is whether genuine Peggle code ever *writes* the
+      constructed object's address into the ambient context struct
+      (`mod_runtime.h` already documents this field as plain
+      read/write data, not a vtable call), which would need locating
+      before wiring a real fix rather than guessing one. Investigation
+      only, all temporary instrumentation reverted, 289/289 tests pass
+      unchanged. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core

@@ -4873,3 +4873,52 @@ objects once enough dynamic allocation happened. Worth remembering for
 future rounds: any dynamically-growing address counter added to
 `game_probe.cpp` needs its own clearly-separated range, not an
 adjacent, seemingly-safe-looking gap.
+
+---
+
+**Followed the tick-2 gap (`peggle.mod` `0x108e10` reading a null
+`+12` field) to its real root cause -- not a missing HLE behavior, but
+two genuinely separate real objects that should be the same one.**
+
+Traced the whole chain with a series of targeted, temporary register
+prints (added and reverted this round, same technique as always):
+
+- The crash reads `[r6+12]` where `r6` is `*([context+0x24] +
+  0x45000 + 988)` -- `context+0x24` being this codebase's own
+  `ModRuntime::SetFourthContextObject`, a deliberately-documented
+  placeholder (`core/brew/mod_runtime.h`'s own doc comment already
+  admits its real identity/layout is unknown). Confirmed live: this
+  resolves to exactly `kFourthContextObject` (`0x80020000`,
+  `tools/game_probe.cpp`), a static, mostly-zeroed block we control --
+  so `+988` reads zero because nothing has ever written to it.
+- Separately, real code **does** construct a matching-shaped object at
+  runtime: a message-dispatch handler (`peggle.mod` `0x105890` ->
+  `0x107d0c`, case 1 of a jump table on message ID -> a
+  once-only-via-`[this+0x28]`-gate helper at `0x135468` -> a genuine
+  large constructor at `0x10a8e0`) that mallocs a 16-byte then a
+  412-byte block and wires the second into the first's own `+12`
+  field -- textbook-real construction, verified live executing in
+  full, in order, well before the crash tick.
+- The catch: that constructor's `this` is `0x80300024` -- an address
+  from this codebase's real bump-allocator heap
+  (`heap_region=0x80300000`, `tools/game_probe.cpp`), entirely
+  unrelated to `kFourthContextObject` (`0x80020000`). Real code
+  constructs a real manager object on the heap, but the per-tick code
+  that later needs it (`peggle.mod` `0x106d34`) looks it up through
+  `context+0x24` -- which this codebase currently hardcodes to an
+  unrelated, permanently-empty placeholder, so the two never meet.
+
+**Not fixed this round.** The real question this leaves for next time:
+does genuine Peggle code ever *write* the constructed manager's address
+into the ambient context struct (a plain store to
+`[context_address+0x24]`, since `mod_runtime.h` already documents this
+field as directly read-and-written data, not a vtable call) -- and if
+so, where, so that real store can be allowed to happen naturally
+instead of being permanently overridden by `kFourthContextObject`? That
+real write site hasn't been located yet; worth a dedicated pass before
+guessing at a fix, per this project's own standing rule against
+guessing unconfirmed behavior. All temporary instrumentation (six
+rounds of targeted `pc==`-gated register prints) reverted; `git diff
+--stat` clean -- investigation only this round, no functional changes.
+289/289 tests pass (unaffected, all changes were confined to reverted
+`tools/game_probe.cpp` instrumentation).
