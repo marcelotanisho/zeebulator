@@ -40,6 +40,20 @@ if(ZEEBULATOR_BUILD_STANDALONE)
   find_package(OpenGL REQUIRED)
 endif()
 
+# Scoped here (after every FetchContent_MakeAvailable above, before any
+# of this project's own add_subdirectory calls below) so it only applies
+# to this project's own targets, not vendored third-party ones (zlib,
+# SDL2) -- CMake directory-scoped compile options only affect targets
+# declared in the current directory and subdirectories added afterward.
+# No -Werror: this project has no CI enforcing it yet (TASKS.md Phase
+# 10), and an unverified warning on some other platform/compiler
+# shouldn't be able to break the build here.
+if(MSVC)
+  add_compile_options(/W4)
+else()
+  add_compile_options(-Wall -Wextra)
+endif()
+
 add_subdirectory(core)
 
 if(ZEEBULATOR_BUILD_TOOLS)

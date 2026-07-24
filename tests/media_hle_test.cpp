@@ -257,8 +257,6 @@ TEST(MediaHle, PauseThenResumeReturnsToPlayState) {
 }
 
 TEST(MediaHle, GetTotalTimeComputesCorrectMilliseconds) {
-  Fixture f;
-  uint32_t obj = f.media_hle.CreateMediaObject();
   // 4 samples at 22050 Hz -> 4/22050 s ~= 0.1814ms rounds down to 0 with
   // integer math at this tiny size; use a fixture-independent larger
   // synthetic file instead so the math is exact and unambiguous.

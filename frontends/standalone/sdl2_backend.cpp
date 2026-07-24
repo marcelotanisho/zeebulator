@@ -41,6 +41,8 @@ Sdl2Backend::~Sdl2Backend() {
 void Sdl2Backend::PushVideoFrame(const void* framebuffer, int width, int height,
                                   PixelFormat format) {
   (void)format;  // IDisplayHle's framebuffer is always RGB565 for now.
+  (void)height;  // SDL_UpdateTexture(..., nullptr, ...) updates the whole
+                 // fixed-size texture_ created in the constructor.
   SDL_UpdateTexture(texture_, nullptr, framebuffer, width * 2);
   SDL_RenderClear(renderer_);
   SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
