@@ -4432,3 +4432,61 @@ attempted yet. All temporary instrumentation (the register trace at
 `0x1465b0`) reverted; `git diff --stat` clean except the permanent
 `MergeBootPkgInto` addition. 266/266 tests pass (unchanged — the new
 code lives entirely in `tools/game_probe.cpp`, the dev harness).
+
+---
+
+**Chased the `0x1465b0` dispatch-table gap directly, found its real
+writer, and narrowed the remaining problem to something materially
+bigger than any gap fixed so far in this project.**
+
+A static literal search for the table's own base value (`0x220ba8`)
+turned out unhelpful on its own — 154 occurrences across the module,
+because that literal is this whole binary's *general* static-base
+pointer, referenced by countless unrelated subsystems at their own
+further offsets, not something specific to this one table.
+
+**A live watchpoint spanning the entire run (temporary, reverted)
+found the real writer instead**: `supbtime.mod` offset `0x146150`-
+`0x146154`, a real "register a handler" function (`str r6,[r8,r4,lsl
+#4]` into a parallel 16-byte-stride table, then `str r3,[r8,r2,lsl
+#3]` into *this* 8-byte-stride table, where `r2 = 2*r4+1` — the exact
+same odd-index transform the reader at `0x1465a0` independently
+applies, confirming this is genuinely the right writer, not a
+coincidental address match) — and it *does* run, immediately before
+the failing dispatch, writing to exactly the right slot. The value it
+writes (`r3`, loaded from its own caller's stack) is real, but for the
+one case observed, resolves to whatever real value that caller had —
+not yet traced further back.
+
+**Ruled out one plausible explanation directly**: with `boot.pkg`
+supplied, a fresh `OpenFile` trace (temporary, reverted) shows real
+code makes exactly **one** real file-open this entire run (`.\
+boot.pkg`, which now succeeds) — no attempt to open `supbtime.pkg`,
+this game's own asset package, or anything else. So this isn't a
+missing-file gap the way the `boot.pkg` round was; the value feeding
+this table slot comes from processing `boot.rom`'s own real content
+(the 68000-style vector table already confirmed), not from a second
+file this codebase hasn't wired in.
+
+**Assessment, not yet proven**: `boot.rom`'s real vectors most likely
+point into the *game's own* romset data — the actual 68000 program
+code for "zupapa" — which supbtime.pkg's own seven re-encoded entries
+(`gc05.bin`, `gk03`, `mae00.bin`, ...) may or may not represent in a
+form this codebase could use directly (their content doesn't look like
+raw 68000 opcodes on inspection — see the `.pkg`-cracking entry above).
+Fully resolving this table would likely mean implementing real
+behavior for a nested arcade-CPU-core dispatch — a
+substantially bigger undertaking than any static-base slot or missing-
+class scaffold fixed so far in this project, closer in scope to
+Peggle's own paused "real BREW MP SDK header" wall than to a normal
+incremental gap.
+
+**Stopping here for this round**: three real, substantial pieces of
+progress landed (the `.pkg` format, the crash fix, and the `boot.pkg`
+milestone reaching 262,900 real steps), plus this table gap now
+precisely characterized down to its real writer — a solid, well-
+evidenced place to pause rather than open-endedly guess at 68000
+emulation. All temporary instrumentation (the watchpoint, the second
+`OpenFile` trace) reverted; `git diff --stat` clean. 266/266 tests
+pass (unchanged — investigation only, no functional changes this
+round).

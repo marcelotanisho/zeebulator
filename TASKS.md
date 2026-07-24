@@ -1864,6 +1864,20 @@ playable start-to-finish at full speed, standalone build.
       territory. Not pursued further this round — a natural stopping
       point after a substantial, multi-part round. No regression on
       Double Dragon. 266/266 tests pass. See PHASE8_LOG.md.
+      **Chased the `0x1465b0` dispatch gap to its real writer** (a live
+      watchpoint spanning the whole run, temporary/reverted): a real
+      "register a handler" function at `0x146150` does write the right
+      table slot, using the same index formula the reader uses, so
+      it's genuinely reachable — but the value it writes traces back to
+      unprocessed `boot.rom` content, not a missing file (a fresh
+      `OpenFile` trace shows exactly one real file-open this run, and
+      it succeeds). Assessed, not proven: `boot.rom`'s real vectors
+      likely point into the game's own 68000 romset code, which would
+      mean implementing real nested-CPU-core dispatch to resolve —
+      substantially bigger scope than any gap fixed so far, closer to
+      Peggle's own paused SDK-header wall. Investigation only this
+      round, all temporary instrumentation reverted, 266/266 tests
+      pass unchanged. See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
