@@ -1602,6 +1602,18 @@ playable start-to-finish at full speed, standalone build.
       `udata/game` (create, read-write, then read). No regression on
       Double Dragon/Super BurgerTime. 282/282 tests pass. See
       PHASE8_LOG.md for the full derivation.
+      **Followed up immediately**: the save round-trip is genuinely
+      self-contained (real code writes its own 6,672-byte default,
+      reads 9×16 bytes back, no external content needed), and leads
+      into real, substantial new execution (a real ~1,397-item
+      processing loop, one-time per tick-0). But a full trace of
+      `IDisplayHle::DrawText`/`DrawRect`/`Update` found **zero visible
+      draws** across a 20-second run, and `resources.bar` (this
+      round's own cracked format) is **never requested** — real code
+      hasn't reached asset loading yet. Real, honest progress, but
+      still nothing on screen. Investigation only, all temporary
+      instrumentation reverted, 282/282 tests pass unchanged. See
+      PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core

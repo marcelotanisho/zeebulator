@@ -4657,3 +4657,61 @@ step is determining what real save-file *content* Peggle's own code
 expects to read back from `udata/game` (currently empty/freshly
 created in every run) — a new, narrower, well-characterized thread,
 not yet started.
+
+---
+
+**Followed that thread immediately (temporary tracing on `FileHle`'s
+real `OpenFile`/`Read`/`GetInfo` implementations, all reverted after):
+real code doesn't need any *specific* real save content at all — the
+round-trip is self-contained and already works correctly.**
+
+The real sequence, confirmed directly: `OpenFile('udata/game',
+CREATE)`, then `OpenFile('udata/game', READWRITE)` — both during
+`HandleEvent(EVT_APP_START)`, before tick 0 ever starts — during which
+real code itself writes a real, **6,672-byte** default save structure
+into the file (this codebase's own `FileHle` correctly persists it,
+purely as a side effect of already-correct `Write`/`writable_files_`
+handling, no new code needed). Later, inside tick 0, real code reopens
+it read-only and reads exactly **9 real 16-byte records (144 bytes)**
+back — not the whole file — before moving on. This is genuinely
+working save-data round-trip behavior, not a blocked gap.
+
+**What happens right after those 9 reads is real, substantial, new
+execution**: a real loop processing what looks like up to 1,397
+distinct items (`r3` stays fixed at `0x575`, `r1` counts up from 0),
+entirely within tick 0's own one-time cost — real code doing real,
+structured work at a scale far beyond anything reached before this
+round's `0x0101eb0b` fix. By tick 7-9 this settles back into a small,
+mostly-repeating per-tick shape (the same one this log's previous
+entry already flagged as having at least one genuinely advancing
+value) — plausibly a legitimate idle/menu state, not another block,
+though not yet confirmed either way.
+
+**Checked the one question that actually matters for real user-facing
+progress, honestly, the same way this log always has**: a temporary
+trace on `IDisplayHle::DrawText`/`DrawRect`/`Update` found **zero real
+calls to any of them across a full 20-second run** — still nothing
+visible reaches the screen. A parallel `OpenFile` trace across the same
+run confirms why at least part of the picture: `resources.bar` (this
+round's own freshly-cracked container) is **never once requested** —
+real code hasn't reached asset loading yet, despite reaching
+substantially deeper real logic than ever before. Not yet determined
+whether reaching `resources.bar` needs one more specific missing piece
+(the same "narrow, well-characterized gap" shape as almost everything
+else in this project) or whether the current idle state is a correct,
+if unglamorous, real waiting state (e.g. genuinely idling on real
+timer/input conditions this harness's own synthetic input never
+satisfies, the same category of gap Double Dragon's own title screen
+had before real button-press simulation was built).
+
+**Net honest assessment of this round**: two real, substantial,
+verified wins (`resources.bar` cracked completely; the `0x0101eb0b`
+interface identified and fixed, unlocking real save-file I/O and
+1,397-item real processing) plus one honest non-result (still nothing
+visible on screen) — consistent with, not contradicting, everything
+this log has found before: internal-state progress and on-screen
+progress are different things, and only the latter is the actual goal.
+All temporary instrumentation (the `FileHle`/`IDisplayHle` traces)
+reverted; `git diff --stat` clean (investigation only this round, no
+functional changes beyond what's already committed above). 282/282
+tests pass (unchanged).
