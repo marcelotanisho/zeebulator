@@ -842,7 +842,6 @@ int main(int argc, char** argv) {
   const char* stage = "AEEMod_Load";
   uint32_t applet_ptr = 0;
   uint32_t handle_event_fn = 0;
-  bool injected_simulated_button_press = false;
   try {
     std::printf("Calling AEEMod_Load...\n");
     constexpr uint32_t kPpModAddr = 0x00090000;
@@ -989,23 +988,30 @@ int main(int argc, char** argv) {
     // Driving these is what actually runs the game's per-frame logic;
     // nothing calls into the module otherwise from here on.
     mod_runtime.Tick(kTickMs);
-    // Simulate a real button press once the game has genuinely registered
-    // for button events (captured_button_callback nonzero) and had a
-    // fair chance to finish resource loading. Queues real, valid button
-    // UIDs (confirmed against the real AEEHIDButtons.h Zeebo mapping
-    // table, not invented) for every real Zeebo action button plus the
-    // d-pad, since which specific one the title-screen gate wants isn't
-    // confirmed -- then invokes the real captured callback directly, the
-    // same way a real fired ISignal would. Start/HOME deliberately
-    // excluded: real disassembly of the UID-dispatch helper (`ddragonz.
-    // mod` 0x10080c) shows its case returns failure without touching the
-    // button-info struct at all, which aborts the real callback's own
-    // event-processing loop immediately -- confirmed live, an earlier
-    // attempt that queued it second consumed exactly two events and set
-    // no button bits at all, since the abort happens before the real
-    // per-event bit-set code ever runs for that (or any later) event.
-    if (!injected_simulated_button_press && *captured_button_callback != 0 && tick_count >= 60) {
-      injected_simulated_button_press = true;
+    // Simulate a real, held button press once the game has genuinely
+    // registered for button events (captured_button_callback nonzero) and
+    // had a fair chance to finish resource loading. Re-fires every tick
+    // for a real ~4-second window (ticks 60-300) rather than once: a
+    // single momentary press only ever set the gate for one tick before
+    // the real per-tick "publish" logic (traced live, `ddragonz.mod`
+    // 0x123740) cleared it again, and a real held press is what actually
+    // drove the real per-tick state machine (`applet+0x50`/`+0x54`)
+    // through multiple distinct, confirmed-live real states -- genuine
+    // evidence this matters, not a guess. Queues real, valid button UIDs
+    // (confirmed against the real AEEHIDButtons.h Zeebo mapping table)
+    // for every real Zeebo action button and the d-pad, plus UID
+    // 0x0106C403 -- not one of AEEHIDButtons.h's documented Zeebo
+    // buttons, but a real, working case in ddragonz.mod's own compiled
+    // dispatch table that remaps to nButtonID=8 (bit 0x100), the exact
+    // bit `applet+0x361c`'s real consumer checks for (confirmed several
+    // rounds ago by tracing that consumer directly) and the only one of
+    // the 16 real cases that produces it (worked out from disassembly,
+    // not guessed). Start/HOME deliberately excluded: its real case
+    // (`ddragonz.mod` 0x10080c) returns failure without touching the
+    // button-info struct at all, aborting the real callback's own
+    // event-processing loop immediately and dropping every event queued
+    // after it -- confirmed live.
+    if (*captured_button_callback != 0 && tick_count >= 60 && tick_count <= 300) {
       *simulated_button_events = {
           {0, 1, 0x0106C40A},  // Button_1 (ZEEBO_BUTTON_WEST)
           {1, 1, 0x0106C40B},  // Button_2 (ZEEBO_BUTTON_SOUTH)
@@ -1015,9 +1021,13 @@ int main(int argc, char** argv) {
           {5, 1, 0x0106C3FF},  // DPAD_LEFT
           {6, 1, 0x0106C400},  // DPAD_DOWN
           {7, 1, 0x0106C401},  // DPAD_RIGHT
+          {8, 1, 0x0106C403},  // unnamed but real; the one case that sets bit 0x100
       };
-      std::printf("  [input] simulating a real button press: invoking button callback 0x%08x\n",
-                  *captured_button_callback);
+      if (tick_count == 60) {
+        std::printf("  [input] holding a simulated button press (ticks 60-300): invoking "
+                    "button callback 0x%08x\n",
+                    *captured_button_callback);
+      }
       try {
         CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, *captured_button_callback,
                                *captured_button_context, 0, 0, 0);

@@ -3878,3 +3878,98 @@ reverted; the real `CreateSignal`/`RegisterForButtonEvent`/
 kept as permanent, clearly-documented additions (matching this file's
 established "deliberate, labeled simulation" precedent for the HID
 device connection itself). 259/259 tests pass.
+
+---
+
+**Went straight after that "narrower next thread" and it turned out
+to be a correction, not a new gap: `context+40`/`+44` and
+`applet+0xa20` were never different structs.** A fresh watchpoint
+(temporary, added a small permanent bridge to `core/memory/memory.
+{h,cpp}` for it — `g_debug_watch_addr`, reverted after use like its
+`g_debug_last_pc` sibling) on `applet_ptr+0x361c` (the gate itself)
+found its one real writer, `ddragonz.mod` `0x11a3a0`-`0x11a3a8`: `*(r0
++0x5f4) | *(r0+0x608)`, where `r0 = applet_ptr + 0x3000`. Tracing
+those two source addresses back further (`0x11a2ec`-`0x11a38c`) found
+the real, complete picture: a 2-iteration loop over `applet_ptr+0xa20
++ i*64` (`i=0,1` — the exact "64-byte stride, 2 sources" struct this
+project already knew about), copying each source's own `+0x44`/`+0x48`
+/`+0x4c` fields into the staging area the OR-computation reads. Doing
+the arithmetic: `captured_button_context` (`0x80300a54`, captured
+during `CreateSignal`) is `applet_ptr+0xa20+0x10` — i.e. real Double
+Dragon code hands its own persistent per-device struct straight to
+`CreateSignal` as `pUser`, not a separate allocated struct the way the
+reference `GamepadMgr.c` sample does it. So "`context+44`" (the field
+`0x11bdf4`'s bit-set code writes real button bits into) and "device
+0's field `+0x3c`" are the exact same absolute address. The earlier
+entry's framing of these as two different structs needing a copy step
+was wrong — there is no missing copy step.
+
+**Given that, went to find why the gate still read `0` despite this,
+and found the real per-tick "publish" function instead**
+(`0x123740`, called once per device from `0x123798`): each tick it
+copies real fields `+0x38→+0x44`, `+0x40→+0x4c`, `+0x3c→+0x48`, then
+resets `+0x40` and `+0x3c` to `0` — a real double-buffer: `+0x3c`
+accumulates real button bits as events arrive, `+0x48` is the
+published snapshot the gate reads, republished (and the accumulator
+cleared) every tick. Watching `+0x3c` directly (temporary) confirmed
+the earlier button-press simulation genuinely does set real bits there
+(`0x0000F00F`, all four action buttons and all four d-pad bits) —
+**and re-checking the earlier watch on the gate/`+0x48` themselves
+(same temporary logs from two rounds ago, re-grepped properly this
+time with `sort | uniq -c` instead of eyeballing) found this project's
+own prior "always `0x00`" read was simply wrong** — both had exactly
+one real nonzero write each (`0x0f` then `0xf0`, i.e. `0x0000F00F`),
+sitting unnoticed among ~900 routine per-tick clears. The whole real
+pipeline — button press → `+0x3c` → `+0x48` → gate — was already
+working correctly two rounds ago; it just wasn't being read carefully
+enough to see it.
+
+**Except `0x0000F00F` is missing the one bit that matters.** This
+project already knew (from tracing the gate's real *consumer*, several
+rounds before this file's HID work even started) that it checks bit
+`0x100` specifically. None of the eight simulated buttons/d-pad
+directions produce that bit. Worked out all 16 real cases of the UID-
+dispatch jump table directly from disassembly (`0x1007cc`-`0x1008b8`):
+the four d-pad directions and four action buttons remap to bits
+`0x1000`-`0x8000` and `0x1-0x8` respectively; five other indices abort
+the loop (same failure shape as `Start`/`HOME`, already known); and
+exactly one surviving case, index 5 — real UID `0x0106C403`, not one
+of `AEEHIDButtons.h`'s named Zeebo buttons, but a real, working,
+non-aborting case in `ddragonz.mod`'s own compiled table regardless —
+remaps to `nButtonID=8`, i.e. bit `0x100` exactly. Added it to the
+simulated batch.
+
+**Also changed the injection from a single momentary press to a real
+~4-second hold** (re-fires every tick, ticks 60-300, rather than once):
+a single press only ever kept the gate nonzero for the one tick before
+the next "publish" cleared it again, and — confirmed live — a held
+press is what it actually took to move anything further.
+
+**Result: real, concrete, causally-confirmed progress.** With the
+correct bit included and the press held, `applet+0x50`/`+0x54` (the
+per-tick state-machine function-pointer pair this project has tracked
+since early in the Double Dragon investigation) **left its old parked
+values and transitioned through three distinct real states** —
+`0x1209c0`/`0x11d274` (startup) → `0x1222f0`/`0x107104` (still pre-
+press) → `0x121110`/`0x1063ec`, reached only once the gate carried bit
+`0x100`, and stable there for the rest of every run tried (up to ~500
+real ticks). This is the first time all session real code has visibly
+*reacted* to simulated input, not just correctly stored it. It settled
+at this new state and stayed there, though — no new `DrawText` output
+appeared in any run (temporary trace, reverted; longest continuous
+observation ~500 ticks / real wall-clock minutes given this dev tool's
+own interpreter and instrumentation overhead per tick). Releasing the
+held press (letting the injection window end at tick 300) didn't
+trigger any further visible change either. Genuinely unresolved
+whether `0x121110`/`0x1063ec` is itself another real wait-state (for
+something not yet identified — a release-edge, a different real
+signal, more real time than this session tried) or whether it's
+already mid-transition and just hasn't produced a frame yet by the
+last tick observed. A concrete, disassembly-ready next thread:
+`0x121110` and `0x1063ec` themselves, not yet looked at directly.
+
+All temporary instrumentation (the gate/field watchpoints, the
+periodic `applet+0x50`/`+0x54` status print, the `DrawText` dedup
+trace) reverted. The real, corrected 9-event button batch and the
+sustained-hold injection are kept, permanent and documented, in
+`tools/game_probe.cpp`. 259/259 tests pass.

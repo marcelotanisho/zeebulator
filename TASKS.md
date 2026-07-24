@@ -1191,6 +1191,35 @@ playable start-to-finish at full speed, standalone build.
       temporary diagnostics reverted; the real signal/button
       implementation kept as a permanent, documented addition. 259/259
       tests pass. See PHASE8_LOG.md.
+      **That "different struct" turned out to be a mistake, not a real
+      gap — corrected it, found the actual missing bit, and got real
+      game code to visibly react to simulated input for the first time
+      all session.** `context+40`/`+44` and `applet+0xa20`'s own
+      device-0 struct are the exact same memory (confirmed via
+      disassembly of the real gate combine computation, `0x11a2ec`-
+      `0x11a3a8`) — no missing copy step ever existed. Also found this
+      project's own prior watch logs from two rounds ago had a real,
+      correct nonzero write to the gate (`0x0000F00F`) sitting unnoticed
+      among ~900 routine per-tick clears — a reading mistake, not a real
+      dead end. The one thing genuinely missing: bit `0x100`, which none
+      of the simulated buttons produced. Worked out all 16 real cases of
+      the button UID-dispatch table from disassembly and found the one
+      that sets it (`UID 0x0106C403`, unnamed in `AEEHIDButtons.h` but a
+      real working case regardless) plus that a single momentary press
+      isn't enough — changed the injector to hold the press for ~4
+      seconds. Result: `applet+0x50`/`+0x54` (the per-tick state
+      machine) left its old parked values and transitioned through three
+      distinct real states, settling on a new one only once the gate
+      carried bit `0x100` — real code visibly reacting to simulated
+      input for the first time. No new on-screen text appeared in any
+      run tried, though (longest continuous observation ~500 ticks) —
+      genuinely unresolved whether the new state is itself another real
+      wait (for a release-edge or something else not yet identified) or
+      just hasn't produced a frame yet. Next thread: disassemble
+      `0x121110`/`0x1063ec` directly. All temporary diagnostics
+      reverted; the corrected 9-event button batch and sustained-hold
+      injector kept, permanent and documented. 259/259 tests pass. See
+      PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
