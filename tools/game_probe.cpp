@@ -134,6 +134,8 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
   cpu.SetRegister(zeebulator::kPC, entry);
 
   CallResult result;
+  uint32_t last_in_module_pc = 0;
+  uint32_t last_lr = 0;
   for (uint64_t steps = 0; cpu.GetRegister(zeebulator::kPC) != trap_base; ++steps) {
     if (steps >= kMaxSteps) {
       std::printf("warning: exceeded %llu steps without returning -- aborting this call\n",
@@ -144,6 +146,10 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
     uint32_t pc = cpu.GetRegister(zeebulator::kPC);
     bool in_module = pc >= mod_base && pc < mod_base + mod_size;
     bool in_trap_range = pc >= trap_base;
+    if (in_module) {
+      last_in_module_pc = pc;
+      last_lr = cpu.GetRegister(zeebulator::kLR);
+    }
     if (trace) {
       std::printf("[%4llu] pc=0x%08x instr=0x%08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x\n",
                   static_cast<unsigned long long>(steps), pc, cpu.GetMemory().Read32(pc),
@@ -160,8 +166,9 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       std::printf(
           "warning: pc=0x%08x left the loaded module's range (0x%08x-0x%08x) after %llu "
           "steps -- likely a missing loader/runtime-support gap, not real progress (see "
-          "PHASE8_LOG.md)\n",
-          pc, mod_base, mod_base + mod_size, static_cast<unsigned long long>(steps));
+          "PHASE8_LOG.md). Last in-module pc=0x%08x lr=0x%08x -- disassemble there first.\n",
+          pc, mod_base, mod_base + mod_size, static_cast<unsigned long long>(steps),
+          last_in_module_pc, last_lr);
       result.wandered_outside_module = true;  // only warn once per call
     }
     cpu.Step();

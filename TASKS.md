@@ -1146,6 +1146,25 @@ playable start-to-finish at full speed, standalone build.
       instruction) — a distinct next thread. Scoped narrowly enough
       that Peggle/Super BurgerTime (no GGZ format, unaffected either
       way) can't regress from it. 259/259 tests pass. See PHASE8_LOG.md.
+      **Chased that MRS/MSR crash and found two more real gaps, both
+      fixed — Double Dragon now runs a full 10 seconds with zero
+      crashes for the first time all session.** Extended the existing
+      "wandered outside the module" diagnostic to also report the last
+      real pc/lr before the jump (permanent, kept). That pointed at a
+      real call through a 19th, previously-unfound static-base table
+      slot (offset `0xdc`) — added as another safe no-op, same as the
+      18 already confirmed. Took real execution from 479 to 111,400
+      steps before a second null-pointer crash: a genuine `IShell`
+      vtable call at slot 43, one past this project's previously
+      "verified against real Qualcomm source" 42-slot (0-41) count.
+      Extended the vtable with generously-sized, clearly-unconfirmed
+      stub headroom (through slot 49) rather than guess what's really
+      there. After both fixes: zero wander warnings, zero thrown
+      exceptions, for the full run. A temporary DrawText trace
+      (reverted) confirmed the LOAD ERROR dialog is completely gone —
+      only the real "CARREGANDO..." spinner shows now, still
+      legitimately loading rather than stuck. 259/259 tests pass. See
+      PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`

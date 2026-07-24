@@ -3711,3 +3711,64 @@ nothing scopes the padding to `sound.ggz` specifically; harmless, since
 nothing reads that raw copy, but worth knowing if this surprises
 someone reading the padding log line later. 259/259 tests pass (this
 tool's own logic is the only code changed; no core/ files touched).
+
+---
+
+**Kept going against the new "MRS/MSR" crash rather than stopping at
+the GGZ fix, and found two more real, previously-unreachable gaps in
+quick succession — both now fixed, and Double Dragon reaches a stable,
+crash-free steady state for the first time all session.**
+
+First, extended `tools/game_probe.cpp`'s existing "wandered outside
+the module" diagnostic (it already warned when `pc` left real code,
+but not *where it left from*) to track and print the last in-module
+`pc`/`lr` before the jump — a small, permanent, zero-noise improvement
+to an already-permanent dev-tool diagnostic, not one-off instrumentation,
+so it wasn't reverted. Used it immediately: the crash's last real `pc`
+was `0x0011de28`, a `bx r3` where `r3` came from `*(*(module_base-4) +
+0xdc)` — the module-wide "static base" table this project has already
+reverse-engineered eighteen slots of (`core/brew/mod_runtime.h`), but
+offset `0xdc` (220) was never one of them. Confirmed via a Python
+literal-pool computation that this call site's own "static base"
+resolves to exactly `module_base` (not some other table), and that
+`0xdc` sits in the same tightly-packed real cluster as the already-
+confirmed `GetAppContext` (`0xc0`) and unknown slot `0xd0`. One real
+call site found (`ddragonz.mod` offset `0x11de1c`), too thin a shape
+to identify beyond "single pointer argument, 0-returns-success" —
+registered as slot nineteen, a safe no-op, same treatment as every
+other unidentified slot in this table. Fixed in `core/brew/mod_runtime.
+{h,cpp}`.
+
+That alone took real execution from 479 steps to 111,400 steps before
+hitting a second, different crash: same failure shape (`bx` through a
+null pointer landing at `pc=0`), but this time a genuine, direct
+**`IShell` vtable call at byte offset `0xac` — slot 43** (`ddragonz.mod`
+offset `0x10a244`), traced back through a real `GetAppContext()` call
+fetching the shell pointer from the confirmed app-context field
+(`+12`). This project's own `core/brew/ishell.cpp` already documents
+its 42-slot (0-41) vtable as "verified directly against real Qualcomm
+source" for the pre-BREW-MP method count — a real call at slot 43
+means either that earlier verification was against an incomplete
+header, or Zeebo's own BREW variant extends classic `IShell` by a
+couple of slots the same way this project has already found it doing
+elsewhere. Rather than guess at what slots 42-43 (or beyond) really
+are, extended the vtable with generously-sized safe-stub headroom (up
+through slot 49, matching this project's established precedent for
+uncertain interface sizes, e.g. the HID device scaffold) and clearly
+flagged the new slots as unconfirmed, unlike the original 0-41 range.
+
+**Verified**: re-ran the probe after each fix. After just the `0xdc`
+slot, the second crash appeared immediately (progress, not a stall).
+After the `IShell` vtable extension, the full 10-second run produced
+**zero wander warnings and zero thrown exceptions** — the first
+completely clean run all session. A temporary `DrawText` trace
+(reverted after use) confirmed what's on screen now: only the real
+"CARREGANDO..." loading spinner, cycling its dots normally, with no
+trace of the LOAD ERROR dialog anywhere. Real execution is now stable
+in the event loop, genuinely still "loading" rather than stuck in a
+terminal error state — likely the same real gamepad-input gate
+identified two rounds ago (`applet+0x361c` bit `0x100`), not yet
+re-confirmed this round. 259/259 tests pass. All temporary
+instrumentation (the `DrawText` trace) reverted; the wander-diagnostic
+enhancement is the only non-fix change, kept deliberately as a
+permanent improvement to existing tooling.

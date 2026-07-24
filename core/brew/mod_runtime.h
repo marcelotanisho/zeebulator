@@ -280,7 +280,20 @@ namespace zeebulator {
 // shape to identify -- registered as a safe no-op, same rationale as
 // every other unidentified slot above.
 //
-// Only these eighteen table slots are confirmed by real disassembly
+// A nineteenth slot, offset 0xdc, was found in Double Dragon (not
+// Super BurgerTime, unlike the last few above) once the real GGZ
+// short-read padding fix let execution run measurably further: a real
+// call site (`ddragonz.mod` offset 0x11de1c) in a small guard function
+// that first rejects a null pointer argument (-3) and an
+// already-initialized context field at +8 (-1), then calls this slot
+// with that one pointer argument, treating a 0 return as success --
+// sits in the same tightly-packed real cluster as GetAppContext (0xc0)
+// and the seventeenth slot (0xd0), one word after a 4-byte gap. Too
+// thin a shape (one call site, one pointer argument, no distinguishing
+// data) to identify -- registered as a safe no-op, same rationale as
+// every other unidentified slot above.
+//
+// Only these nineteen table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report

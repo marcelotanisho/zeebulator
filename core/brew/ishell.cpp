@@ -131,6 +131,27 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       Stub,  // 39 CheckPrivLevel
       Stub,  // 40 IsValidResource
       Stub,  // 41 LoadResDataEx
+      // Slots below this point are NOT verified against any real header --
+      // unlike 0-41 above, they're only known to exist at all because real
+      // Double Dragon disassembly (`ddragonz.mod` offset 0x10a234) showed a
+      // genuine call through vtable offset 0xac (slot 43), one word past
+      // what the "40 IShell-specific methods" pre-BREW-MP count above
+      // accounted for -- either that count was of an incomplete real
+      // header, or Zeebo's own BREW variant extends classic IShell by a
+      // couple of slots the same way this project has already found it
+      // doing for other interfaces. Extended with safe, generously-sized
+      // headroom (matching this project's established precedent, e.g. the
+      // HID device scaffold) rather than pinned exactly to slot 43, so the
+      // next real call into this range doesn't reproduce the same
+      // undersized-vtable crash.
+      Stub,  // 42 unconfirmed
+      Stub,  // 43 unconfirmed -- the one real call site found so far
+      Stub,  // 44 unconfirmed
+      Stub,  // 45 unconfirmed
+      Stub,  // 46 unconfirmed
+      Stub,  // 47 unconfirmed
+      Stub,  // 48 unconfirmed
+      Stub,  // 49 unconfirmed
   };
   return BuildInterfaceObject(memory_, hle_, vtable_address, object_address, methods);
 }
