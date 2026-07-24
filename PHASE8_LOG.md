@@ -4299,3 +4299,61 @@ none of it examined deeply enough yet to be more specific), not the
 actual NeoGeo-style arcade romset the "boot" manifest references. That
 romset's real source is still unlocated — a separate, still-open
 problem from the one this entry closes.
+
+---
+
+**Located exactly why the crash-fixed build still never gets past
+tick 0: confirmed, precisely, what the still-unresolved romset-loading
+polling loop is actually waiting on, and why it can never resolve with
+this repo's current assets.**
+
+A long, patient run (170 real seconds, well past this project's normal
+test windows) confirmed tick 0's own `CallArmFunctionChecked` call
+never returns and never hits its 5,000,000-step budget either —
+consistent with a genuine, bounded-but-very-long real polling loop
+rather than a fast crash, matching this log's own earlier
+characterization of this exact condition ("waiting on ROM-data
+readiness, not just elapsed time").
+
+A temporary trace on every real `IFILEMGR_OpenFile` call (reverted
+after use) settled it directly: real code tries, in order, six real
+candidate paths —
+
+```
+.\boot.pkg
+.\boot\boot.rom
+roms\boot.pkg
+roms\boot\boot.rom
+roms\neogeo\boot.pkg
+roms\neogeo\boot\boot.rom
+```
+
+— i.e. a real, sensible multi-directory search for a file named
+**`boot.pkg`** (and a `boot.rom` inside a `boot\` subdirectory), not
+`supbtime.pkg`. Every one of these six real opens fails (nothing in
+this repo's VFS is registered under any of these names), which is what
+feeds the polling loop that never resolves.
+
+**This is a materially different situation than everything else fixed
+in this log.** `supbtime.pkg` (now fully cracked and implemented) is
+this specific game's own asset package; `boot.pkg` is a distinct,
+smaller bootstrap/romset-selector file (matching the `"boot"`/
+`"boot.rom"` names at the very start of the shared multi-game manifest
+string found earlier) that isn't among this game's own downloaded
+files — `research/games/Super BurgerTime/mod/279125/` has no
+`boot.pkg` or `boot.rom` anywhere. Given the manifest spans several
+unrelated games (Zupapa, Zedblade, and others) under one shared
+arcade-core binary, `boot.pkg` reads as a **shared, system-level file**
+this arcade core expects to find on every real device, independent of
+which specific game is installed — not part of any individual game's
+own download.
+
+**Not pursued further this round**: sourcing this file (if it exists
+in any of this project's already-sanctioned archives) needs the user's
+explicit go-ahead first, per this project's own standing convention —
+unlike `sound.ggz`/`data.ggz`, this isn't a file this game's own
+download folder is short a few bytes of; it would be an entirely new
+asset from a different, not-yet-confirmed source. All temporary
+instrumentation (the `OpenFile` trace in `core/brew/file_hle.cpp`, the
+widened tick-trace window in `tools/game_probe.cpp`) reverted; `git
+diff --stat` clean. 266/266 tests pass (unchanged).

@@ -1826,6 +1826,20 @@ playable start-to-finish at full speed, standalone build.
       a real manifest string — this `.pkg` holds general assets, not
       the arcade romset itself; that romset's real source is still
       unlocated. See PHASE8_LOG.md for the full derivation.
+      **Found precisely why tick 0 never returns even with the crash
+      fixed**: a long (170s) run confirmed it's a genuine, very long
+      real polling loop, not a fast failure. A temporary `OpenFile`
+      trace found real code tries six candidate paths (`.\boot.pkg`,
+      `roms\neogeo\boot.pkg`, `roms\neogeo\boot\boot.rom`, ...) for a
+      file named `boot.pkg` — a distinct, shared bootstrap/romset-
+      selector file this game's own download folder doesn't contain
+      (unlike `supbtime.pkg`, this game's own asset package, already
+      cracked above). Given the shared manifest spans several unrelated
+      games under one arcade core, `boot.pkg` looks like a system-level
+      file every real device would have, not part of any individual
+      game's download. Not pursued further — sourcing it needs explicit
+      user go-ahead first, per this project's standing convention. All
+      temporary instrumentation reverted; 266/266 tests pass.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
