@@ -4031,3 +4031,57 @@ what's gating progress. Not attempted this round — a deliberate stop
 after fully characterizing the block, not a stall. No code changes
 this round (disassembly and live reads only); `git diff --stat` clean.
 259/259 tests pass (unchanged).
+
+---
+
+**Tried both of the two identified experiments this round. One
+resolved cleanly (a real, if uninteresting, answer); the other is
+still open, now with a much narrower, well-evidenced remaining
+question.**
+
+**(a) The three-button combo is real, and it does something —
+resets the applet.** Added the two real shoulder-button UIDs
+(`0x0106C406`/`0x0106C408`) to the simulated batch (temporary,
+reverted after). `applet+0x3618` correctly reached `0x0000F13F`
+(bits 4, 5, 8 all present) and the transition to `0x122bac` fired for
+the first time. Disassembled it: it's a pure setup function, no
+loop, no real work — it just installs three new function pointers
+(`applet+0x50`, `+0x36b4`, `+0x36bc`) and returns. Computed the real
+installed value of `applet+0x50` directly from the literal pool:
+`0x1209c0` — **the exact same address `applet+0x50` held at real tick
+0**, before anything had run. Confirmed live: the whole real loading
+sequence visibly restarted (a fresh `LOAD ERROR`/`ERROR CODE:3`/
+`LIST COUNT:11` appeared, a third distinct real error code+list-count
+pair from a fresh pass through the resource dispatcher, this time
+with all nine simulated buttons held throughout, which evidently
+changes which entry fails first). This three-button combo is a real,
+working "restart the applet" trigger, not a menu-progression input —
+a real discovery, but not the one this project needs, and not chased
+further (a "why does entry 11 fail differently" question is a new
+thread of its own, not core to unblocking the title screen). Removed
+the two shoulder buttons from the simulated batch again afterward.
+
+**(b) `applet+0x15ac` bit `0x10000000` — found nine real, distinct
+writers to this field across a full run (temporary watchpoint,
+reverted after), and confirmed all nine only ever touch the field's
+low byte.** Values observed: `0x01` (one writer, `0x107380`, after
+two real preceding calls — `0x11f804` then `0x122520` — an
+unconditional `orr #1`, never cleared), then `0x03` (four more real
+writers additionally setting bit 1, also never cleared). The high
+three bytes (bits 8-31, including the specific bit `0x121110` checks)
+stayed `0x00` from every one of the nine real writers, in every run
+tried, button held or not. This makes the open question sharper than
+before: it's not that this project hasn't found *a* writer, it's that
+**none of the nine real writers this specific execution path reaches
+ever touch that bit at all** — strong (though not yet conclusive)
+evidence that whatever sets it lives on a real code path this
+project's HLE hasn't reached or driven yet, not merely a matter of
+holding the right button. Not chased further this round (would mean
+either a wider static search across the whole `.mod` for other real
+references to this same field offset, or identifying and driving
+whatever real subsystem the nine known writers themselves depend on).
+
+All temporary instrumentation (the shoulder-button test batch, the
+`applet+0x15ac` watchpoint, the `+0x3618`/`+0x15ac` status print)
+reverted; `git diff --stat` clean. 259/259 tests pass (unchanged --
+investigation only, no code changes survive this round).

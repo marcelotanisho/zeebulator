@@ -1239,6 +1239,21 @@ playable start-to-finish at full speed, standalone build.
       simulated pressing alone would ever be enough). Not attempted
       this round — investigation only, no code changes; `git diff
       --stat` clean. 259/259 tests pass. See PHASE8_LOG.md.
+      **Tried both.** The three-button combo is real but turned out to
+      be a full applet reset (confirmed: `applet+0x50` gets set back to
+      its exact real tick-0 value, and a fresh `LOAD ERROR` appeared) —
+      a real discovery, not the progression path this project needs.
+      For `applet+0x15ac` bit `0x10000000`: found nine distinct real
+      writers across a full run, and every one of them only ever
+      touches the field's low byte — the high three bytes, including
+      the specific bit checked, stayed `0x00` from all nine, button
+      held or not. Sharpens the open question: it's not that a writer
+      hasn't been found, it's that none of the real code paths this
+      project's HLE currently reaches ever touch that bit at all.
+      Would need either a wider static search across the whole `.mod`
+      or driving whatever real subsystem those nine writers themselves
+      depend on. Not attempted this round; investigation only, no code
+      changes survive. 259/259 tests pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
