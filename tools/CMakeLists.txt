@@ -4,6 +4,9 @@ target_link_libraries(zeebulator_cpu_demo PRIVATE zeebulator_core)
 add_executable(zeebulator_ggz_inspector ggz_inspector.cpp)
 target_link_libraries(zeebulator_ggz_inspector PRIVATE zeebulator_core)
 
+add_executable(zeebulator_bar_inspector bar_inspector.cpp)
+target_link_libraries(zeebulator_bar_inspector PRIVATE zeebulator_core)
+
 add_executable(zeebulator_mif_inspector mif_inspector.cpp)
 target_link_libraries(zeebulator_mif_inspector PRIVATE zeebulator_core)
 

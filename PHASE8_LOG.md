@@ -4490,3 +4490,89 @@ emulation. All temporary instrumentation (the watchpoint, the second
 `OpenFile` trace) reverted; `git diff --stat` clean. 266/266 tests
 pass (unchanged — investigation only, no functional changes this
 round).
+
+---
+
+**The user made the full 61-title real Zeebo dump collection directly
+available in `research/games/` (previously this project only had three
+titles individually extracted plus indirect access to one archive.org
+mirror). Used it to crack Peggle's `resources.bar` — Phase 2's
+originally-deferred "BAR file parser" task — completely.**
+
+First checked whether `resources.bar` might be the same format as
+Bejeweled Twist's/Zuma's Revenge's own `resources.dat` (both now
+directly available, and PHASE8_LOG's own earlier Peggle entries already
+flagged them as the same PopCap-resource-container family). It isn't:
+both of those real files open with a real, distinct magic, `PPCPRCON`
+— Peggle's own `resources.bar` doesn't share it. A real, useful
+cross-check, but not the shortcut hoped for; also confirmed no *other*
+one of the 61 titles has a `resources.bar` of its own (only `.dat`
+variants elsewhere), so there was no second same-format sample to
+cross-reference the way `boot.pkg` worked for Super BurgerTime.
+
+**Cracked directly from the raw bytes instead, the same way GGZ and
+`.obm1` were (both also have no real ARM code parsing them — this
+title's own `resources.bar` is opened through the generic real
+`ISHELL_LoadResDataEx` BREW API, confirmed in an earlier round, not a
+custom `.mod`-embedded parser).**
+
+Header self-consistency was the first real foothold: `offset 24`
+(1764) plus `offset 28` (13,493,221) sum to the file's own exact real
+size (13,494,985) — too exact to be coincidence. Confirmed directly:
+byte offset 1764 is exactly where a real `ID3` (MP3) signature begins
+in the live file. From there, `offset 16` (528) — cross-checked as
+`offset 8` (32) + `offset 12` (496) — turned out to be the real start
+of a flat table of `uint32` LE absolute file offsets (`offset 20` = 308
+of them), one per real resource, immediately followed by one more
+`uint32` sentinel value equal to the total file size. **Verified about
+as strongly as this kind of reverse-engineering gets**: scanning every
+one of the 308 computed offsets against the live file, all 308 land
+exactly on a recognizable real signature or otherwise-sane content,
+zero exceptions — 7 real `ID3`/MP3s, 39 real `RIFF`/WAVE files, 246
+real PNGs (each preceded by a tiny two-byte-length + null-terminated
+`"image/png"` wrapper this parser doesn't strip), 11 fixed-32768-byte
+raw blocks with no recognizable magic (very likely an uncompressed,
+proprietary texture/tile format — not decoded further), and 4 trailing
+entries that are real, legible `^`-delimited localized UI strings
+(`"English^Español^Portugu..."`, `"NEW GAME^PLAY^AWARDS^OP..."`). No
+container-level compression anywhere — simpler in this one respect than
+either GGZ or `.pkg`.
+
+A first, 496-byte sub-table at `offset 32` (60 real, monotonic-ID-
+shaped 8-byte records) was found but deliberately **not** further
+decoded — not needed to extract raw resource bytes by index, and its
+one candidate field (an apparent index/ID under 2000, too large to be a
+direct index into the 308-entry resource table) didn't resolve cleanly
+enough to trust a guess. Flagged, not glossed over, matching this
+project's own standard for a real-but-unconfirmed structure.
+
+**Implemented as permanent, tested code**, following the exact
+established `GgzArchive`/`PkgArchive` pattern: `core/loader/bar.{h,cpp}`
+(`BarArchive::Parse`/`Extract`), `tests/bar_test.cpp` (synthetic
+fixtures built by hand, no real game bytes, per `CONTRIBUTING.md`'s
+clean-room policy — 7 tests covering the happy path and every
+malformed-header/table path found worth guarding), and
+`tools/zeebulator_bar_inspector` (lists/extracts a real `.bar`, with a
+best-effort real-signature sniff for display only — `BarArchive` itself
+stays a pure container, no format-specific decoding, the same
+container/codec layering this project already uses for GGZ/`.pkg`).
+**Verified directly against the real file**: all 308 entries parse and
+extract cleanly, matching the manual analysis exactly (246 image + 7
+mp3 + 39 wav + 16 unknown). 282/282 tests pass (7 new — this and the
+same-round `-Wall`/`-Wextra` cleanup below).
+
+Caught immediately by this session's own freshly-enabled `-Wall
+-Wextra` (see the cross-cutting entry below): a real signed/unsigned
+comparison warning in `bar_inspector.cpp`'s own MIME-string-length
+sniff, fixed with an explicit cast before it ever shipped.
+
+**Significance**: this was the second of Peggle's two real, long-
+standing open questions (alongside the still-unidentified per-tick
+loop ID `0x0101eb0b`) and the more concrete of the two — unlike that
+ID (dead-ended on "no real BREW MP SDK header available"), this one
+yielded entirely to direct evidence. Doesn't unblock Peggle's own
+per-tick loop by itself (that's still gated on the unidentified real ID
+this container crack doesn't touch), but real asset loading — PNGs,
+WAV/MP3 audio, and now confirmed to be simple, uncompressed, directly
+extractable — is no longer a blocked, "device-firmware-only" format for
+this title.

@@ -180,10 +180,41 @@ actual goal.
 - [x] Dev tool: `tools/ggz_inspector.cpp` — lists and optionally extracts
       a GGZ archive's contents from a runtime-supplied path (never embeds
       game content into the repo).
-- [ ] BAR file parser — not started. Worth noting: Double Dragon's dump
-      doesn't contain any `.bar` file at all (just `mif/`, `mod/`) — it
-      may not be universally needed per-title. Revisit if/when a title
-      that actually has one shows up.
+- [x] BAR file parser — **solved.** Deferred pending "a title that
+      actually has one" (Peggle does); revisited once the user made the
+      full 61-title dump collection directly available, which also
+      allowed ruling out Bejeweled Twist/Zuma's Revenge's own
+      `resources.dat` as the same format (real, different header magic
+      `PPCPRCON` — a real, distinct, likely-newer PopCap container,
+      cross-referenced but not needed once Peggle's own file yielded to
+      direct analysis).
+      No public spec exists; real code opens `resources.bar` through
+      the generic `ISHELL_LoadResDataEx` BREW API, not a custom `.mod`
+      parser, so — unlike GGZ/`.pkg` — there's no real ARM code to
+      trace, only the raw bytes. Reverse-engineered anyway: a 32-byte
+      header (several fields self-consistently cross-checkable against
+      each other and the real file size — offset table start/count,
+      data-region start/size all agree), a first, still-unparsed 496-
+      byte sub-table (60 real 8-byte records, purpose not needed for
+      extraction), then the real payload: `entry_count` strictly-
+      increasing `uint32` absolute file offsets plus one trailing
+      sentinel equal to the total file size (giving each entry's size
+      as the gap to the next). **Verified emphatically**: every one of
+      308 real entries in Peggle's actual `resources.bar` lands exactly
+      on a real, recognizable file signature with zero exceptions — 7
+      real `ID3`-tagged MP3s, 39 real `RIFF`/WAVE files, 246 real PNGs
+      (each preceded by a tiny, real `[uint16 header length][null-
+      terminated "image/png"]` wrapper), and 16 more (mostly fixed
+      32768-byte raw texture chunks, plus 4 trailing real, legible
+      `^`-delimited localized UI strings) not yet further decoded but
+      correctly bounded. No container-level compression at all —
+      simpler to extract than GGZ or `.pkg`. Implemented as
+      `core/loader/bar.{h,cpp}` (`BarArchive`), `tests/bar_test.cpp`
+      (synthetic fixtures only), and `tools/zeebulator_bar_inspector`.
+      282/282 tests pass (7 new). Decoding individual resource types
+      (PNG, the raw texture format, the string-table records) is
+      separate, not-yet-started follow-on work — this class is purely
+      the container. See PHASE8_LOG.md for the full derivation.
 - [x] MIF (Module Information File) — **string metadata extraction solved
       and shipped; full binary structure deliberately deferred (scope
       decision, not a dead end).** No byte-level spec exists publicly for
