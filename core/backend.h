@@ -7,7 +7,28 @@ namespace zeebulator {
 
 // Zeebo's Z-Pad: D-pad, two analog sticks, 7 buttons, ZL/ZR, Home.
 // Populated by the frontend (libretro or standalone) on each PollInput call.
+//
+// `buttons` bit layout below is this project's own convention (not a
+// literal real hardware register layout -- no evidence either way on
+// that), but every bit corresponds to a real, physical Z-Pad button
+// whose real BREW `IHIDDevice` UID is confirmed against the bundled
+// real `AEEHIDButtons.h` header (TASKS.md Phase 8; see
+// core/brew/hid_hle.h for the UID values themselves). `core/brew/
+// hid_hle.cpp` is the only place this bit layout needs to be kept in
+// sync with.
 struct ZPadState {
+  static constexpr uint16_t kDpadUp = 1u << 0;
+  static constexpr uint16_t kDpadDown = 1u << 1;
+  static constexpr uint16_t kDpadLeft = 1u << 2;
+  static constexpr uint16_t kDpadRight = 1u << 3;
+  static constexpr uint16_t kStartHome = 1u << 4;
+  static constexpr uint16_t kShoulderL = 1u << 5;
+  static constexpr uint16_t kShoulderR = 1u << 6;
+  static constexpr uint16_t kButtonWest = 1u << 7;   // real UID Button_1
+  static constexpr uint16_t kButtonSouth = 1u << 8;  // real UID Button_2
+  static constexpr uint16_t kButtonNorth = 1u << 9;  // real UID Button_3
+  static constexpr uint16_t kButtonEast = 1u << 10;  // real UID Button_4
+
   uint16_t buttons = 0;
   int16_t left_stick_x = 0;
   int16_t left_stick_y = 0;

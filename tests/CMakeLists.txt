@@ -25,6 +25,7 @@ add_executable(zeebulator_tests
   virtual_filesystem_test.cpp
   file_hle_test.cpp
   gl_hle_test.cpp
+  hid_hle_test.cpp
   gl_lifecycle_test.cpp
   wav_test.cpp
   mixer_test.cpp

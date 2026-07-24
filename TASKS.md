@@ -876,9 +876,39 @@ not attempted yet.
 ## Phase 7 — Input
 Exit criterion: target test game responds correctly to controller input.
 
-- [ ] Implement `IHID` HLE (Zeebo Z-Pad extension) — ARCHITECTURE.md §3.7
-- [ ] Standalone frontend: SDL2 gamepad/keyboard → `ZPadState` mapping
-- [ ] Default input mapping matching a standard Xbox-layout controller
+- [x] Implement `IHID` HLE (Zeebo Z-Pad extension) — ARCHITECTURE.md §3.7.
+      Promoted from Phase 8's own experimental, ad-hoc `game_probe.cpp`
+      scaffolding (built and verified this session driving a real Double
+      Dragon button-press state-machine transition end to end) into a
+      real, tested, reusable `core/brew/hid_hle.{h,cpp}` (`HidHle`).
+      Real `IHID`/`IHIDDevice` vtable order confirmed against the
+      bundled real SDK headers and `research/samples/conftest_source/
+      conftest/GamepadMgr.c` (TASKS.md Phase 8/PHASE8_LOG.md). Only
+      `RegisterForButtonEvent`/`GetNextButtonEvent` -- the two methods a
+      real call site was found directly exercising -- have real
+      behavior; every other slot (including analog `GetPositionState`)
+      is a safe no-op stub, per this project's established convention
+      for a real-but-unconfirmed slot. `UpdateState(ZPadState)` diffs
+      against the previous poll and enqueues real `AEEHIDButtonInfo`
+      events using the real, header-confirmed button UIDs. 9 new tests
+      (`tests/hid_hle_test.cpp`); `game_probe.cpp`'s own experimental
+      HID scaffold deliberately left untouched (it needs deterministic
+      scripted input for investigation, not live polling -- a real,
+      reasoned scope boundary, not an oversight).
+- [x] Standalone frontend: SDL2 gamepad/keyboard → `ZPadState` mapping.
+      `Sdl2Backend::PollInput()` implemented for real: a real
+      `SDL_GameController` when one is connected, falling back to a
+      fixed keyboard layout (arrows + Z/X/A/S + Q/E + Return) otherwise.
+      `SDL_INIT_GAMECONTROLLER` added alongside the existing VIDEO/AUDIO
+      init flags. Not unit-tested (SDL controller/keyboard state can't
+      be feasibly mocked without a virtual input driver, and no other
+      frontend code in this project is unit-tested either -- consistent
+      with existing precedent, not a new gap).
+- [x] Default input mapping matching a standard Xbox-layout controller.
+      Standard `SDL_GameController` button/axis naming already *is* an
+      Xbox-layout mapping (A=bottom, B=right, X=left, Y=top), so the
+      controller mapping above satisfies this directly, not as a
+      separate step.
 
 ## Phase 8 — First Playable Commercial Game
 Exit criterion: **M1 from PRD §7** — target title (Double Dragon) fully

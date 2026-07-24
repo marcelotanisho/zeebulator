@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
   std::vector<uint8_t> mod_data((std::istreambuf_iterator<char>(in)),
                                  std::istreambuf_iterator<char>());
 
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     return 1;
   }

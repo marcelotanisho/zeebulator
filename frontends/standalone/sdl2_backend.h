@@ -8,8 +8,15 @@ namespace zeebulator {
 
 // Real SDL2 implementation of the Backend Abstraction Interface: video
 // via a streaming SDL_Texture (as before), audio via a real
-// SDL_AudioDevice fed through SDL_QueueAudio. Input is still a no-op --
-// that's Phase 7.
+// SDL_AudioDevice fed through SDL_QueueAudio, input via a real
+// SDL_GameController (falling back to a fixed keyboard layout when none
+// is connected) mapped onto ZPadState -- see ARCHITECTURE.md 3.7's "sane
+// default matching a standard Xbox-layout controller" and core/
+// backend.h's ZPadState bit layout doc comment for the exact mapping.
+//
+// Requires the caller to have initialized SDL with
+// SDL_INIT_GAMECONTROLLER (in addition to VIDEO/AUDIO) for real gamepad
+// detection to work; keyboard fallback works regardless.
 //
 // The audio device is opened once, at construction, for a fixed
 // (sample_rate, 2-channel, S16) spec -- matching Mixer's own "one fixed
@@ -30,10 +37,14 @@ class Sdl2Backend : public Backend {
   ZPadState PollInput() override;
 
  private:
+  ZPadState PollController();
+  ZPadState PollKeyboard();
+
   SDL_Renderer* renderer_;
   SDL_Texture* texture_;
   SDL_AudioDeviceID audio_device_ = 0;
   int audio_sample_rate_;
+  SDL_GameController* controller_ = nullptr;
 };
 
 }  // namespace zeebulator
