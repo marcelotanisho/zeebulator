@@ -912,7 +912,21 @@ int main(int argc, char** argv) {
   // "just checking, don't return anything" pattern also observed at
   // peggle.mod offset 0x109a94's `bl 0x105b50` with r1=r2=0) and leaving
   // every other slot a plain, side-effect-free stub.
-  uint32_t next_self_propagating_addr = 0x80030000;
+  // Real address range chosen to avoid the collision bug found and fixed
+  // this round (TASKS.md Phase 8, Peggle): this counter and the slot-4
+  // stub counter below used to start at 0x80030000/0x80038000 -- only
+  // 8 slots apart -- and neither knew about the other or about this
+  // file's many other fixed object addresses (which top out around
+  // 0x80066000). With `resources.bar` wired in and real code recursing
+  // through more real QueryInterface chains than before, this counter
+  // grew far enough to silently overwrite a *different*, fixed-address
+  // object's own vtable pointer with an unrelated HLE trap address --
+  // confirmed live (a temporary register trace at the real crash site
+  // showed the "vtable" read resolving to a trap address, not a real
+  // vtable). Fixed by giving each dynamic counter its own large,
+  // separated range, well past every fixed address and far short of
+  // FileHle's own region at 0x80100000.
+  uint32_t next_self_propagating_addr = 0x80070000;
   std::function<uint32_t()> build_self_propagating_stub =
       [&cpu, &hle, &next_self_propagating_addr, &build_self_propagating_stub]() -> uint32_t {
     uint32_t vtable_addr = next_self_propagating_addr;
@@ -953,7 +967,11 @@ int main(int argc, char** argv) {
     // (a safe no-op discard is honest and sufficient; nothing reads a
     // return value from those writes), not QI-child semantics.
     methods[4] = [&cpu, &hle](zeebulator::IArmCore& core) {
-      static uint32_t next_addr = 0x80038000;
+      // Separated from build_self_propagating_stub's own counter above
+      // (and every fixed object address in this file) -- see that
+      // counter's own doc comment for the real address-collision bug
+      // this avoids.
+      static uint32_t next_addr = 0x80090000;
       uint32_t stub_vtable = next_addr;
       uint32_t stub_object = next_addr + 0x800;
       next_addr += 0x1000;

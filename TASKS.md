@@ -1637,6 +1637,26 @@ playable start-to-finish at full speed, standalone build.
       `resources.bar`. 289/289 tests pass. Doesn't reach a visible
       frame yet, but for the first time a real BREW OS-level API has
       real, non-stub, end-to-end behavior. See PHASE8_LOG.md.
+      **Chased the new dispatch gap and found a real bug in this
+      project's own test harness, not a missing HLE behavior**: two
+      unrelated dynamic object-address counters in `tools/
+      game_probe.cpp` (`0x80030000` and `0x80038000`, only 8 slots
+      apart, neither aware of the other or of ~30 other fixed
+      addresses in the same file) could collide once enough real
+      recursion happened — which now happens, since `resources.bar`
+      lets real code run further than ever. A live watchpoint plus a
+      targeted register trace confirmed it directly: a real stub
+      object's own vtable pointer got silently overwritten with an
+      unrelated HLE trap address. **Fixed** by moving both counters
+      into a large, previously-unused address range, removing the
+      whole category of collision. **Verified**: the crash is gone;
+      execution now reaches **tick 2** (previously crashed inside tick
+      0 every time) before hitting a new, different, narrower gap — a
+      real function expecting a populated context field getting a
+      genuine null, the same well-precedented shape this project has
+      solved several times before. Not fixed this round (a fresh,
+      well-characterized next thread). No regression; 289/289 tests
+      pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core

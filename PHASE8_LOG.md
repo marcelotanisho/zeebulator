@@ -4806,3 +4806,70 @@ new dispatch gap sits in the way -- but it's a materially different
 category of result than every previous "still nothing visible" finding
 on this title: real code is now doing something it structurally could
 never do before.
+
+---
+
+**Chased the new dispatch gap immediately and found a real bug in this
+project's own test harness, not a missing real HLE behavior: two
+unrelated dynamic object-address counters in `tools/game_probe.cpp`
+could collide with each other and with fixed object addresses.**
+
+A live watchpoint spanning the whole run (temporary, reverted) on the
+real two-handler dispatch slots (`peggle.mod` `0x13b1f4`/`0x13b1f8`,
+found via the same literal-relocation technique used throughout this
+log) confirmed real code correctly populates the second slot with a
+real `ISHELL_CreateInstance(0x0103d8ec)` result during
+`HandleEvent(EVT_APP_START)` -- exactly as expected. But a targeted
+register trace at the real crash site (`peggle.mod` `0x125934`, right
+after the real vtable load) found `[this]` resolving to `0xf0001448` --
+an **HLE trap address**, not a real vtable pointer. Something had
+overwritten the `0x0103d8ec` stub object's own header.
+
+**Root cause**: `build_self_propagating_stub`'s own dynamic address
+counter started at `0x80030000`, and a separate counter added last
+round for the arena object's real slot 4 started at `0x80038000` --
+only 8 slots apart, with neither counter aware of the other or of any
+of this file's ~30 other fixed object addresses (which top out around
+`0x80066000`, well below both counters' own eventual range). With
+`resources.bar` now wired in and real code recursing through
+substantially more real `QueryInterface` chains than any previous run
+of this title, `next_self_propagating_addr` grew far enough this round
+to overwrite the fixed `0x80040000`/`0x80041000` addresses used for
+`0x0103d8ec` -- silently replacing its real vtable pointer with an
+unrelated HLE trap address written there by an entirely different
+object construction. A real, latent bug that simply never had enough
+real recursion depth to trigger before this round's fixes let execution
+run this much further.
+
+**Fixed** by moving both dynamic counters into a large, previously-
+unused address range (`0x80070000`/`0x80090000`) well past every fixed
+address in the file and far short of `FileHle`'s own region at
+`0x80100000` -- removing the whole category of collision, not just
+this one instance (the same kind of fix this log's own Super BurgerTime
+"stack/module collision" entry applied to a structurally similar bug
+months earlier in this investigation).
+
+**Verified against real Peggle**: the crash at `0x125944` is gone
+entirely. Execution now reaches **tick 2** (previously crashed partway
+through tick 0's own execution, every time) before hitting a new,
+different, much more narrowly-characterized gap: a real function
+(`peggle.mod` `0x108e10`) reads a real sub-object from its own first
+argument's `+12` field expecting a populated real value, and gets a
+genuine null -- the same well-precedented "ambient context field never
+populated" shape this project has solved several times already (not
+yet fixed this round; a fresh, narrow, well-evidenced next thread,
+deliberately not chased further after landing two real fixes already
+this session). No regression: Double Dragon and Super BurgerTime
+unaffected; 289/289 tests pass (the fix lives entirely in
+`tools/game_probe.cpp`, the dev harness). All temporary instrumentation
+(the watchpoint, both targeted register traces, the widened
+`HandleEvent` trace) reverted; `git diff --stat` clean except the real
+address-range fix.
+
+**Significance**: unlike every other fix in this log, this one wasn't
+a missing real BREW behavior at all -- it was a genuine memory-safety
+bug in this project's *own* tooling, silently corrupting unrelated
+objects once enough dynamic allocation happened. Worth remembering for
+future rounds: any dynamically-growing address counter added to
+`game_probe.cpp` needs its own clearly-separated range, not an
+adjacent, seemingly-safe-looking gap.
