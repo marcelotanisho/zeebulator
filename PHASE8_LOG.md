@@ -3772,3 +3772,109 @@ re-confirmed this round. 259/259 tests pass. All temporary
 instrumentation (the `DrawText` trace) reverted; the wander-diagnostic
 enhancement is the only non-fix change, kept deliberately as a
 permanent improvement to existing tooling.
+
+---
+
+**Went back to confirm the gamepad gate is still the real blocker
+before touching it — and found the resource loader runs much further
+than before, reaching a real, correct completion state, not another
+failure.** A longer (30+ real second) run with a temporary periodic
+status check (`list_count`/`error_code`/the gate word, reverted after)
+showed `list_count` climbing to 13 (previously frozen at 3) with
+`error_code=8` — a *different* code from the earlier `6`. Traced its
+writer with the same `Memory::Write8` watchpoint technique used
+before (temporary, reverted): `pc=0x0011c1e0`, inside the dispatcher's
+very first branch — the one gated on the per-entry flags word's real
+`0x80000000` "terminal" bit, identified all the way back at this
+investigation's start. Entry 13 is genuinely the list's last real
+entry; `error_code=8` is a real "list processing complete" status, not
+a failure — confirmed by the complete absence of any new `DrawText`
+output afterward (no "LOAD ERROR", nothing) and by `list_count`
+staying frozen at exactly 13 (not retrying, not corrupting) for the
+rest of a multi-minute run. Real progress, not a new wall.
+
+**With loading genuinely done, went to actually verify (not just
+recall) that the HID button-press gate is what's left**, and ended up
+mapping the real signal/callback delivery mechanism end-to-end.
+`research/samples/conftest_source/conftest/GamepadMgr.c` — real,
+bundled Qualcomm reference source for exactly this subsystem — turned
+out to be an almost line-for-line match for what real Double Dragon
+code does: `ISHELL_CreateInstance(AEECLSID_HID)`, then
+`ISHELL_CreateInstance(AEECLSID_SignalCBFactory)`, then
+`ISignalCBFactory_CreateSignal(factory, callback, pUser, NULL,
+&signalCtl)` three times (device-connect, button, position), each
+followed by the matching `IHID_RegisterForConnectEvents`/
+`IHIDDevice_RegisterForButtonEvent`/`RegisterForPositionChange`. Live
+tracing (temporary, reverted) of all three real `CreateSignal` calls
+confirmed this exactly, and confirmed `0x1041207`'s slot 3 really is
+`CreateSignal` (previously only "call-order-shaped," not confirmed) —
+and, concretely, that the address noted two rounds ago as "the real
+button-event callback" (`0x11beac`) was actually wrong: it's the
+*device-connect* callback (`L_DeviceConnectCB`'s real shape). The
+*real* button callback is `0x11bdf4`, registered second, inside
+`L_GamepadMgr_NewJoystick`'s real equivalent.
+
+Found the real `AEEIHIDDevice.h` header bundled in this repo's own
+research materials (`research/docs/sdk_installer_extract/
+sdk_installer_cab/`, previously never located) and confirmed the full
+real vtable order directly against it — `RegisterForButtonEvent`=8,
+`GetNextButtonEvent`=9, matching real Double Dragon call sites exactly
+(`0x100740`, a thin wrapper `0x11bdf4` itself calls, dispatches
+through vtable offset `0x24`=slot 9). Also found the real
+`AEEHIDButtonInfo` struct layout (`{int nButtonID; int nState; int
+nButtonUID; int nButtonMin; int nButtonMax;}`) and, in
+`AEEHIDButtons.h`, the real Zeebo button UID table (e.g. `Button 1 =
+0x0106C40A`, `DPAD_UP = 0x0106C3FE`).
+
+**Implemented all of this for real** in `tools/game_probe.cpp`: real
+`ISignalCBFactory::CreateSignal` (captures the callback/context when
+the callback address matches the confirmed real button callback,
+`0x11bdf4`), real `IHIDDevice::RegisterForButtonEvent`/
+`GetNextButtonEvent` (a queue of simulated `AEEHIDButtonInfo` events,
+drained one per call), and a one-shot injector in the tick loop that,
+once the game has genuinely registered for button events, queues real
+button-press events and invokes the captured callback directly — the
+same way a real fired `ISignal` would, not a shortcut around real
+code.
+
+**Found a real trap along the way, via direct evidence, not guessing.**
+`0x11bdf4`'s real button-processing loop calls a real helper
+(`0x100740`) that maps each event's real `nButtonUID` to a small
+internal index via `nButtonUID - 0x0106C3FE` (confirmed by computing
+this in Python against the real known UIDs — every one lands exactly
+on a clean 0-15 index) and dispatches through a real 16-case jump
+table. The first attempt queued `Start`/`HOME` as the second event;
+its real case (`0x10080c`) returns failure *without touching the
+button-info struct at all* — which aborts `0x11bdf4`'s own real event
+loop immediately, silently dropping every event queued after it.
+Caught live (a temporary dump of the resulting bitmask and remaining
+queue length, reverted after): only 2 of 6 queued events were even
+consumed, and no button bits got set at all. Removed `Start`/`HOME`
+from the simulated batch, queuing only the four real action buttons
+and the four real d-pad directions instead (all confirmed via the same
+jump table to succeed and cleanly set bits 0-3 and 12-15
+respectively).
+
+**Verified the fixed batch works completely**: all 8 queued events
+drained, the real per-button bitmask (`context+40`/`+44`) ended up
+`0x0000F00F` — exactly bits 0-3 and 12-15, exactly the 8 buttons
+simulated, nothing else. The real button-event delivery pipeline now
+works end-to-end, byte-for-byte matching what a real fired signal
+would produce.
+
+**The title-screen gate still didn't open.** `applet+0x361c` stayed
+`0`. This isn't a dead end — `context+40`/`+44` (where the confirmed-
+correct button state now lives) is a *different* real struct from
+`applet+0xa20` (where the gate-computation pipeline, traced three
+rounds ago, actually reads from) — something real must copy per-device
+state from the former into the latter, and that copy step hasn't been
+found yet. A concrete, narrower next thread: find what writes
+`applet+0xa20` from `context+40`/`+44` (or from wherever `0x80300a54`
+really sits relative to it), the same watchpoint technique used
+throughout this file. Not attempted this round. All temporary
+diagnostics (the periodic status check, the bitmask/queue dump)
+reverted; the real `CreateSignal`/`RegisterForButtonEvent`/
+`GetNextButtonEvent` implementations and the tick-loop injector are
+kept as permanent, clearly-documented additions (matching this file's
+established "deliberate, labeled simulation" precedent for the HID
+device connection itself). 259/259 tests pass.

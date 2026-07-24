@@ -1165,6 +1165,32 @@ playable start-to-finish at full speed, standalone build.
       only the real "CARREGANDO..." spinner shows now, still
       legitimately loading rather than stuck. 259/259 tests pass. See
       PHASE8_LOG.md.
+      **Confirmed loading now genuinely completes** (list_count reaches
+      13 — the real last entry, flagged terminal — with error_code=8, a
+      real "done" status, not a failure) and mapped the real HID
+      button-press delivery pipeline end-to-end using a bundled real
+      Qualcomm reference sample (`research/samples/conftest_source/
+      conftest/GamepadMgr.c`) and the real `AEEIHIDDevice.h`/
+      `AEEHIDButtons.h` headers (found this round under
+      `research/docs/sdk_installer_extract/sdk_installer_cab/`).
+      Corrected an earlier round's callback address (`0x11beac` is
+      actually the device-connect callback, not button; the real one is
+      `0x11bdf4`) and implemented real `ISignalCBFactory::CreateSignal`/
+      `IHIDDevice::RegisterForButtonEvent`/`GetNextButtonEvent` plus a
+      tick-loop injector that queues real button-press events and
+      invokes the real captured callback directly. Found and worked
+      around a real trap along the way (queuing Start/HOME aborts the
+      real event loop before later events are processed — confirmed via
+      disassembly, not guessed). Verified the full pipeline works:
+      simulated presses for all 4 real action buttons + d-pad correctly
+      set the real per-button bitmask. The title-screen gate
+      (`applet+0x361c`) still didn't open, though — it reads from a
+      different real struct (`applet+0xa20`) than the one this
+      confirmed-correct button state lands in, and what copies one into
+      the other isn't found yet. A concrete, narrower next thread. All
+      temporary diagnostics reverted; the real signal/button
+      implementation kept as a permanent, documented addition. 259/259
+      tests pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
