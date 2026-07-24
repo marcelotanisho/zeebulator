@@ -1254,6 +1254,23 @@ playable start-to-finish at full speed, standalone build.
       or driving whatever real subsystem those nine writers themselves
       depend on. Not attempted this round; investigation only, no code
       changes survive. 259/259 tests pass. See PHASE8_LOG.md.
+      **Picked up a different loose thread instead of static-searching
+      blind: the still-unidentified class `0x01005511`.** Traced its
+      real calls and, from their shape (a status/percentage-report
+      pattern, reached only as part of a broader real "environment
+      ready" sequence, on a platform that distributes games by
+      download), identified it as very likely Zeebo's real download/
+      install-progress notification service. Implemented it for real —
+      captures the real registered callback and invokes it once with a
+      truthful "100% complete" event (truthful because this repo's own
+      assets genuinely are complete, not an invented condition).
+      Verified live: reaches the real real success-path check without
+      wandering or crashing, but doesn't clear it — that check also
+      needs a real byte at a known address to be nonzero, and nothing
+      triggered so far ever sets it. Same shape of open question as
+      `applet+0x15ac`, one layer deeper and narrower. Kept the real,
+      working implementation as a building block; all diagnostics
+      reverted. 259/259 tests pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`

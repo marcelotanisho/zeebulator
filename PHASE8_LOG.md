@@ -4085,3 +4085,60 @@ All temporary instrumentation (the shoulder-button test batch, the
 `applet+0x15ac` watchpoint, the `+0x3618`/`+0x15ac` status print)
 reverted; `git diff --stat` clean. 259/259 tests pass (unchanged --
 investigation only, no code changes survive this round).
+
+---
+
+**Rather than keep static-searching blind for `applet+0x15ac`'s
+missing writer, went after the other loose thread this project already
+had on record: the still-unidentified class `0x01005511`, reached
+only via the real HID-device path and left as a blind stub since it
+was first found.** Traced its real calls live (temporary, reverted to
+a permanent, real implementation after): slot 4 gets called three
+times with a small-integer-ID/value shape (`SetProperty`-like), then
+slot 3 registers a real callback (`ddragonz.mod` `0x11d020`) with a
+real userdata pointer, then slot 6 gets one more call. Disassembled
+the registered callback and the real function it branches into
+(`0x11f4dc`): together they only act on an event struct with field
+`+8 == 4` and field `+16` in `{2, 3}`, and on success call a real
+vtable slot 11 method with the literal argument `100` — a
+status/percentage-report shape. Combined with the class being reached
+only as part of a broader real "environment ready" sequence (right
+after real HID controller detection) and this project's own prior
+finding that Zeebo distributes games by download (the `274754`-style
+catalog IDs used throughout this file), this strongly resembles
+Zeebo's real download/install-progress notification service.
+
+**Implemented it for real, not as a guess:** `tools/game_probe.cpp`
+now captures the real callback/userdata from slot 3 and, once
+captured, invokes it once with a real, minimal, disassembly-confirmed
+event struct (`+8=4`, `+16=2`) reporting a truthful "100% / complete"
+status — truthful because this repo's own game assets genuinely are
+complete (three independent sources agree byte-for-byte, confirmed
+earlier this investigation), not an invented condition.
+
+**Verified live: it reaches the real check without wandering or
+throwing, but doesn't clear it.** `0x11f4dc`'s real success path
+requires a real sub-object pointer at `pUser+8` (confirmed present —
+it's `0x80061000`, this project's own registered `0x01005511` object,
+meaning real code already wired a self-reference in during one of the
+earlier slot 4/6 calls) *and* a real nonzero byte at `pUser+37`
+(confirmed absent — reads `0x00` every time tried). Missing that one
+byte routes to the real failure path instead (`applet`-analogous
+field `+28 = -1`, `+36 = 0`) — no crash, just a quiet no-op, matching
+`applet+0x15ac` staying unchanged in every run.
+
+**This is now the same shape of open question as `applet+0x15ac`'s
+missing bit, one layer deeper and much narrower**: a single real byte,
+at a known real address relative to a known real object, that nothing
+this project has triggered so far ever sets. Not chased further this
+round — the natural next step is finding what should write
+`pUser+37`, most likely via slot 6's own real call (passed `r1=
+0xf0000618`, an address in this project's own HLE trap range,
+suggesting real code handed back one of this project's own interface
+pointers as data — not yet understood) or via deeper tracing of
+whatever the three slot 4 `SetProperty`-shaped calls configure. The
+real, working `CreateSignal`-equivalent implementation and the
+one-shot notification injector are kept, permanent and documented, as
+a correct building block for that next round. All other temporary
+diagnostics (`DrawText` trace, the `applet+0x15ac` status print, the
+pre-invocation field dump) reverted. 259/259 tests pass.

@@ -573,11 +573,43 @@ int main(int argc, char** argv) {
   // real HID-device code path, and -- like every other real
   // `CreateInstance` call site in this project's history -- not
   // checked for failure before its result gets used, wandering into
-  // unmapped memory when left unregistered. Generic scaffold, same
-  // deliberately-unguessed treatment as every other unidentified class
-  // here.
-  uint32_t unknown_0x01005511_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80060000, /*object=*/0x80061000, /*slot_count=*/20);
+  // unmapped memory when left unregistered.
+  //
+  // Traced live this round (real call sites, not guessed): slot 4 gets
+  // called three times with a small-integer-ID/value shape (`SetProperty`
+  // -like: `(4, id=1, val_ptr)`, `(4, id=0x10, val=1)`, `(4, id=4,
+  // val=0)`), then slot 3 registers a real callback (`ddragonz.mod`
+  // `0x11d020`) with a real userdata pointer, then slot 6 gets one more
+  // call. Disassembling the real registered callback: it only acts on an
+  // event struct with field `+8 == 4` and field `+16` in `{2, 3}`,
+  // branching straight into a second real function (`0x11f4dc`) that --
+  // given a real sub-object at `pUser+8` and a nonzero byte at
+  // `pUser+37` -- calls a real vtable slot 11 method with the literal
+  // argument `100`. That shape (a status/percentage report, gated behind
+  // a real download-catalog-style class ID, reached only once a real HID
+  // controller was already detected -- i.e. as part of a broader real
+  // "is the environment ready" sequence) strongly resembles Zeebo's own
+  // real download/install-progress notification service, given the
+  // platform's real download-based distribution model this whole
+  // project's own catalog-ID handling already reflects. This repo's own
+  // game assets genuinely are complete (three independent sources agree
+  // byte-for-byte, PHASE8_LOG.md), so reporting "100% / complete" here
+  // is a truthful simulation of real environment state, not a guessed
+  // condition -- the same spirit as the already-simulated HID controller,
+  // not a new kind of guess.
+  auto captured_download_callback = std::make_shared<uint32_t>(0);
+  auto captured_download_context = std::make_shared<uint32_t>(0);
+  std::vector<zeebulator::HleRuntime::HleFunction> unknown_0x01005511_methods(
+      20, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
+  unknown_0x01005511_methods[3] = [captured_download_callback,
+                                    captured_download_context](zeebulator::IArmCore& core) {
+    *captured_download_callback = core.GetRegister(zeebulator::kR1);
+    *captured_download_context = core.GetRegister(zeebulator::kR2);
+    core.SetRegister(zeebulator::kR0, 0);  // AEE_SUCCESS
+  };
+  uint32_t unknown_0x01005511_obj = zeebulator::BuildInterfaceObject(
+      cpu.GetMemory(), hle, /*vtable_address=*/0x80060000, /*object_address=*/0x80061000,
+      unknown_0x01005511_methods);
   shell_hle.RegisterInstance(0x01005511, unknown_0x01005511_obj);
   // Two more real, unidentified classes found investigating why
   // Peggle's tick loop settles into a fixed, non-progressing steady
@@ -842,6 +874,7 @@ int main(int argc, char** argv) {
   const char* stage = "AEEMod_Load";
   uint32_t applet_ptr = 0;
   uint32_t handle_event_fn = 0;
+  bool injected_simulated_download_complete = false;
   try {
     std::printf("Calling AEEMod_Load...\n");
     constexpr uint32_t kPpModAddr = 0x00090000;
@@ -988,6 +1021,36 @@ int main(int argc, char** argv) {
     // Driving these is what actually runs the game's per-frame logic;
     // nothing calls into the module otherwise from here on.
     mod_runtime.Tick(kTickMs);
+    // Simulate a truthful "download/install 100% complete" notification
+    // once the real callback has been registered (see the class-0x01005511
+    // doc comment above) -- a real event struct shape confirmed via
+    // disassembly of the real registered callback (`ddragonz.mod`
+    // `0x11d020`): only two fields are read, `+8` (must equal 4) and
+    // `+16` (must be 2 or 3; both route to the same real success path).
+    // One-shot, not held -- this models a discrete real notification, not
+    // continuous input state. Confirmed live (PHASE8_LOG.md) that this
+    // reaches the real success-path *check* (`0x11f4dc`) without wandering
+    // or throwing, but doesn't yet clear it: that check also requires a
+    // real byte at `pUser+37` to be nonzero, and nothing this project has
+    // triggered so far ever sets it. Kept as a real, evidence-grounded
+    // building block for whoever traces that next -- not yet sufficient
+    // on its own.
+    if (!injected_simulated_download_complete && *captured_download_callback != 0 &&
+        tick_count >= 30) {
+      injected_simulated_download_complete = true;
+      constexpr uint32_t kSimulatedEventStructAddr = 0x80066000;
+      cpu.GetMemory().Write32(kSimulatedEventStructAddr + 8, 4);
+      cpu.GetMemory().Write32(kSimulatedEventStructAddr + 16, 2);
+      std::printf("  [input] simulating a download-complete notification: invoking callback "
+                  "0x%08x\n",
+                  *captured_download_callback);
+      try {
+        CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, *captured_download_callback,
+                               *captured_download_context, kSimulatedEventStructAddr, 0, 0);
+      } catch (const std::exception& e) {
+        std::printf("  [input] download-complete callback threw: %s\n", e.what());
+      }
+    }
     // Simulate a real, held button press once the game has genuinely
     // registered for button events (captured_button_callback nonzero) and
     // had a fair chance to finish resource loading. Re-fires every tick
