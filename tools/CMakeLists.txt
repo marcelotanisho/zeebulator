@@ -10,6 +10,9 @@ target_link_libraries(zeebulator_mif_inspector PRIVATE zeebulator_core)
 add_executable(zeebulator_obm1_inspector obm1_inspector.cpp)
 target_link_libraries(zeebulator_obm1_inspector PRIVATE zeebulator_core)
 
+add_executable(zeebulator_pkg_inspector pkg_inspector.cpp)
+target_link_libraries(zeebulator_pkg_inspector PRIVATE zeebulator_core)
+
 add_executable(zeebulator_mod_probe mod_probe.cpp)
 target_link_libraries(zeebulator_mod_probe PRIVATE zeebulator_core)
 

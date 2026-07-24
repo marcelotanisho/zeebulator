@@ -1806,6 +1806,26 @@ playable start-to-finish at full speed, standalone build.
       stream every tick — not the fixed small loop Peggle's own
       investigation paused on. No regression on Double Dragon/Peggle;
       259/259 tests pass. See PHASE8_LOG.md for the full trace.
+      **Cracked `.pkg` from scratch (unlike Peggle's still-uncracked
+      `resources.bar`).** Real header: `"PACK"` magic, entry count,
+      offset of a trailing zlib-compressed filename table. Real 20-byte
+      directory records (found by scanning for zlib magic bytes and
+      test-decompressing each candidate to separate real entries from
+      coincidental byte matches — 7 of 12 candidates decompressed
+      cleanly, matching the declared count exactly): hash, compressed
+      size, decompressed size, offset. Confirmed end-to-end: the
+      filename table decompresses to 7 real, legible names (`gc05.bin`,
+      `gk03`, `mae00.bin`, ...) landing exactly on the entry count.
+      Implemented as permanent, tested code following the established
+      `GgzArchive`/`Obm1Image` pattern: `core/loader/pkg.{h,cpp}`,
+      `tests/pkg_test.cpp` (synthetic fixtures only), and
+      `tools/zeebulator_pkg_inspector`. Verified against the real file:
+      all 7 entries parse and extract cleanly. 266/266 tests pass (7
+      new). Incidental finding: none of the 7 real names match the
+      `"boot"`/`zupa_p1.rom` names an earlier round found referenced by
+      a real manifest string — this `.pkg` holds general assets, not
+      the arcade romset itself; that romset's real source is still
+      unlocated. See PHASE8_LOG.md for the full derivation.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

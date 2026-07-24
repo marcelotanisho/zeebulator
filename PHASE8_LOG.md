@@ -4230,3 +4230,72 @@ same way Double Dragon does, past the point where Peggle's own
 investigation paused for lack of further real evidence. `.pkg` asset
 loading remains the next real undertaking for this title, same as
 `resources.bar` does for Peggle.
+
+---
+
+**Cracked `.pkg` from scratch — unlike `resources.bar` (Peggle), this
+one fully yields.** The earlier survey's caution turned out justified:
+it isn't Quake's classic PAK format (the two header `uint32`s don't
+parse as a coherent `(dirofs,dirlen)` pair), but real structure was
+there to find by direct byte analysis, cross-validated at every step
+rather than assumed.
+
+**Header** (12 bytes): `"PACK"` magic, a real entry count (`7` for
+`supbtime.pkg`), and a real absolute file offset (`579390`) that,
+followed directly, lands on one more real zlib stream — a strong,
+non-coincidental anchor, not a guess.
+
+**Directory**: real non-zero table data starts at byte 268 exactly —
+12 (header) + 256 (an all-zero reserved block of unconfirmed purpose,
+preserved as fixed padding) — confirmed precisely by locating known
+values (a real compressed size found via scanning for real zlib magic
+bytes and test-decompressing each candidate, which real deflate data
+correctly rejects false positives on: 12 candidate offsets found by
+byte-pattern search, only 7 actually decompressed cleanly, matching the
+declared entry count exactly) as raw bytes at exact file offsets, then
+computing the surrounding record layout from their relative spacing
+rather than assuming an offset/width up front. Real record shape (20
+bytes, repeats spaced exactly 20 bytes apart, verified against all 7
+real entries): `[unknown constant, 0x00020000 in every real record
+seen][hash, algorithm not identified — tried, and ruled out, zlib's
+own CRC32 of the filename][compressed_size][decompressed_size][absolute
+file offset]`.
+
+**Per-entry data**: raw RFC 1950 zlib streams (confirmed both by the
+`0x78 0xda` magic and by every one of the 7 real streams decompressing
+cleanly to their table-declared exact size) — not gzip-framed like
+`GgzArchive`'s convention, so no per-stream embedded filename.
+
+**Filenames, found by following the header's own footer-offset field**:
+one more real zlib stream, decompressing to exactly `entry_count *
+256` bytes — 7 fixed-width, null-padded ASCII records: `gc05.bin`,
+`gc06.bin`, `gk03`, `gk04`, `mae00.bin`, `mae01.bin`, `mae02.bin`. Real,
+legible names landing exactly on the declared entry count is about as
+strong a confirmation as this kind of reverse-engineering gets — the
+same bar the `.obm1` sprite format crack (TASKS.md Phase 8, Double
+Dragon) was held to.
+
+**Implemented as permanent, tested code**, following the exact
+established conventions of `GgzArchive`/`Obm1Image`:
+`core/loader/pkg.{h,cpp}` (`PkgArchive::Parse`/`Extract`),
+`tests/pkg_test.cpp` (synthetic fixtures built with zlib's own deflate,
+covering the happy path, an empty payload, and every malformed-input
+path — no real game bytes, per `CONTRIBUTING.md`'s clean-room policy),
+and `tools/zeebulator_pkg_inspector` (lists/extracts a real `.pkg`,
+matching `ggz_inspector`/`obm1_inspector`'s shape). **Verified directly
+against the real file**: all 7 entries parse and extract cleanly,
+byte-for-byte matching every offset/size this entry independently
+derived by hand. 266/266 tests pass (7 new).
+
+**Incidental finding, not yet resolved**: none of these 7 real names
+match the `"boot"`/`"boot.rom"`/`"zupa_p1.rom"`/`"zupa_s1.rom"` names
+an earlier round in this log found referenced by static-base slot
+`0xd0`'s real manifest string — meaning `supbtime.pkg` almost certainly
+holds general UI/graphics/audio assets (peeking at the extracted
+content: `gc05.bin`/`gc06.bin` look like tile/graphics data, `gk03`/
+`gk04` look like small real offset/index tables given their visibly
+monotonic values, `mae00-02.bin` are large, mostly-zero 512KB blocks —
+none of it examined deeply enough yet to be more specific), not the
+actual NeoGeo-style arcade romset the "boot" manifest references. That
+romset's real source is still unlocated — a separate, still-open
+problem from the one this entry closes.
