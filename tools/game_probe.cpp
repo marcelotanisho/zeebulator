@@ -30,6 +30,7 @@
 #include "core/cpu/arm_interpreter.h"
 #include "core/loader/ggz.h"
 #include "core/loader/mod.h"
+#include "core/loader/pkg.h"
 #include "frontends/standalone/sdl2_backend.h"
 #include "frontends/standalone/sdl2_gl_backend.h"
 
@@ -98,6 +99,56 @@ void MergeGgzInto(zeebulator::VirtualFilesystem& vfs, const char* path) {
 
   vfs.AddFile(BaseName(path), std::move(raw));
   std::printf("loaded %zu entries from %s\n", archive.Entries().size(), path);
+}
+
+// Super BurgerTime's real code (PHASE8_LOG.md) searches six real,
+// literal candidate paths -- ".\boot.pkg", ".\boot\boot.rom",
+// "roms\boot.pkg", "roms\boot\boot.rom", "roms\neogeo\boot.pkg",
+// "roms\neogeo\boot\boot.rom" -- for a small, shared bootstrap file this
+// specific title's own download doesn't contain (unlike `data.ggz`/
+// `sound.ggz`, this isn't part of any one game's own asset package: the
+// real multi-game ROM manifest embedded in `supbtime.mod` spans several
+// unrelated titles under one shared arcade-emulation core, and this file
+// is exactly the kind of shared, system-level component that implies).
+// Confirmed real and generic (not specific to whichever game's download
+// it's sourced from) by independently locating a real `boot.pkg` inside
+// a *different* title's own download (Karnov's Revenge) already present
+// in this project's sanctioned local archive, parsing it with this
+// project's own `PkgArchive` (built entirely from Super BurgerTime's own
+// file, with zero changes needed to read this second, independent real
+// sample), and confirming its one real entry (`boot.rom`, 8192 bytes)
+// decodes to what looks like a genuine 68000-style exception vector
+// table (most entries pointing at one shared default handler) -- boot/
+// init code, not per-game content. This registers both the raw `.pkg`
+// bytes (for whichever candidate real code opens first) and the
+// extracted `boot.rom` bytes, under every real candidate path observed,
+// so this dev tool doesn't need to guess which one real code actually
+// settles on using.
+void MergeBootPkgInto(zeebulator::VirtualFilesystem& vfs, const char* path) {
+  std::vector<uint8_t> raw = ReadFile(path);
+  auto archive = zeebulator::PkgArchive::Parse(raw);
+
+  static const char* const kPkgPaths[] = {
+      ".\\boot.pkg",
+      "roms\\boot.pkg",
+      "roms\\neogeo\\boot.pkg",
+  };
+  for (const char* p : kPkgPaths) vfs.AddFile(p, raw);
+
+  static const char* const kRomPaths[] = {
+      ".\\boot\\boot.rom",
+      "roms\\boot\\boot.rom",
+      "roms\\neogeo\\boot\\boot.rom",
+  };
+  for (const auto& entry : archive.Entries()) {
+    if (entry.name != "boot.rom") continue;
+    std::vector<uint8_t> rom = archive.Extract(entry);
+    for (const char* p : kRomPaths) vfs.AddFile(p, rom);
+  }
+  constexpr size_t kTotalPaths =
+      sizeof(kPkgPaths) / sizeof(kPkgPaths[0]) + sizeof(kRomPaths) / sizeof(kRomPaths[0]);
+  std::printf("loaded boot.pkg (%zu entries) from %s, registered under %zu real candidate paths\n",
+              archive.Entries().size(), path, kTotalPaths);
 }
 
 // Like HleRuntime::CallArmFunction, but bounded and loudly reports if
@@ -231,7 +282,8 @@ int main(int argc, char** argv) {
     // CreateInstance return EFAILED immediately, with zero HLE calls,
     // before anything resembling real progress happens. See
     // PHASE8_LOG.md for how this was found.
-    std::fprintf(stderr, "usage: %s <game.mod> <data.ggz> <sound.ggz> <cls_id_decimal>\n",
+    std::fprintf(stderr,
+                  "usage: %s <game.mod> <data.ggz> <sound.ggz> <cls_id_decimal> [boot.pkg]\n",
                   argv[0]);
     return 1;
   }
@@ -241,6 +293,7 @@ int main(int argc, char** argv) {
   zeebulator::VirtualFilesystem vfs;
   MergeGgzInto(vfs, argv[2]);
   MergeGgzInto(vfs, argv[3]);
+  if (argc >= 6) MergeBootPkgInto(vfs, argv[5]);
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());

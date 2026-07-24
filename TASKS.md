@@ -1840,6 +1840,30 @@ playable start-to-finish at full speed, standalone build.
       game's download. Not pursued further — sourcing it needs explicit
       user go-ahead first, per this project's standing convention. All
       temporary instrumentation reverted; 266/266 tests pass.
+      **User authorized sourcing `boot.pkg` from this project's own
+      sanctioned local archive** (not a new download). Found it on the
+      first check — bundled in a *different* title's own download,
+      `Karnov's Revenge.zip` (`mod/279126/boot.pkg`) — confirming it's
+      the shared, system-level file the manifest evidence predicted.
+      Cross-validated this project's own `PkgArchive` (built entirely
+      from Super BurgerTime's file) by parsing this second,
+      independent real file with zero code changes; its one entry
+      (`boot.rom`, 8192 bytes) decodes to a real-looking 68000-style
+      exception vector table. Wired in as a new, permanent, optional
+      5th CLI argument (`MergeBootPkgInto`), registering it under all
+      six real candidate paths found earlier. **Verified**: real
+      Super BurgerTime now runs a genuinely new, much longer sequence
+      — many new real file-I/O HLE calls fire — reaching 262,900 real
+      steps (previously never completed a single HLE call's worth of
+      real progress) before a new gap. Traced precisely: a real 8-byte-
+      stride dispatch table read through a correctly-relocated address,
+      but the specific slot is unpopulated — the raw file has real,
+      sane data there, but it falls inside the same reclaimed-scratch
+      range this game's own `0x2e28fc` gap already characterized, so
+      it's the same *kind* of "missing real initializer" gap, not new
+      territory. Not pursued further this round — a natural stopping
+      point after a substantial, multi-part round. No regression on
+      Double Dragon. 266/266 tests pass. See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

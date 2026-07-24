@@ -4357,3 +4357,78 @@ asset from a different, not-yet-confirmed source. All temporary
 instrumentation (the `OpenFile` trace in `core/brew/file_hle.cpp`, the
 widened tick-trace window in `tools/game_probe.cpp`) reverted; `git
 diff --stat` clean. 266/266 tests pass (unchanged).
+
+---
+
+**User authorized sourcing `boot.pkg` from this project's own
+sanctioned local archive (the same `archive.org` `zeebo-arquivista`
+preservation collection already used earlier this session, not a new
+download).** Given the shared-manifest evidence above (`boot`/
+`boot.rom` sitting alongside several unrelated games' own romset
+entries in one binary-embedded table), checked whether any of the
+other classic-arcade-port titles already present in that local archive
+happen to bundle their own copy of this same shared file, rather than
+assuming it needs sourcing from anywhere new.
+
+**Found it on the first check**: `Karnov's Revenge.zip`'s own
+`mod/279126/boot.pkg` (1,816 bytes) — a different game entirely, but
+built on the same shared arcade core. **Confirmed real and generic
+before using it for anything**, not just assumed: this project's own
+`PkgArchive` (built and tested entirely against Super BurgerTime's
+`supbtime.pkg`, with zero code changes) parses this second,
+independently-sourced real file correctly on the first try — a strong
+cross-title validation of the format work above, not just of this new
+file. Its one real entry, `boot.rom` (8,192 bytes), decodes to what
+looks like a genuine 68000-style exception vector table (most slots
+pointing at one shared default handler) — boot/init code, not per-game
+asset data, consistent with it being a shared, system-level file
+rather than something specific to Karnov's Revenge.
+
+**Wired in as a new, permanent, optional 5th CLI argument**
+(`tools/game_probe.cpp`'s `MergeBootPkgInto`, following the same
+"take a real path at runtime, embed nothing" convention as every other
+asset argument this tool already takes): registers both the raw
+`.pkg` bytes and the extracted `boot.rom` bytes under all six real
+candidate paths the earlier `OpenFile` trace found, so this dev tool
+doesn't need to guess which one real code actually ends up using.
+
+**Verified against real Super BurgerTime, with real `boot.pkg`
+supplied**: tick 0 now runs a genuinely new, much longer real sequence
+— many new, previously-unseen real HLE trap addresses fire (real file-
+read/seek activity, not just the same six failed `OpenFile` attempts
+looping) — reaching **262,900 real steps** before wandering to a new
+gap, a large jump past the previous wall (which never even completed
+one HLE-call's worth of real forward motion). No regression: Double
+Dragon still reaches its own real event loop cleanly.
+
+**The new gap, traced precisely**: real code at `supbtime.mod` offset
+`0x1465b0` does an indirect dispatch, `ldr pc, [r2, r3, lsl #3]` (an
+8-byte-stride jump table, `r3=1` at the point of failure) through a
+real, correctly-relocated runtime address (`r2` resolves to a live,
+in-module address, confirming this project's own ROPI relocation fix
+is working correctly here too) — but the specific slot read back `0`.
+Checked directly against the raw file at that same module offset: it
+is **not** zero there — the file holds a real, sane, monotonically-
+increasing sequence of link-time pointer values, exactly the shape of
+one more real relocation-table entry list. This address falls *inside*
+the same reclaimed-and-zeroed scratch range this log's earlier
+`0x2e28fc` entry already characterized (the original relocation
+table's own storage, reused as fresh BSS once its one-time job is
+done) — meaning this is the same *kind* of gap, not a new mechanism: a
+real dispatch table that some not-yet-reached piece of real
+initialization is supposed to populate before this call, in memory
+this codebase's own execution path hasn't driven the population of
+yet.
+
+**Not pursued further this round** — a substantial, multi-part round
+(cracking `.pkg`, fixing the crash, sourcing and validating `boot.pkg`,
+reaching a new 262,900-step milestone) is a natural, well-evidenced
+stopping point. The concrete next step for whoever continues is
+finding what real code is supposed to write to this table before
+`0x1465b0` reads it — the same kind of search Peggle's own arena-field
+investigation and this game's own `0x2e28fc` gap both already resolved
+successfully, so there's real precedent this is tractable, just not
+attempted yet. All temporary instrumentation (the register trace at
+`0x1465b0`) reverted; `git diff --stat` clean except the permanent
+`MergeBootPkgInto` addition. 266/266 tests pass (unchanged — the new
+code lives entirely in `tools/game_probe.cpp`, the dev harness).
