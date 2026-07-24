@@ -3973,3 +3973,61 @@ periodic `applet+0x50`/`+0x54` status print, the `DrawText` dedup
 trace) reverted. The real, corrected 9-event button batch and the
 sustained-hold injection are kept, permanent and documented, in
 `tools/game_probe.cpp`. 259/259 tests pass.
+
+---
+
+**Took the "disassemble `0x121110` directly" thread immediately, and
+it fully explains the idle state — right down to the exact bits it's
+still waiting on.** `0x121110` (the real per-tick handler
+`applet+0x54` now points at) opens by calling the real gate/combine
+function *itself* (`bl 0x11a2ec`, the exact function traced last
+round) plus four more real per-tick sub-calls (`0x11a1dc`, `0x11fa30`,
+a call on `applet+0xab0`, `0x11f2d8`) before checking anything -- so
+this state is genuinely active, not dead, re-evaluating real input
+every real tick.
+
+It then checks two real, independent conditions, neither of which our
+simulated input satisfies:
+
+1. `(applet+0x3618 & 0x130) == 0x130` -- a *second* OR'd gate this
+   project hadn't looked at before, fed from the same real per-device
+   `+0x44` field (not `+0x48`, which feeds the already-known
+   `applet+0x361c` gate) by the same real "publish" function traced
+   last round. `0x130` decodes to bits 4, 5, and 8 -- the real
+   left-shoulder, right-shoulder, and (already-simulated) UID-`0x403`
+   buttons, all three held at once. If satisfied, tail-jumps straight
+   to a different real function, `0x122bac`.
+2. Otherwise, checks `applet+0x15ac & 0x10000000` (a new, specific bit
+   of the same real "busy/pending load" field this project identified
+   at the very start of the Double Dragon investigation, previously
+   only known by bit 0). If set, tail-jumps to `0x122a98` with a real
+   16-bit value read from `applet+0x15b0`. If not, returns immediately
+   -- the do-nothing path this project's own live traces show
+   happening every tick.
+
+Checked both live (temporary status print, reverted): `applet+0x3618`
+correctly carries `0x0000F10F` (matching the already-confirmed
+`applet+0x361c`, same bits, different destination field) but is
+missing bits 4 and 5 -- our simulated batch never included the real
+shoulder buttons, so condition 1 never fires. `applet+0x15ac` is
+`0x00000003` throughout (bit 0 and bit 1 both real and already set,
+independent of any of this round's input work) -- nowhere near bit
+`0x10000000`, so condition 2 never fires either. Neither branch has
+ever been reachable with what's been simulated so far; the state
+genuinely, correctly does nothing every tick given the current real
+input, which is exactly the observed behavior.
+
+**This isn't a dead end — it's two concrete, well-specified next
+experiments**, both immediately actionable without any further
+disassembly: (a) add the two real shoulder-button UIDs (`0x0106C406`,
+`0x0106C408`) to the simulated batch and see whether the three-button
+combo really is the intended path (plausible for something like a
+"skip loading"/debug unlock, less plausible as an ordinary "continue"
+input, but not yet ruled out), or (b) trace what real code is
+supposed to set `applet+0x15ac` bit `0x10000000` — a real condition
+entirely independent of button input, meaning even a perfectly-
+simulated press might never be sufficient on its own if this is really
+what's gating progress. Not attempted this round — a deliberate stop
+after fully characterizing the block, not a stall. No code changes
+this round (disassembly and live reads only); `git diff --stat` clean.
+259/259 tests pass (unchanged).

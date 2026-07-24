@@ -1220,6 +1220,25 @@ playable start-to-finish at full speed, standalone build.
       reverted; the corrected 9-event button batch and sustained-hold
       injector kept, permanent and documented. 259/259 tests pass. See
       PHASE8_LOG.md.
+      **Did that immediately, and it fully explains the idle state.**
+      `0x121110` genuinely runs every tick (it opens by calling the
+      already-known gate/combine function itself, plus four more real
+      sub-calls) and checks two real, independent conditions, neither
+      satisfied yet: (1) a *second* OR'd gate at `applet+0x3618`
+      (fed from per-device field `+0x44`, parallel to the known
+      `+0x361c` gate's `+0x48`) needs bits 4+5+8 — both real shoulder
+      buttons plus the one already simulated — all held at once; (2)
+      `applet+0x15ac` (the real "busy/pending load" field known since
+      the start of this investigation) needs a new bit, `0x10000000`,
+      that's currently `0x3` and unrelated to any button input tried so
+      far. Confirmed both live. Two concrete, immediately-actionable
+      next experiments: add the two real shoulder-button UIDs
+      (`0x0106C406`/`0x0106C408`) to the simulated batch, or trace what
+      should set `applet+0x15ac` bit `0x10000000` (independent of
+      button input entirely — if this is the real gate, no amount of
+      simulated pressing alone would ever be enough). Not attempted
+      this round — investigation only, no code changes; `git diff
+      --stat` clean. 259/259 tests pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a second real game (Peggle), started this
       round to check whether Double Dragon-tuned HLE generalizes.
       Downloaded 61 real Zeebo titles from the `zeebo-arquivista`
