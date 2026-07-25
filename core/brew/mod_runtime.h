@@ -346,6 +346,19 @@ class ModRuntime {
   // applet instance*, not on a separate fixed struct -- so GetAppContext
   // needs to expose the applet pointer once it's known, not before. Safe
   // to call any time; takes effect on the next GetAppContext call.
+  //
+  // Only re-primes the Shell/IDisplay fields onto the new address, NOT
+  // the third/fourth/fifth placeholder objects -- also found tracing
+  // Peggle: real code gates its own real construction of those fields
+  // on the fifth field itself already reading non-zero (it doubles as
+  // an "already initialized" flag -- see the class doc comment), so
+  // pre-filling it with this codebase's own placeholder here would
+  // make real code believe it's already been constructed and skip its
+  // own real constructor entirely, permanently freezing that field at
+  // a fake placeholder instead of a real object. Leaving all three
+  // fields untouched on the new (freshly allocated, zero-filled)
+  // address lets real code run its own real construction the first
+  // time it actually needs to.
   void SetContextAddress(uint32_t context_address);
 
   // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot

@@ -705,15 +705,18 @@ int main(int argc, char** argv) {
   // offset +12 of the function's own struct parameter -- the same
   // confirmed Shell-field convention as the ambient app context struct
   // -- with its result stored unconditionally (no failure check) into
-  // that struct's own offset +0x48. Same generic, deliberately-
-  // unguessed scaffold treatment already established for `0x01002001`
-  // (see this file's/PHASE8_LOG.md's Double Dragon history): safe
-  // enough that CreateInstance succeeds and later method calls resolve
-  // cleanly, without assuming a real interface shape none of this
-  // project's evidence actually supports yet.
-  uint32_t unknown_0x01030766_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80044000, /*object=*/0x80045000, /*slot_count=*/40);
-  shell_hle.RegisterInstance(0x01030766, unknown_0x01030766_obj);
+  // that struct's own offset +0x48. Its slot 2 (offset 8) is itself a
+  // real, confirmed `ISHELL_CreateInstance`-shaped call site (`peggle.mod
+  // 0x1099e0-0x1099f8`, found once the app-context fix let real code run
+  // this far), always requesting the one real, already-identified ClsId
+  // 0x0101eb0b -- built below, after `build_self_propagating_stub` is
+  // defined, with that one slot overridden to forward to it for real
+  // instead of the generic-stub treatment previously here (which let
+  // real code dereference an unwritten out-param and crash). Every other
+  // slot keeps the same deliberately-unguessed scaffold treatment
+  // already established for `0x01002001` (see this file's/PHASE8_LOG.md's
+  // Double Dragon history) -- this object's own broader identity is
+  // still unconfirmed.
   // A third real, unidentified class, found continuing the Super
   // BurgerTime investigation past the stack/module collision and the
   // 0x40/0xc static-base slots (TASKS.md Phase 8): real code inside
@@ -985,6 +988,52 @@ int main(int argc, char** argv) {
                                              methods);
   };
   uint32_t unknown_arena_0x453d8_obj = build_self_propagating_stub();
+  // The interface class itself -- 0x0101eb0b, the real shared
+  // PopCap/Zeebo SDK interface documented on `build_self_propagating_stub`
+  // above -- was fully reverse-engineered (that stub's own slot 4 was
+  // added specifically for it) but never actually registered as a real
+  // `ISHELL_CreateInstance` target. Found continuing the Peggle
+  // investigation once the app-context fix (TASKS.md Phase 8) let real
+  // code run far enough to reach this real call for the first time:
+  // `peggle.mod 0x1099f8` calls `ISHELL_CreateInstance(shell, 0x0101eb0b,
+  // &ppObj)`, and since it was unregistered, `CreateInstanceImpl` failed
+  // without ever writing `*ppObj` -- real code doesn't check the return
+  // value, so it dereferenced whatever garbage was already on the stack
+  // there, landing on a null function pointer and crashing out of the
+  // module entirely.
+  shell_hle.RegisterInstance(0x0101eb0b, build_self_propagating_stub());
+  // `unknown_0x01030766_obj` (see its own doc comment above, near its
+  // real ClsId's other registration): its slot 2 is a real, confirmed
+  // `ISHELL_CreateInstance`-shaped call, always requesting `0x0101eb0b`.
+  // Its slot 3 (`peggle.mod 0x109a98-0x109aac`, found immediately after
+  // getting slot 2 working) is a real, confirmed `(this, &ppOut)`
+  // single-out-param call -- the same "QueryInterface-child" shape
+  // `build_self_propagating_stub`'s own slots 2/3 already implement --
+  // so it gets the same treatment: write a fresh self-propagating child
+  // into `*ppOut`. `object_address` kept identical to the previous
+  // generic-stub build (0x80045000) so nothing else in this file needs
+  // to change.
+  std::vector<zeebulator::HleRuntime::HleFunction> unknown_0x01030766_methods(
+      40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
+  unknown_0x01030766_methods[2] = [&cpu, &build_self_propagating_stub](zeebulator::IArmCore& core) {
+    uint32_t cls_id = core.GetRegister(zeebulator::kR1);
+    uint32_t ppobj = core.GetRegister(zeebulator::kR2);
+    if (cls_id != 0x0101eb0b) {
+      core.SetRegister(zeebulator::kR0, 1);  // EFAILED-ish: unknown class
+      return;
+    }
+    if (ppobj != 0) cpu.GetMemory().Write32(ppobj, build_self_propagating_stub());
+    core.SetRegister(zeebulator::kR0, 0);
+  };
+  unknown_0x01030766_methods[3] = [&cpu, &build_self_propagating_stub](zeebulator::IArmCore& core) {
+    uint32_t ppout = core.GetRegister(zeebulator::kR1);
+    if (ppout != 0) cpu.GetMemory().Write32(ppout, build_self_propagating_stub());
+    core.SetRegister(zeebulator::kR0, 0);
+  };
+  uint32_t unknown_0x01030766_obj = zeebulator::BuildInterfaceObject(
+      cpu.GetMemory(), hle, /*vtable_address=*/0x80044000, /*object_address=*/0x80045000,
+      unknown_0x01030766_methods);
+  shell_hle.RegisterInstance(0x01030766, unknown_0x01030766_obj);
   media_hle.Build(/*vtable=*/0x8000B000);
 
   auto& mem = cpu.GetMemory();

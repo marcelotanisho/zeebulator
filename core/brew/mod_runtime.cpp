@@ -73,14 +73,17 @@ void ModRuntime::SetFifthContextObject(uint32_t object_ptr) {
 
 void ModRuntime::SetContextAddress(uint32_t context_address) {
   context_address_ = context_address;
-  // The new address hasn't had any of the five fields written to it
-  // yet, so re-prime all of them rather than leaving it looking like a
-  // stale/foreign block whose fields all happen to read as zero.
+  // Re-prime the two confirmed-real OS-provided fields (real code
+  // doesn't construct its own Shell/IDisplay) onto the new address...
   shell_pending_ = true;
   display_pending_ = true;
-  third_pending_ = true;
-  fourth_pending_ = true;
-  fifth_pending_ = true;
+  // ...but deliberately leave the third/fourth/fifth placeholders
+  // un-primed here -- see this method's doc comment in mod_runtime.h
+  // for why (the fifth field doubles as a real "already initialized"
+  // gate real code checks before running its own real construction).
+  third_pending_ = false;
+  fourth_pending_ = false;
+  fifth_pending_ = false;
 }
 
 uint32_t ModRuntime::Allocate(uint32_t size) {

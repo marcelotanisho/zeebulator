@@ -5008,3 +5008,93 @@ context fields (+0x28, +0x2c) still carry placeholder relative-vtable
 stubs rather than confirmed real objects -- worth revisiting once
 real code is seen calling through them for real, now that whatever it
 writes there will actually stick.
+
+---
+
+**Kept pulling on the same thread and landed two more real fixes in
+the same round -- Peggle now runs past its own first ten ticks and
+into genuinely new code before hitting its next frontier.**
+
+With the app-context fix above live, Peggle's real construction chain
+(`peggle.mod 0x105890`/`0x107d0c`/`0x135468`/`0x10a8e0`) now actually
+executes end to end for the first time -- but immediately exposed a
+second problem, this time triggered *by* real code finally running far
+enough to matter:
+
+1. **`SetContextAddress` was re-priming fields real code needs to see
+   as zero.** The fifth context field (`+0x28`) doubles as the real
+   "already initialized" gate the construction chain checks before
+   running -- confirmed directly: `peggle.mod 0x135470` reads offset 40
+   decimal, which is exactly `+0x28`. Re-priming it with this
+   codebase's own placeholder (as the previous fix did, to keep the
+   struct fully populated on the new address) made real code believe
+   construction had already happened, so it silently skipped its own
+   real constructor -- freezing `+0x24`/`+0x28`/`+0x2c` at fake
+   placeholders forever instead of real objects. Fixed: `SetContextAddress`
+   now only re-primes the two confirmed OS-provided fields
+   (Shell/Display); the three placeholder fields are left untouched on
+   the new address so real code's own construction can run the first
+   time it's actually needed.
+2. **The real construction chain, once unblocked, immediately hit a
+   second real gap**: `peggle.mod 0x1099e0-0x1099f8` calls
+   `ISHELL_CreateInstance(shell, 0x0101eb0b, &ppObj)` -- the exact real,
+   shared PopCap/Zeebo SDK class this project fully reverse-engineered
+   several rounds ago (byte-identical code confirmed in Zuma's Revenge's
+   `zumar.mod` too) and built a dedicated self-propagating stub shape
+   for (`build_self_propagating_stub`'s own slot 4), but never actually
+   registered as a real `CreateInstance` target. Unregistered classes
+   fail without writing `*ppObj`, and real code here doesn't check the
+   return value -- it dereferences whatever garbage was already on the
+   stack, landing on a null function pointer. Fixed with one line:
+   `shell_hle.RegisterInstance(0x0101eb0b, build_self_propagating_stub())`.
+
+**That combination unblocked a third, until-now-invisible real gap**:
+`unknown_0x01030766_obj` (a generic all-stub scaffold since it was
+first found, identity still unconfirmed) turned out to have two real,
+confirmed call sites once code ran this far -- slot 2
+(`peggle.mod 0x1099e0-0x1099f8`) is itself another real
+`ISHELL_CreateInstance`-shaped call, always requesting `0x0101eb0b`
+again (the same class through a second real path); slot 3
+(`peggle.mod 0x109a98-0x109aac`) is a real, confirmed `(this, &ppOut)`
+single-out-param call -- the same "QueryInterface-child" shape
+`build_self_propagating_stub`'s own slots 2/3 already implement. Both
+slots now forward for real instead of returning success while silently
+leaving the out-param unwritten (the previous generic-stub behavior,
+which is what let real code dereference garbage and crash both times).
+
+**Verified against real Peggle**: execution now sails cleanly through
+all ten traced ticks (previously: crashed inside tick 0 every time,
+even after the first fix above) with real, non-placeholder objects
+visible in the context fields (`+0x24`/`+0x28`/`+0x2c`/`+0x20` all read
+back genuine, distinct heap addresses instead of this codebase's own
+fixed placeholders), and reaches a fourth, new, narrower frontier a bit
+past tick 9: a real per-slot array constructor
+(`peggle.mod 0x108a90`-area) passes its own not-yet-populated field
+into a construction trampoline as `this`, which this log hasn't traced
+to a root cause yet -- a fresh, well-characterized next thread,
+deliberately not chased further after landing three real fixes already
+this round.
+
+**Honest, non-obvious side effect worth recording**: Double Dragon's
+own behavior changed too. It still does everything it did before
+(reaches the event loop, simulates a download-complete notification,
+holds simulated button presses) -- but with `SetContextAddress` no
+longer masking the third/fourth/fifth fields with placeholders, it now
+runs measurably further afterward and hits its own new, previously
+unseen static-base table gap (offset `0x1b4`, a 20th real slot beyond
+every one this project has mapped so far) instead of settling into a
+stable steady state the way it did on every commit before this round
+(confirmed directly: re-ran the pre-this-round commit for 25 seconds,
+double the window that produced the new gap on the fixed build, and it
+never moves past its previous steady state). Not a regression -- Double
+Dragon does strictly more than before, and stops at a new, legitimate
+frontier of the same kind this whole project has always worked through
+-- but worth naming explicitly since "no regression" claims in this log
+should mean "verified identical or better," not "didn't check."
+
+291/291 tests pass (unchanged -- this round's fixes live entirely in
+already-tested `ModRuntime` behavior plus `tools/game_probe.cpp` scaffold
+wiring). `git diff --stat`: `core/brew/mod_runtime.{h,cpp}`,
+`tools/game_probe.cpp` only; all temporary per-tick context-field-dump
+and targeted PC-trace instrumentation added while tracing this round
+reverted.

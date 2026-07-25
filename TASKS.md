@@ -1701,6 +1701,35 @@ playable start-to-finish at full speed, standalone build.
       (`core/brew/mod_runtime.{h,cpp}`), not dev-tool scaffolding, and
       is general — not Peggle-specific. 2 new tests; 291/291 tests
       pass. See PHASE8_LOG.md.
+      **Two more real fixes landed the same round.** The app-context
+      fix above had an unintended side effect: `SetContextAddress` was
+      re-priming the fifth field (`+0x28`), which real code also uses
+      as its "already constructed" gate (confirmed: `peggle.mod
+      0x135470` reads exactly that offset) — so real construction kept
+      getting silently skipped. Fixed by only re-priming the two
+      confirmed OS fields (Shell/Display), leaving the three
+      placeholder fields untouched so real code's own constructor can
+      run. That unblocked a second real gap: `ISHELL_CreateInstance(
+      shell, 0x0101eb0b, ...)` — the shared PopCap/Zeebo SDK class this
+      project fully reverse-engineered rounds ago but never actually
+      registered — was failing silently and leaving real code to
+      dereference garbage. Fixed with one `RegisterInstance` call. That
+      in turn exposed a third gap in `unknown_0x01030766_obj` (a
+      generic stub since it was first found): both its slot 2
+      (another real `CreateInstance(0x0101eb0b, ...)` call) and slot 3
+      (a real `(this, &ppOut)` call) needed real forwarding instead of
+      silently leaving out-params unwritten. **Verified against real
+      Peggle**: execution now sails through all ten traced ticks with
+      genuine, non-placeholder objects visible in every context field,
+      reaching a fourth, new, narrower frontier past tick 9 (not yet
+      root-caused — a fresh thread for next time). **Honest side
+      note**: Double Dragon now also runs measurably further than
+      before (verified: the pre-this-round build never progresses past
+      its steady state even given twice the run time) and hits its own
+      new static-base-table gap — not a regression, since everything
+      it did before still works, but worth naming since it changes
+      DD's own next milestone too. 291/291 tests pass unchanged. See
+      PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core
