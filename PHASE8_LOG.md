@@ -5192,3 +5192,65 @@ the same way it has all session: find the real call shape, decide
 honestly whether there's enough evidence to implement it for real or
 only enough to stop it from crashing, and move on to whatever that
 unblocks.
+
+---
+
+**Followed Double Dragon's newly-unblocked run further and confirmed a
+genuine first: it draws real, correct on-screen content -- but couldn't
+get a clean live visual confirmation in this environment, and that
+distinction is worth recording precisely rather than glossing over.**
+
+Temporary instrumentation (reverted) in `IDisplayHle::DrawText`/
+`DrawRect`/`Update` confirmed real code now calls all three, for the
+first time in this project's whole history with this title: a real
+full-screen `DrawRect` (`rect=NULL`, the documented "fill the whole
+destination" case) followed by multiple real `DrawText` calls, all with
+a real, non-default color (`current_rgbval_` confirmed non-zero,
+matching real white text/background), landing in the real framebuffer
+-- verified directly by reading `framebuffer_` itself (not just trusting
+the draw calls happened): every sampled pixel across the buffer reads
+`0xffff` (RGB565 white), and a full-buffer scan found zero black pixels
+out of all 307,200.
+
+**Tried to confirm this visually and couldn't, despite real effort.** A
+completely synthetic test -- pushing solid-red frames through the exact
+same `Sdl2Backend::PushVideoFrame` path immediately after window
+creation, before any real game code runs -- rendered correctly and was
+confirmed via screenshot (both a compositor screenshot and a raw `xwd`
+X11 window dump). But real Double Dragon's own white content, verified
+correct at the pixel-buffer level and pushed through that identical
+code path, consistently showed as a black window in every capture
+attempted -- across `SDL_RENDERER_ACCELERATED` and `_SOFTWARE`, with
+and without the `SDL_WINDOW_OPENGL` window flag, and with the
+screenshot deliberately timed to land after confirmed real draw calls
+(watching the process's own stderr for the first real `DrawText` before
+capturing). Every `SDL` call in the video path (`UpdateTexture`,
+`RenderClear`, `RenderCopy`) reports success with an empty
+`SDL_GetError()`.
+
+**Deliberately not claiming a code fix here.** The synthetic-red test is
+strong evidence the actual `Zeebulator` rendering pipeline is correct;
+what's inconclusive is only the live, screenshot-based visual
+confirmation in this specific sandboxed/remote test environment, which
+may have its own window-compositor quirks (e.g. around focus-stealing
+via `wmctrl`, or how a virtual display handles a window that stops
+being actively redrawn) unrelated to this codebase. Guessing at a
+"fix" for a problem that might not exist in a normal desktop
+environment would risk exactly the kind of unconfirmed, silently-wrong
+change this project's standing rule exists to prevent. Worth revisiting
+with better tooling (e.g. a video capture across the whole run, or
+testing on a non-virtualized display) before concluding anything more.
+
+**Separately, honestly worth noting**: real code draws exactly once
+(one `DrawRect` + a burst of `DrawText` calls, then nothing) across the
+whole traced run -- it doesn't appear to redraw on a timer or animate
+further. Not yet determined whether that's correct real behavior for a
+static screen at this stage, or a further real gap (e.g. a missing
+per-tick redraw trigger) -- a concrete next question, not a guess
+either way.
+
+All temporary instrumentation reverted (`idisplay.cpp`'s draw/pixel
+logging, `sdl2_backend.cpp`'s SDL error logging, and `game_probe.cpp`'s
+synthetic red-frame test and renderer/window-flag experiments); `git
+diff --stat` clean. 292/292 tests pass (unchanged -- investigation
+only, no functional changes this round).

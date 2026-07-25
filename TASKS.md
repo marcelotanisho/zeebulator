@@ -1761,6 +1761,23 @@ playable start-to-finish at full speed, standalone build.
       point, still cleanly simulating input. No regression on Peggle or
       Super BurgerTime. 1 new test; 292/292 tests pass. See
       PHASE8_LOG.md.
+      **Confirmed a genuine first for this title: real code now draws
+      correct content** (`DrawRect`/`DrawText`/`Update` all firing;
+      verified directly against the framebuffer itself, not just the
+      call sites — every one of 307,200 pixels reads real white
+      content, zero black). Tried hard to get a live visual
+      confirmation (screenshots, a raw X11 `xwd` dump, a synthetic
+      red-frame sanity test that *did* render correctly through the
+      same code path) but couldn't get the real content to show on
+      screen in this sandboxed test environment despite every SDL call
+      reporting success — likely an environment/compositor quirk given
+      the synthetic test proved the actual rendering pipeline correct,
+      but deliberately not guessing a "fix" for something not
+      confirmed broken. Also noted honestly: real code draws exactly
+      once and doesn't redraw afterward in the traced run — not yet
+      determined whether that's correct or a further gap. Investigation
+      only, all temporary instrumentation reverted, 292/292 tests pass
+      unchanged. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core
