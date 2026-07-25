@@ -5098,3 +5098,54 @@ wiring). `git diff --stat`: `core/brew/mod_runtime.{h,cpp}`,
 `tools/game_probe.cpp` only; all temporary per-tick context-field-dump
 and targeted PC-trace instrumentation added while tracing this round
 reverted.
+
+---
+
+**Chased the tick-9 frontier above and found a genuinely confusing
+shape -- real code appears to read its own field before writing it,
+even within that field's own constructor. Investigation only; this one
+isn't understood well enough to fix yet.**
+
+Traced the crash precisely with temporary, reverted register/memory
+dumps at `peggle.mod 0x108860` and `0x108a90` (the two sibling
+per-slot "ensure constructed" functions this log has referenced
+before). Both share the same real address arithmetic: `arr =
+this[+12]`, `elem = arr + idx*4`, and each maintains its own field at
+a fixed offset from `elem` (`0x108860` owns `elem+0xa0`; `0x108a90`
+owns `elem+4`) gated by "already non-zero?" at function entry.
+
+`0x108a90`'s own gate (`elem+4 == 0`) is what's failing -- confirmed
+live, for every index 0-6, at the point this trace fired. That's
+expected; nothing has constructed it yet. But **the crash comes from
+the *same* function, past its own gate, re-reading the *same*
+still-zero `elem+4` field and passing it as `this` into a real
+construction trampoline (`peggle.mod 0x105b5c`)** -- confirmed by
+grepping the function body for every `str` instruction between the
+gate check and the crash site: only three stack writes (`sp`/`sp+4`/
+`sp+8`), nothing touches `elem+4` at all. The trampoline itself
+(`0x105b5c`) unconditionally dereferences its first argument with no
+null check (`ldr r2,[r0]`, no `cmp`/branch beforehand) -- real RVCT
+code that tolerated a null "this" would guard it, so this isn't a
+"null is a valid sentinel" pattern; real code is expected to supply a
+real, already-non-null pointer here.
+
+**Best current read**: this specific call inside `0x108a90` isn't
+meant to run on this field's *own* first construction pass at all --
+some other, not-yet-identified real event or call is expected to have
+populated `elem+4` *before* `0x108a90` ever reaches this point for a
+given index, and whatever real trigger does that hasn't happened in
+this emulated run. This is a different shape than every previous
+"ambient context field never populated" gap this project has fixed --
+those were single fields read once with a clear owning constructor;
+this one reads and reuses its own field mid-function, in the same
+constructor that's supposed to populate it, which doesn't fit that
+pattern cleanly. Deliberately not guessing a fix here per this
+project's standing rule -- needs a dedicated tracing pass (most likely:
+find what real event/call path is supposed to run before `0x108a90`,
+by searching for what other real code reads or writes `elem+4`
+elsewhere in the binary, the same technique that found this round's
+three real fixes) rather than patching this call site blind.
+
+All temporary instrumentation reverted; `git diff --stat` clean --
+investigation only this round, no functional changes. 291/291 tests
+pass (unchanged).

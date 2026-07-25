@@ -1730,6 +1730,23 @@ playable start-to-finish at full speed, standalone build.
       it did before still works, but worth naming since it changes
       DD's own next milestone too. 291/291 tests pass unchanged. See
       PHASE8_LOG.md.
+      **Chased the tick-9 frontier and found a genuinely confusing
+      shape, not yet fixed.** The crashing function (`peggle.mod
+      0x108a90`) reads its own not-yet-constructed field a second time,
+      past its own "already constructed?" gate, and passes the
+      still-zero result as `this` into a real construction trampoline
+      that unconditionally dereferences it (no null guard, so this
+      isn't a tolerated sentinel). Grepped every store in the function
+      body between the gate and the crash — nothing writes that field.
+      Best read: some other, not-yet-identified real event is expected
+      to populate it *before* this function ever reaches this point,
+      and that trigger hasn't happened in this emulated run — a
+      different shape than every previous "ambient field never
+      populated" gap this project has fixed (those had one clear owning
+      constructor; this one re-reads its own field mid-construction).
+      Deliberately not guessing a fix. Investigation only, all temporary
+      instrumentation reverted, 291/291 tests pass unchanged. See
+      PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core
