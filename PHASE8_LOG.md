@@ -5315,3 +5315,23 @@ All temporary instrumentation (the watchpoint globals in
 `tools/game_probe.cpp`) reverted; `git diff --stat` clean --
 investigation only this round, no functional changes. 292/292 tests
 pass (unchanged).
+
+**Immediate follow-up, same round: read Double Dragon's own slot-43
+call site (`ddragonz.mod 0x10a1f0-0x10a3b0`) end to end to see if
+cross-referencing it would make Peggle's specific case safe to guess
+after all -- it doesn't, and that itself is useful confirmation.**
+Double Dragon's check is `cmp r0,#0` (0 = success), not Peggle's
+`cmp r0,#0x23`, and its query argument (`r1=[r4+16]`, a real
+data-driven value) differs from Peggle's constant `r1=0` -- consistent
+with slot 43 being a generic, multi-purpose "query an indexed
+property" method whose valid return codes depend entirely on what's
+being queried, not a fixed contract either title's evidence alone
+could pin down. Confirmed further by reading each title's own success
+path: Double Dragon's continues into a completely unrelated real
+subsystem (a second vtable query feeding `ISHELL_CreateInstance`, then
+sprite/health-bar-style byte-array arithmetic), while Peggle's builds
+formatted strings. Two genuinely different real features hanging off
+the same slot -- reinforcing rather than narrowing the earlier
+conclusion that guessing a universal behavior here would be guessing,
+not reconstructing. No further action taken; read-only disassembly
+only, nothing to revert.
