@@ -5149,3 +5149,46 @@ three real fixes) rather than patching this call site blind.
 All temporary instrumentation reverted; `git diff --stat` clean --
 investigation only this round, no functional changes. 291/291 tests
 pass (unchanged).
+
+---
+
+**Pivoted to Double Dragon's own new frontier and closed it: a
+twentieth real static-base table slot, `0x1b4`.**
+
+Disassembled the crash site directly (`ddragonz.mod` `0x11f870`,
+reached from a real per-array-element initialization function): the
+call passes `(dest=this+0x4234, count=<a real int16 read from data>,
+cap=4, ctor_fn=<a real code pointer>)` across `r0`-`r3` -- a shape
+matching a compiler-generated "construct N array elements via a given
+constructor" RVCT/EABI runtime helper (this project's static-base
+table already hosts several plain C-runtime-style utilities at other
+slots -- MALLOC, MEMCPY, MEMSET, STRLEN, SPRINTF, REALLOC -- so another
+compiler-emitted helper living here fits the established pattern).
+Chased `ctor_fn`'s own address to look for an element-size argument
+that would make real construction implementable, but the real ABI
+convention here doesn't expose one to the caller in any register --
+without knowing the real per-element stride, actually constructing
+elements would mean guessing an offset and silently writing to the
+wrong addresses, which is worse than doing nothing. Registered as a
+safe no-op instead, the same treatment already given every other
+under-evidenced slot in this table (offsets `0x40`, `0xc`, `0xd0`,
+`0xdc`, `0x184`).
+
+**Verified against real Double Dragon**: the crash is completely gone.
+Execution now runs at least 20 seconds past the point that used to
+stop it, still cleanly simulating a download-complete notification and
+repeated button-hold input with no new warnings. No regression on
+Peggle or Super BurgerTime (both re-verified to stop at exactly the
+same points as before -- Peggle's tick-9 field-read-before-write gap
+from the entry above, Super BurgerTime's known 68000-emulation wall).
+1 new test (`UnknownSlot0x1b4DoesNotCrash`); 292/292 tests pass.
+
+**Significance**: like the address-collision bug and the app-context
+fix earlier this session, this lives in real, permanent HLE code
+(`core/brew/mod_runtime.{h,cpp}`), and like every other slot in this
+table, it's general infrastructure, not Double-Dragon-specific --
+confirming this project's static-base table mechanism keeps paying off
+the same way it has all session: find the real call shape, decide
+honestly whether there's enough evidence to implement it for real or
+only enough to stop it from crashing, and move on to whatever that
+unblocks.

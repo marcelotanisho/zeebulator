@@ -24,6 +24,7 @@ constexpr uint32_t kGetAppContextSlotOffset = 0xc0;
 constexpr uint32_t kDbgPrintfSlotOffset = 0x9c;
 constexpr uint32_t kMemcpyAliasSlotOffset = 0x44;
 constexpr uint32_t kReallocSlotOffset = 0x74;
+constexpr uint32_t kUnknownSlotOffset0x1b4 = 0x1b4;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
@@ -144,6 +145,23 @@ TEST(ModRuntime, FreeSlotDoesNotCrash) {
 
   uint32_t free_fn = cpu.GetMemory().Read32(kTableAddress + kFreeSlotOffset);
   EXPECT_NO_FATAL_FAILURE(hle.CallArmFunction(free_fn, /*ptr=*/kHeapRegion));
+}
+
+TEST(ModRuntime, UnknownSlot0x1b4DoesNotCrash) {
+  // Real disassembly (Double Dragon, TASKS.md Phase 8) shows this slot
+  // called as `(dest, count, cap=4, ctor_fn)` -- a shape matching a
+  // compiler-generated "construct N array elements" RVCT/EABI helper,
+  // but without a visible element-stride argument there's no safe way
+  // to implement real construction without guessing (see mod_runtime.h's
+  // doc comment) -- registered as a safe no-op instead.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+
+  uint32_t fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x1b4);
+  EXPECT_NO_FATAL_FAILURE(
+      hle.CallArmFunction(fn, /*dest=*/kHeapRegion, /*count=*/4, /*cap=*/4));
 }
 
 TEST(ModRuntime, DbgPrintfSlotDoesNotCrash) {

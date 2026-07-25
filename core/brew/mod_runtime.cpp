@@ -29,6 +29,7 @@ constexpr uint32_t kUnknownSlotOffset0xc = 0xc;
 constexpr uint32_t kUnknownSlotOffset0xd0 = 0xd0;
 constexpr uint32_t kUnknownSlotOffset0xdc = 0xdc;
 constexpr uint32_t kUnknownSlotOffset0x184 = 0x184;
+constexpr uint32_t kUnknownSlotOffset0x1b4 = 0x1b4;
 // Offsets within the "app context" struct GetAppContext returns where
 // real call sites read the current app's IShell/IDisplay pointers.
 constexpr uint32_t kAppContextShellOffset = 12;
@@ -377,6 +378,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t unknown_0xd0_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0xdc_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0x184_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  uint32_t unknown_0x1b4_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemcpyAliasSlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
@@ -396,6 +398,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   memory_.Write32(table_address + kUnknownSlotOffset0xd0, unknown_0xd0_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0xdc, unknown_0xdc_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x184, unknown_0x184_fn);
+  memory_.Write32(table_address + kUnknownSlotOffset0x1b4, unknown_0x1b4_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 

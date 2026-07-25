@@ -293,7 +293,27 @@ namespace zeebulator {
 // data) to identify -- registered as a safe no-op, same rationale as
 // every other unidentified slot above.
 //
-// Only these nineteen table slots are confirmed by real disassembly
+// A twentieth slot, offset 0x1b4, was found in Double Dragon once the
+// app-context fix (TASKS.md Phase 8, this same investigation --
+// SetContextAddress no longer masking the third/fourth/fifth context
+// fields with placeholders) let it run measurably further than any
+// commit before that fix, well past its previous steady state (`ddragonz.
+// mod` offset 0x11f870, reached from a real per-array-element
+// initialization loop: two sibling loops immediately before/after this
+// call process consecutive 4-byte-stride array entries at fixed offsets
+// `+0x3000`/`+0x4000` off the same base). Its one real call site passes
+// `(dest=this+0x4234, count=<a real int16 field read from data>, cap=4,
+// ctor_fn=<a real code pointer>)` in AAPCS r0-r3 -- a shape matching a
+// compiler-generated "construct N array elements via a given
+// constructor" RVCT/EABI runtime helper, but without a visible element-
+// stride argument there's no way to implement real construction without
+// guessing a stride and silently writing to the wrong offsets -- worse
+// than a no-op, per this project's standing rule against guessing
+// unconfirmed behavior. Registered as a safe no-op, same rationale as
+// every other unidentified slot above; revisit with a real element size
+// once `ctor_fn`'s own body is understood.
+//
+// Only these twenty table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report

@@ -1747,6 +1747,20 @@ playable start-to-finish at full speed, standalone build.
       Deliberately not guessing a fix. Investigation only, all temporary
       instrumentation reverted, 291/291 tests pass unchanged. See
       PHASE8_LOG.md.
+      **Pivoted to Double Dragon's own new gap (the side effect noted
+      above) and closed it: a twentieth real static-base table slot,
+      `0x1b4`.** Real call shape `(dest, count, cap=4, ctor_fn)` matches
+      a compiler-generated "construct N array elements" RVCT/EABI
+      helper — but with no element-stride argument exposed anywhere in
+      the real calling convention, implementing real construction would
+      mean guessing an offset and silently writing to the wrong
+      addresses. Registered as a safe no-op instead, the same treatment
+      already given every other under-evidenced slot in this table.
+      **Verified against real Double Dragon**: the crash is gone;
+      execution now runs at least 20 seconds past the previous stopping
+      point, still cleanly simulating input. No regression on Peggle or
+      Super BurgerTime. 1 new test; 292/292 tests pass. See
+      PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core
