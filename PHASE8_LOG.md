@@ -5254,3 +5254,64 @@ logging, `sdl2_backend.cpp`'s SDL error logging, and `game_probe.cpp`'s
 synthetic red-frame test and renderer/window-flag experiments); `git
 diff --stat` clean. 292/292 tests pass (unchanged -- investigation
 only, no functional changes this round).
+
+---
+
+**Traced Peggle's tick-9 field-read-before-write puzzle (see the entry
+several rounds back) all the way to its real root cause, and it turns
+out to be the exact same unconfirmed `IShell` vtable slot Double
+Dragon's own investigation hit months ago -- now cross-confirmed from
+a second, independent title.**
+
+Used a live `Memory::Write8` watchpoint (the same technique from
+earlier address-collision work, temporary and reverted) on the exact
+`elem+4` address `peggle.mod 0x108a90` reads and immediately misuses as
+`this`. Found real writes -- but both zero it (`peggle.mod 0x1087f8`,
+a genuine 39-slot bulk-reset loop that zeroes both this field and its
+sibling `+0xec`, and `peggle.mod 0x1020a4`, a generic "zero the output
+parameter defensively before attempting real work" pattern inside a
+lookup/construct helper). Traced that helper (`0x102078`) forward: it
+validates its inputs, defensively zeros `*ppOut`, then calls a second
+helper (`0x102148`) that only proceeds to real construction if a
+specific vtable call returns *exactly* `35` -- and that vtable call
+resolves (confirmed live: `this`'s own `[+12]` field reads
+`0x80001000`, this codebase's own `IShell` object) to **`IShell`
+vtable byte offset `0xac`, slot 43** -- the identical slot Double
+Dragon's own earlier investigation found and left as an intentionally
+unconfirmed safe stub (`core/brew/ishell.cpp`'s own doc comment:
+"slot 43 -- the one real call site found so far"). Now there are two,
+independently found, in two different titles.
+
+**Why Double Dragon's own call site survived a `0`-returning stub but
+Peggle's doesn't**: traced the caller chain one level further and
+found `peggle.mod 0x108b48`'s own construction attempt (`0x102078`)
+captures its result into `r6` -- and then never checks it. `r6` gets
+used as nothing but a `DbgPrintf` log argument two instructions later;
+real code proceeds unconditionally to dereference `elem+4` right after,
+trusting construction always succeeds. Double Dragon's own call site,
+by contrast, evidently tolerates the stubbed `0` gracefully (this
+project's own log already records that title reaching a fully clean,
+warning-free run after the same stub was added) -- the same real slot,
+two different real callers, two different real tolerances for failure.
+
+**Looked hard at what it would take to actually implement slot 43 for
+real, and it's genuinely more than this round can safely guess.**
+Real code past the `35`-check reads two more fields out of the same
+output struct (`ppOut[0]`, `ppOut[4]`) and, depending on their values,
+either builds a formatted string through several more real vtable
+calls (offsets `0x14c`/`0x150` on yet another object) or branches into
+a whole separate state machine keyed on `ppOut[0]` being `0`, `1`, or
+matching one of two more PC-relative literal constants -- real,
+substantial logic, not a thin one-shot call. Guessing a return value
+and struct contents here risks exactly the failure mode this project's
+standing rule exists to prevent: not a clean stop, but a *silent wrong*
+result feeding real string-building code. Left unfixed and undocumented
+further than this -- a concrete, well-evidenced next target (ideally
+with a real BREW MP `IShell` header reference, which no source
+available to this project currently provides) rather than a guess.
+
+All temporary instrumentation (the watchpoint globals in
+`core/memory/memory.{h,cpp}`, the targeted `pc==`-gated prints in
+`tools/game_probe.cpp`) reverted; `git diff --stat` clean --
+investigation only this round, no functional changes. 292/292 tests
+pass (unchanged).

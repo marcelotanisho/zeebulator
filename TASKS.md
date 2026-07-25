@@ -1747,6 +1747,27 @@ playable start-to-finish at full speed, standalone build.
       Deliberately not guessing a fix. Investigation only, all temporary
       instrumentation reverted, 291/291 tests pass unchanged. See
       PHASE8_LOG.md.
+      **Traced that field to its real root cause with a live write
+      watchpoint, and it's the exact same unconfirmed `IShell` slot
+      Double Dragon's own investigation hit independently, months ago.**
+      The field is genuinely written (zeroed, by a real 39-slot bulk-
+      reset loop and a defensive "clear the out-param first" pattern),
+      then real construction only proceeds if a specific vtable call
+      returns exactly `35` — that call resolves to `IShell` vtable byte
+      offset `0xac`, slot 43, already flagged in `core/brew/ishell.cpp`
+      as "the one real call site found so far" from Double Dragon's own
+      history. Two independent titles, same slot. Double Dragon's own
+      caller tolerates the stubbed `0` gracefully; Peggle's doesn't —
+      traced one level further and found it never checks the
+      construction result at all, trusting it unconditionally. Looked
+      at what real slot 43 would need to do for real and it's
+      substantial (a multi-branch state machine reading two more struct
+      fields, building formatted strings through further real vtable
+      calls) — genuinely more than safe to guess without a real BREW MP
+      `IShell` header this project doesn't have access to. Left
+      unfixed, precisely documented instead. Investigation only, all
+      temporary instrumentation reverted, 292/292 tests pass unchanged.
+      See PHASE8_LOG.md.
       **Pivoted to Double Dragon's own new gap (the side effect noted
       above) and closed it: a twentieth real static-base table slot,
       `0x1b4`.** Real call shape `(dest, count, cap=4, ctor_fn)` matches
