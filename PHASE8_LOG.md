@@ -4922,3 +4922,89 @@ rounds of targeted `pc==`-gated register prints) reverted; `git diff
 --stat` clean -- investigation only this round, no functional changes.
 289/289 tests pass (unaffected, all changes were confined to reverted
 `tools/game_probe.cpp` instrumentation).
+
+---
+
+**Found the real write site, and fixed the mismatch -- Peggle now runs
+indefinitely past what used to be a hard crash.**
+
+The grep the previous entry asked for turned up the answer directly:
+`str r0,[r4,#36]` at `peggle.mod` `0x135488`, two instructions after
+the `bl 0x10be9c` constructor call inside the SAME gated init function
+(`0x135468`) already traced -- writing offset `0x24` (36 decimal) on
+`r4`, its own "this". Confirmed live: `tools/game_probe.cpp` already
+prints `applet=0x%08x` right after `IModule::CreateInstance` returns,
+and it's **exactly** `0x80300024` -- the identical address the whole
+message-dispatch/constructor chain operates on. Real code writes its
+own constructed sub-objects directly onto fields `+0x24`/`+0x28`/`+0x2c`
+of the real `IApplet*` `CreateInstance` hands back -- `GetAppContext`'s
+"ambient context struct" isn't a separate OS-level thing at all in this
+build, it's the app's own instance.
+
+**This also explains why the crash never showed up as a missing
+real write**: this codebase's own `ModRuntime::GetAppContextImpl` was
+never given a chance to see it. `context_address_` was a separate,
+permanently fixed address (`kFourthContextObject`,
+`tools/game_probe.cpp`), unrelated to `applet_ptr`, so no real write
+into `applet_ptr+0x24` could ever reach what `GetAppContext` returns.
+And even fixing *that* address mismatch alone wouldn't have been
+enough: `GetAppContextImpl` unconditionally rewrote all five context
+fields on *every single call* (a deliberate original design choice, so
+host-side `Set*Instance()` calls always took effect regardless of
+ordering against `Install()`) -- which would immediately clobber real
+code's own write on the very next `GetAppContext` call, since real
+per-tick code (`peggle.mod` `0x106d34`) calls it every tick.
+
+**Fixed both halves.** `ModRuntime` gained `SetContextAddress()`
+(`core/brew/mod_runtime.{h,cpp}`) to redirect `context_address_` after
+construction -- necessary because `applet_ptr` isn't known until
+`CreateInstance` returns, well after `ModRuntime::Install()` must
+already have run. `GetAppContextImpl` now only (re-)writes a field when
+its `Set*()` call is actually pending (a `bool foo_pending_` per
+field, cleared once written), instead of unconditionally on every
+call -- every current `Set*Instance()`/`Set*ContextObject()` call site
+in this codebase already happens once, up front, before any real ARM
+code runs, so host-driven setup behaves identically; the only change is
+that real code's own subsequent writes into the third/fourth/fifth
+fields now survive instead of being silently reverted. `tools/
+game_probe.cpp` calls `mod_runtime.SetContextAddress(applet_ptr)`
+immediately after confirming `CreateInstance` succeeded.
+
+**Verified against real Peggle, and the result is dramatic**: the
+`0x108e50` crash is completely gone. Execution now reaches and prints
+**"Reached the event loop with no unhandled instruction! Window will
+stay open"** -- the same milestone message Double Dragon and Super
+BurgerTime already reach -- and sustains **at least 10 real ticks**
+(previously: a hard crash inside tick 0, then tick 2 after last
+round's fix) with zero warnings, zero thrown exceptions, zero
+"wandered outside module." By tick 5 it settles into a stable,
+byte-identical repeating 11-line per-tick HLE call sequence -- a real,
+if unglamorous, steady idle state (the same category already
+documented for other titles at this stage), not a new crash. Traced
+`DrawText`/`DrawRect`/`Update` with temporary instrumentation
+(reverted): still zero real draw calls in this run, so nothing new is
+visible on screen yet -- honest, unglamorous, but a categorically
+different and far more stable place than every previous round left
+Peggle in.
+
+**No regression, verified directly**: Double Dragon still reaches the
+event loop and its simulated button-hold input still fires normally;
+Super BurgerTime still reaches the event loop and settles into the
+same known small repeating loop as before (the pre-existing, separately
+tracked "needs real 68000 emulation" blocker, unchanged). 2 new tests
+(`RealCodeWritingAContextFieldDirectlySurvivesASubsequentGetAppContextCall`,
+`SetContextAddressRedirectsGetAppContextToTheNewAddress`); 291/291
+tests pass. `git diff --stat`: `core/brew/mod_runtime.{h,cpp}`,
+`tools/game_probe.cpp`, `tests/mod_runtime_test.cpp` only -- all
+temporary `idisplay.cpp` draw-call instrumentation reverted.
+
+**Significance**: unlike the address-collision bug earlier this
+session, this fix lives in real, permanent HLE code
+(`core/brew/mod_runtime.cpp`), not just dev-tool scaffolding -- and
+it's a genuinely general fix (any real code, in any title, that treats
+an unidentified `GetAppContext` field as writable data will now have
+its writes respected), not a Peggle-specific patch. The remaining
+context fields (+0x28, +0x2c) still carry placeholder relative-vtable
+stubs rather than confirmed real objects -- worth revisiting once
+real code is seen calling through them for real, now that whatever it
+writes there will actually stick.

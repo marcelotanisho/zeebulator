@@ -1674,6 +1674,33 @@ playable start-to-finish at full speed, standalone build.
       before wiring a real fix rather than guessing one. Investigation
       only, all temporary instrumentation reverted, 289/289 tests pass
       unchanged. See PHASE8_LOG.md.
+      **Found the real write site and fixed it — the crash is gone for
+      good.** Real code writes its constructed sub-objects directly
+      onto fields `+0x24`/`+0x28`/`+0x2c` of the real `IApplet*`
+      `CreateInstance` returns (`peggle.mod` `0x135488`, confirmed:
+      that address is exactly `applet_ptr`, already printed by this
+      codebase's own harness) — `GetAppContext`'s "ambient context"
+      isn't a separate OS struct in this build, it's the app's own
+      instance. Fixed by adding `ModRuntime::SetContextAddress()`
+      (redirects the context pointer once `applet_ptr` is known, wired
+      in `tools/game_probe.cpp` right after `CreateInstance` succeeds)
+      and changing `GetAppContextImpl` to only rewrite a field when its
+      `Set*()` call is actually pending, rather than unconditionally on
+      every call — the previous unconditional rewrite would have
+      clobbered real code's own write on the very next per-tick
+      `GetAppContext` call regardless. **Verified against real
+      Peggle**: the crash is completely gone; execution now reaches
+      **"Reached the event loop..."** (the same milestone Double Dragon
+      and Super BurgerTime already hit) and sustains at least 10 real
+      ticks, settling into a stable repeating idle loop rather than
+      crashing — still nothing drawn on screen yet (traced and
+      confirmed with temporary, reverted instrumentation), but a
+      categorically more stable state than any previous round reached.
+      No regression on Double Dragon or Super BurgerTime, verified
+      directly. This fix lives in real, permanent HLE code
+      (`core/brew/mod_runtime.{h,cpp}`), not dev-tool scaffolding, and
+      is general — not Peggle-specific. 2 new tests; 291/291 tests
+      pass. See PHASE8_LOG.md.
 - [ ] Validate the HLE against a third real game (Super BurgerTime),
       started after pausing the Peggle-specific investigation above —
       untapped territory, and a useful check that the HLE core

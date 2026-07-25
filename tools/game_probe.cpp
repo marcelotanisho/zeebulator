@@ -1049,6 +1049,16 @@ int main(int argc, char** argv) {
     }
     std::printf("CreateInstance OK, applet=0x%08x HandleEvent=0x%08x\n", applet_ptr,
                 handle_event_fn);
+    // Real code reads/writes the third/fourth/fifth "app context"
+    // fields (see mod_runtime.h) directly on the real IApplet instance
+    // CreateInstance just returned, not on a separate fixed struct --
+    // found tracing Peggle (TASKS.md Phase 8): its own real constructor
+    // chain (peggle.mod 0x105890/0x107d0c/0x135468/0x10a8e0) runs with
+    // `this` == this exact applet_ptr and stores real sub-objects into
+    // its +0x24/+0x28/+0x2c fields. GetAppContext needs to expose this
+    // same address from here on so later real reads of those fields see
+    // what real code itself wrote, instead of an unrelated fixed block.
+    mod_runtime.SetContextAddress(applet_ptr);
 
     // Real AEEAppStart layout, verified against the real AEEAppStart.h/
     // AEERect.h (NOT the same as our own hello_brew/hello_gl test

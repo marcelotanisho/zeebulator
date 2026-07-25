@@ -337,6 +337,17 @@ class ModRuntime {
   // before or after Install().
   void SetFifthContextObject(uint32_t object_ptr);
 
+  // Redirects the offset-0xc0 "get app context" slot to return a
+  // different address than the one passed to the constructor. Found
+  // necessary tracing Peggle (TASKS.md Phase 8): `IModule::CreateInstance`
+  // returns a real, dynamically-malloc'd `IApplet*` (this codebase's own
+  // heap allocator, not a fixed address known up front), and real code
+  // reads/writes the third/fourth/fifth context fields directly *on that
+  // applet instance*, not on a separate fixed struct -- so GetAppContext
+  // needs to expose the applet pointer once it's known, not before. Safe
+  // to call any time; takes effect on the next GetAppContext call.
+  void SetContextAddress(uint32_t context_address);
+
   // Advances the millisecond counter the offset-0xb0 GETUPTIMEMS slot
   // returns. Deterministic and tick-driven (not a real wall-clock read)
   // to match how the rest of the emulator's timing works (see
@@ -381,6 +392,25 @@ class ModRuntime {
   uint32_t fourth_context_object_ = 0;
   uint32_t fifth_context_object_ = 0;
   uint32_t uptime_ms_ = 0;
+
+  // GetAppContextImpl only re-writes a field into the context struct
+  // when its Set*() call is pending (tracked here), rather than on
+  // every single call. Found necessary tracing Peggle (TASKS.md Phase
+  // 8): unconditionally rewriting every field on every call (the
+  // original design, so host-side Set*() calls always took effect
+  // regardless of ordering against Install()) silently clobbered real
+  // code's own direct writes into the third/fourth/fifth fields
+  // (confirmed real -- see the class doc comment) on the very next
+  // GetAppContext call. Since every current Set*() call site in this
+  // codebase happens once, up front, before any real ARM code runs,
+  // "write once, then leave real code's own writes alone" preserves
+  // the original behavior for host-driven setup while no longer
+  // fighting the game's own runtime writes.
+  bool shell_pending_ = false;
+  bool display_pending_ = false;
+  bool third_pending_ = false;
+  bool fourth_pending_ = false;
+  bool fifth_pending_ = false;
 };
 
 }  // namespace zeebulator

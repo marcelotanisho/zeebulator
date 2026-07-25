@@ -46,15 +46,42 @@ ModRuntime::ModRuntime(Memory& memory, HleRuntime& hle, uint32_t heap_region, ui
       heap_end_(heap_region + heap_size),
       context_address_(context_address) {}
 
-void ModRuntime::SetShellInstance(uint32_t shell_ptr) { shell_ptr_ = shell_ptr; }
+void ModRuntime::SetShellInstance(uint32_t shell_ptr) {
+  shell_ptr_ = shell_ptr;
+  shell_pending_ = true;
+}
 
-void ModRuntime::SetDisplayInstance(uint32_t display_ptr) { display_ptr_ = display_ptr; }
+void ModRuntime::SetDisplayInstance(uint32_t display_ptr) {
+  display_ptr_ = display_ptr;
+  display_pending_ = true;
+}
 
-void ModRuntime::SetThirdContextObject(uint32_t object_ptr) { third_context_object_ = object_ptr; }
+void ModRuntime::SetThirdContextObject(uint32_t object_ptr) {
+  third_context_object_ = object_ptr;
+  third_pending_ = true;
+}
 
-void ModRuntime::SetFourthContextObject(uint32_t object_ptr) { fourth_context_object_ = object_ptr; }
+void ModRuntime::SetFourthContextObject(uint32_t object_ptr) {
+  fourth_context_object_ = object_ptr;
+  fourth_pending_ = true;
+}
 
-void ModRuntime::SetFifthContextObject(uint32_t object_ptr) { fifth_context_object_ = object_ptr; }
+void ModRuntime::SetFifthContextObject(uint32_t object_ptr) {
+  fifth_context_object_ = object_ptr;
+  fifth_pending_ = true;
+}
+
+void ModRuntime::SetContextAddress(uint32_t context_address) {
+  context_address_ = context_address;
+  // The new address hasn't had any of the five fields written to it
+  // yet, so re-prime all of them rather than leaving it looking like a
+  // stale/foreign block whose fields all happen to read as zero.
+  shell_pending_ = true;
+  display_pending_ = true;
+  third_pending_ = true;
+  fourth_pending_ = true;
+  fifth_pending_ = true;
+}
 
 uint32_t ModRuntime::Allocate(uint32_t size) {
   uint32_t aligned = (size + 3) & ~3u;  // word-align every allocation
@@ -274,14 +301,33 @@ void ModRuntime::SprintfImpl(IArmCore& core) {
 }
 
 void ModRuntime::GetAppContextImpl(IArmCore& core) {
-  // Written fresh on every call rather than once in Install() so this
-  // works regardless of whether SetShellInstance() is called before or
-  // after Install().
-  memory_.Write32(context_address_ + kAppContextShellOffset, shell_ptr_);
-  memory_.Write32(context_address_ + kAppContextDisplayOffset, display_ptr_);
-  memory_.Write32(context_address_ + kAppContextThirdObjectOffset, third_context_object_);
-  memory_.Write32(context_address_ + kAppContextFourthObjectOffset, fourth_context_object_);
-  memory_.Write32(context_address_ + kAppContextFifthObjectOffset, fifth_context_object_);
+  // Only (re-)written when a Set*() call is actually pending, not on
+  // every call -- see the `*_pending_` members' doc comment in
+  // mod_runtime.h for why: real code writes directly into the
+  // third/fourth/fifth fields (confirmed real, see the class doc
+  // comment), and unconditionally rewriting them here every call would
+  // silently clobber those real writes on the very next GetAppContext
+  // call.
+  if (shell_pending_) {
+    memory_.Write32(context_address_ + kAppContextShellOffset, shell_ptr_);
+    shell_pending_ = false;
+  }
+  if (display_pending_) {
+    memory_.Write32(context_address_ + kAppContextDisplayOffset, display_ptr_);
+    display_pending_ = false;
+  }
+  if (third_pending_) {
+    memory_.Write32(context_address_ + kAppContextThirdObjectOffset, third_context_object_);
+    third_pending_ = false;
+  }
+  if (fourth_pending_) {
+    memory_.Write32(context_address_ + kAppContextFourthObjectOffset, fourth_context_object_);
+    fourth_pending_ = false;
+  }
+  if (fifth_pending_) {
+    memory_.Write32(context_address_ + kAppContextFifthObjectOffset, fifth_context_object_);
+    fifth_pending_ = false;
+  }
   core.SetRegister(kR0, context_address_);
 }
 

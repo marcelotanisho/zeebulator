@@ -209,6 +209,47 @@ TEST(ModRuntime, GetAppContextSlotReturnsFourthObjectAtConfirmedOffset) {
   EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextFourthObjectOffset), kFourthObjectPtr);
 }
 
+TEST(ModRuntime, RealCodeWritingAContextFieldDirectlySurvivesASubsequentGetAppContextCall) {
+  // Regression test for the bug traced tracing Peggle (TASKS.md Phase
+  // 8): real code writes directly into the fourth context field (see
+  // the class doc comment), and GetAppContextImpl used to unconditionally
+  // rewrite all five fields on every call, silently clobbering that real
+  // write the very next time real code called GetAppContext again.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  constexpr uint32_t kFourthObjectPtr = 0x80005000;
+  mod_runtime.SetFourthContextObject(kFourthObjectPtr);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
+
+  uint32_t context = hle.CallArmFunction(get_app_context_fn);
+  constexpr uint32_t kRealObjectPtr = 0x80300024;
+  cpu.GetMemory().Write32(context + kAppContextFourthObjectOffset, kRealObjectPtr);
+
+  hle.CallArmFunction(get_app_context_fn);  // real code's next GetAppContext call
+  EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextFourthObjectOffset), kRealObjectPtr)
+      << "a second GetAppContext call must not clobber real code's own direct write";
+}
+
+TEST(ModRuntime, SetContextAddressRedirectsGetAppContextToTheNewAddress) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  constexpr uint32_t kShellPtr = 0x80001000;
+  mod_runtime.SetShellInstance(kShellPtr);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t get_app_context_fn = cpu.GetMemory().Read32(kTableAddress + kGetAppContextSlotOffset);
+
+  constexpr uint32_t kNewContextAddress = 0x80300024;
+  mod_runtime.SetContextAddress(kNewContextAddress);
+
+  uint32_t context = hle.CallArmFunction(get_app_context_fn);
+  EXPECT_EQ(context, kNewContextAddress);
+  EXPECT_EQ(cpu.GetMemory().Read32(context + kAppContextShellOffset), kShellPtr)
+      << "already-set fields must be re-primed onto the new address";
+}
+
 TEST(ModRuntime, SetShellInstanceCanBeCalledAfterInstall) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
