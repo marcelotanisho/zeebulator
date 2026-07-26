@@ -5588,3 +5588,93 @@ All temporary instrumentation (the per-slot `0x01005511` trace, the
 the `pUser+37` `Memory::Write8` watchpoint bridge, the `DrawText`
 caller-`lr` trace) reverted; `git diff --stat` clean, no functional
 changes survive this round. 292/292 tests pass (unchanged).
+
+---
+
+**Went straight after `0x123cc8`'s own real callers via a live
+`pc==`-gated trace (temporary, reverted) and found the actual
+CARREGANDO-drawing function is `0x106098`, not `0x123cc8`/`0x123c20`
+(both real, but one level removed -- shared sprintf+DrawText helpers
+this function itself calls). Disassembled `0x106098` directly: it
+reads a real dot-counter (`[this+0x1512]`, a 16-bit field), branches
+on its value (0/1/2/3) to draw the matching `"CARREGANDO"`/`"."`/
+`".."`/`"..."` variant via `0x123c20`, then unconditionally increments
+and wraps the counter (`&3`) and clears bit 0 of `[this+0x15ac]` --
+the exact same field this log's much earlier Peggle/Double-Dragon
+button-press investigation was already tracking. This function has no
+internal exit condition at all -- it always draws something -- so
+whatever decides to *call* it each tick is the real gate, not anything
+inside it.
+
+**Traced that caller too (same live technique) and found the real
+per-tick dispatch mechanism directly**: `0x104b60`-`0x104b7c` calls
+through `applet+0x50` then `applet+0x54` (two real function-pointer
+fields this log has tracked since the earliest Double Dragon HID
+work) every tick, then (`0x104b80`-`0x104b9c`) tests bit 0 of
+`applet+0x15ac` to pick between two further real functions. Confirmed
+live that `applet+0x54` currently *equals* `0x106098` -- i.e. the
+loading-spinner drawer is genuinely one of the two real per-tick
+handler slots this log already had a name for, not a separate,
+unmapped code path.
+
+**Added a periodic `applet+0x50`/`applet+0x54`/`0x15ac` status print
+(temporary, reverted) and watched it across the full ~50-second
+simulated button-hold window (matching this log's own earlier-proven
+9-button batch, unchanged) -- and got a complete, satisfying answer.**
+The real per-tick handler pair transitions exactly as this log's much
+earlier round already found (`0x1222f0`/`0x107104` → `0x121110`/
+`0x1063ec`, the same states/addresses, independently reproduced) --
+confirming that earlier finding still holds in the current build.
+Then, around tick 260-280 (well inside the button-hold window), it
+transitions *again*, this time to a state this log had never reached
+before: `applet+0x50`/`applet+0x54` = `0x1220f8`/`0x1070a8`, and
+`0x106098` (the CARREGANDO drawer) briefly reappears once more at the
+transition itself before being left behind for good. This new state
+is stable for the rest of every run tried (1000+ real ticks).
+
+**The real question then became: does `0x1070a8` ever draw anything
+new, or is the app genuinely stuck?** Added unconditional call
+counters (temporary, reverted) to `IDisplayHle::DrawText`, `DrawRect`,
+and `Update`, plus real GL activity tracing
+(`GlHle::EglMakeCurrent`/`EglSwapBuffers`/`GlClear`/`GlDrawArrays`) --
+and the answer is unambiguous. Across a full run reaching the new
+state and continuing 1000+ ticks past it: `DrawText`/`DrawRect`/
+`Update` call counts all freeze at exactly 53 (the same count reached
+during the CARREGANDO phase, confirmed by timestamp -- zero calls to
+any of them after the transition) while real GL activity explodes:
+**19,419 real GL calls** in the same window (`GlClear`,
+`EglSwapBuffers`, and thousands of `GlDrawArrays` calls across many
+distinct real triangle-strip/fan batch sizes, from small UI-sized
+batches up to 1980-vertex batches consistent with real 3D/sprite
+scene geometry).
+
+**Conclusion: there is no remaining "stuck on CARREGANDO" bug in
+Double Dragon's own real game logic.** The real BREW app genuinely
+completes loading, transitions its per-tick state machine cleanly
+(exactly as this log's HID/button-hold work already established), and
+begins drawing its real next screen -- entirely through real GLES
+rendering, which this project currently, deliberately, never displays
+(`NullGlBackend`, this log's own black-screen fix earlier this same
+round: a real host GL context anywhere in this process reliably
+breaks this desktop's real compositor for every window the process
+owns, and no application-level workaround found so far gets around
+it). The window appears "stuck" not because anything is broken in the
+interpreted app or its HLE surface, but because the one real rendering
+path this next screen actually uses is the one this project
+deliberately stopped presenting. This reframes the real remaining gap
+entirely: it's not a missing HLE call or an unfound gate anymore --
+it's the same architectural tension the black-screen fix already
+surfaced (real GL content vs. this desktop's real compositor bug),
+now confirmed to be the *only* thing standing between this build and
+actually showing Double Dragon's next real screen. A real fix needs
+either (a) resolving or working around the compositor bug some other
+way so `Sdl2GlBackend` can be used again, or (b) compositing the 2D
+`IDisplay` surface itself through the same single real GL context real
+GLES content uses, so the process only ever owns one real GL context
+total instead of two -- not attempted this round.
+
+All temporary instrumentation (the `0x106098`/`0x1063ec` entry-point
+trace, the periodic per-tick status print, the `DrawText`/`DrawRect`/
+`Update` call counters, the `[DBGGL]` real-GL-activity trace) reverted;
+`git diff --stat` clean, no functional changes this round. 292/292
+tests pass (unchanged).

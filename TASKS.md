@@ -2227,6 +2227,33 @@ playable start-to-finish at full speed, standalone build.
       step, not attempted this round. All temporary instrumentation
       reverted; `git diff --stat` clean, no functional changes this
       round. 292/292 tests pass (unchanged). See PHASE8_LOG.md.
+      **Traced it the rest of the way and found there's no remaining
+      real bug in Double Dragon's own game logic at all.** Found the
+      actual CARREGANDO-drawing function (`0x106098`, called through
+      `applet+0x54` — one of this file's own already-tracked per-tick
+      dispatch pointers) and, watching it across the full simulated
+      button-hold window, confirmed the real per-tick state machine
+      transitions cleanly past it (`0x1222f0`/`0x107104` →
+      `0x121110`/`0x1063ec` → `0x1220f8`/`0x1070a8`, the first two
+      states reproducing this file's earlier HID work exactly). Once in
+      the new state, `DrawText`/`DrawRect`/`Update` call counts freeze
+      permanently while **19,419 real GL calls** (clears, swaps,
+      thousands of real draw-array batches) fire in the same window —
+      the app genuinely finishes loading and starts drawing its next
+      real screen, entirely through real GLES rendering that this
+      project currently, deliberately never displays (`NullGlBackend`,
+      this same round's own black-screen fix: a real host GL context
+      anywhere in this process reliably breaks this desktop's real
+      compositor). **This reframes the remaining gap entirely**: not a
+      missing HLE call or an unfound gate, but the same architectural
+      tension the black-screen fix already surfaced. A real fix needs
+      either resolving/working around the compositor bug some other way
+      so `Sdl2GlBackend` can be used again, or compositing the 2D
+      `IDisplay` surface through the same single real GL context real
+      GLES content uses (one real context total, not two) — not
+      attempted this round. All temporary instrumentation reverted;
+      `git diff --stat` clean, no functional changes this round.
+      292/292 tests pass (unchanged). See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
