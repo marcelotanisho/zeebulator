@@ -2208,6 +2208,25 @@ playable start-to-finish at full speed, standalone build.
       `CallArmFunctionChecked` so a single long-running real ARM call
       can't leave the window unrepresented for a full real second.
       292/292 tests pass. See PHASE8_LOG.md.
+      **With display fixed, confirmed the real "CARREGANDO..." screen is
+      a genuine, correctly-animating loading spinner** (dots cycle 0-3
+      normally every tick, via a temporary `DrawText` trace, reverted) —
+      not the separate, input-gated title screen this project's earlier
+      HID work targeted, which is why the simulated button press has no
+      visible effect on it (expected, not a bug). Closed this file's
+      long-open `0x01005511` slot-6/`pUser+37` thread as a confirmed
+      dead end (real disassembly: it's a one-shot "finalize resource
+      list" notification whose return value the caller unconditionally
+      discards) and, along the way, corrected a real bug in this
+      project's own tracing methodology (a naively-read register at an
+      HLE trap can be leftover vtable-resolution scratch, not a real
+      argument — see PHASE8_LOG.md for the full mechanism). Located the
+      real `DrawText` call site for the CARREGANDO text itself
+      (`lr=0x00123cb8`, inside a function starting `0x123cc8`) but not
+      yet traced back to its real exit condition — the concrete next
+      step, not attempted this round. All temporary instrumentation
+      reverted; `git diff --stat` clean, no functional changes this
+      round. 292/292 tests pass (unchanged). See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

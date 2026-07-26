@@ -5492,3 +5492,99 @@ two-constructor `Sdl2GlBackend` experiment) reverted; `git diff --stat`
 clean except the real fix (`core/brew/idisplay.{h,cpp}`,
 `tools/game_probe.cpp`, new `frontends/standalone/null_gl_backend.h`).
 292/292 tests pass.
+
+---
+
+**With the display fixed, went straight after the natural next
+question: why does the real "CARREGANDO..." screen never advance, even
+with the button-hold simulation delivering correctly?** First
+confirmed, via a temporary `DrawText`-content trace (reverted), that
+this genuinely *is* a real, correctly-animating loading spinner --
+`"CARREGANDO"` → `"CARREGANDO."` → `"CARREGANDO.."` → `"CARREGANDO..."`
+→ repeat, cycling normally every tick -- not the separate, real,
+input-gated title screen this project's HID work earlier in this log
+targeted. The simulated button press visibly has no effect on it, which
+is now understood to be *expected*: this is a different, earlier real
+screen.
+
+**Picked up this file's own long-standing, well-specified open thread
+(class `0x01005511`, slot 6, "what should set `pUser+37`") and closed
+it -- as a dead end, not a fix.** Traced the real caller live (a
+temporary per-slot trace on every method of this object, reverted):
+slot 4 gets the same three real `SetProperty`-shaped calls this log
+already documented, slot 3 (`CreateSignal`) fires with a real
+`callback`/`userdata` pair, then slot 6 gets one real call. Captured
+its real caller's return address (`lr=0x00107638`) and disassembled
+around it directly (`arm-none-eabi-objdump -D -b binary -m arm
+--adjust-vma=0x100000`): the calling function (starts `0x107570`) is a
+real, one-time "finalize the resource list" routine, guarded by its own
+done-flag (`[r4+0x74c]`, checked against `35` at entry, set to `35`
+before the slot-6 call) -- calls slot 6 exactly once, ever, per real
+run.
+
+**Found and corrected a real bug in this investigation's own tracing
+methodology in the process**: the earlier-observed `r1=0xf000061c` at
+the slot-6 trap (which looked, alarmingly, like the object's *own*
+slot-6 trap address being passed back to itself as an argument) turned
+out to be a misreading, not a real argument. The real call site
+(`0x107628`-`0x107634`: `ldr r1,[r0]; ldr r1,[r1,#24]; bx r1`) reuses
+`r1` purely as scratch to *resolve* the vtable slot 6 target -- `bx`
+doesn't clear the register it branches through, so by the time our own
+HLE trap dispatcher reads "r1", it's reading the just-computed branch
+target, not a real passed argument. Confirmed via `HleRuntime::
+DebugFunctionCount()` (a temporary accessor, reverted) bracketed around
+each major `Build*`/`RegisterInstance` call site that trap index 391
+(`0xf000061c`) is exactly this same object's own slot 6, registered as
+its local slot 6 out of 20 -- not a coincidence, just this calling
+convention's own scratch-register reuse. A real, reusable lesson for
+any future trace added the same way: a naively-read register at an
+HLE trap doesn't distinguish "real argument" from "resolution scratch
+still sitting in that register" -- worth checking the real call site's
+own disassembly before trusting either.
+
+**Slot 6's own real return value is unconditionally discarded** --
+immediately after the call (`lr=0x107638`), the caller does
+`pop {...}; mov r0,#1; bx lr`, regardless of what slot 6 returned or
+whether the call even happened (the same `0x107638` address is also
+the direct branch target when the guarding object pointer is null).
+Combined with it firing exactly once per run (the done-flag), this
+means slot 6 is a real, one-shot, fire-and-forget notification whose
+result nothing downstream ever checks -- implementing it "correctly"
+would not unblock anything. The `pUser+37` byte this log's much earlier
+round was chasing lives in a *different* real function (`0x11f4dc`,
+reached via the download-complete callback path, not this one) that
+this round's tracing never actually exercised long enough to revisit --
+a live watchpoint on `pUser+37` (temporary, reverted) confirmed zero
+writes across a run that included the simulated download-complete
+notification and the full button-hold window.
+
+**Located the real `DrawText` call site for the CARREGANDO text
+itself**, the more direct real question. A temporary `DrawText` trace
+augmented with the caller's `lr` (reverted) showed a single, consistent
+real caller: `lr=0x00123cb8`, inside a larger function starting at
+`0x123cc8`. Disassembled the call site directly: it's a real
+`IDisplay::DrawText`-shaped indirect vtable call (`ldr r4,[r0,#16]`
+-- slot 4 -- `bx r4`), with `r3=-1` (null-terminated string, matching
+`DrawText`'s own already-documented real nChars convention) and a text
+buffer built earlier in the same function, not yet traced back to
+whatever decides the buffer's own content (the cycling dot count) or,
+more importantly, whatever condition would make this function draw
+something *other* than one of the four `"CARREGANDO"`-family strings
+found via a direct static search of `ddragonz.mod` for the literal
+bytes (`0x70e38`/`0x70e44`/`0x70e50`/`0x70e60`, real file offsets --
+no fixed-address cross-references exist for them, confirmed via a
+targeted 4-byte scan, consistent with this being ROPI/PC-relative code
+that computes the string address at runtime rather than storing it as
+a literal).
+
+**Not pursued further this round** -- a deliberate stop after
+conclusively closing one long-open thread and precisely locating the
+real next one, not a stall. Concrete next step: disassemble
+`0x123cc8` (and whatever calls *it*) forward from its own start,
+rather than backward from the `DrawText` call already found, to find
+the real condition that currently always resolves to "still loading."
+All temporary instrumentation (the per-slot `0x01005511` trace, the
+`HleRuntime::DebugFunctionCount` accessor and its bracketing prints,
+the `pUser+37` `Memory::Write8` watchpoint bridge, the `DrawText`
+caller-`lr` trace) reverted; `git diff --stat` clean, no functional
+changes survive this round. 292/292 tests pass (unchanged).
