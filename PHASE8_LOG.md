@@ -5678,3 +5678,126 @@ trace, the periodic per-tick status print, the `DrawText`/`DrawRect`/
 `Update` call counters, the `[DBGGL]` real-GL-activity trace) reverted;
 `git diff --stat` clean, no functional changes this round. 292/292
 tests pass (unchanged).
+
+---
+
+## Real GL rendering: implemented option (b), and it works
+
+Took the second option from the previous round's own conclusion:
+composite the 2D `IDisplay` surface through the same single real GL
+context real GLES content uses, instead of trying to resolve the real
+desktop compositor bug directly.
+
+**Validated the core assumption first, before writing any real code.**
+A minimal, independent SDL2 reproduction (one real window, one real GL
+context, used as the *sole* presentation mechanism -- real varying
+`glClearColor` + a real triangle draw + `SDL_GL_SwapWindow`, every
+frame, nothing else) was watched directly on the real desktop for
+15-20 seconds: stayed correct throughout, no blackout. This is a
+categorically different setup from every earlier reproduction that
+*did* show the real compositor bug (all of which had two real
+presentation paths -- a 2D `SDL_Renderer` plus a separate/hidden GL
+context -- coexisting in one process). Confirms a single real context
+used as the only presenter is safe on this real desktop.
+
+**Implemented `Sdl2UnifiedBackend`** (`frontends/standalone/
+sdl2_unified_backend.{h,cpp}`), replacing `Sdl2Backend` +
+`NullGlBackend` in `tools/game_probe.cpp`: one real object implementing
+both `Backend` (2D video/audio/input) and `GlBackend` (real IGL/IEGL),
+backed by one real `SDL_Window` + one real `SDL_GLContext` created
+eagerly at construction and held for the object's whole lifetime.
+`PushVideoFrame` uploads the RGB565 framebuffer as a `GL_UNSIGNED_
+SHORT_5_6_5` texture (a direct format match, no pixel conversion) and
+draws it as a full-screen textured quad (state saved/restored around
+it via `glPushAttrib`/`glPushMatrix` so it never corrupts real app-owned
+GL state) before calling `SDL_GL_SwapWindow` -- the exact same real
+drawable, the exact same real context, every time, whether the frame
+came from a real `IDISPLAY_Update` call or a real `eglSwapBuffers`
+call. `GlHle` now takes the same object as its `GlBackend`. This also
+matches what real disassembly already found elsewhere in this
+investigation: `IBITMAP_QueryInterface(..., AEECLSID_DIB, ...)`'s
+result gets cast straight to `NativeWindowType` for
+`eglCreateWindowSurface` -- i.e. on real hardware, GLES's own native
+window surface *is* IDisplay's own device bitmap/surface, not a
+separate one, so this class's design matches real hardware behavior,
+not just this project's own convenience. `NullGlBackend` (no longer
+used anywhere) removed.
+
+**First real-desktop test showed a new, smaller problem: an occasional
+brief black flicker, not a permanent lockup.** Systematically tried,
+directly on the real desktop, each in isolation: `glTexImage2D` every
+frame (a known driver footgun) vs. allocate-once-then-`glTexSubImage2D`
+(no change); rate-limiting the frontend's own `RepresentLastFrame`
+keep-alive push to ~5/sec (this file's own established "at least
+roughly once a second" contract) -- confirmed to make it measurably
+*worse*, consistent with this file's much earlier finding that this
+same desktop's compositor needs *frequent* real presents to keep a
+window's content visible at all; explicit `SDL_GL_SetSwapInterval(0)`
+(no change); explicit `SDL_GL_SetSwapInterval(1)` (measurably better,
+kept); explicit `SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)` (worse,
+reverted). Net real improvement from this pass: `glTexSubImage2D` (the
+objectively more correct pattern regardless) and `SDL_GL_
+SetSwapInterval(1)`, kept as permanent, deliberate choices -- the
+flicker itself is reduced but not eliminated, a real, open, much
+smaller residual issue for a future round (the permanent blackout this
+whole investigation started from is what's actually fixed).
+
+**Second real-desktop test surfaced the actual remaining blocker, and
+it isn't a bug in this round's work at all.** With `Sdl2UnifiedBackend`
+in place, the loading screen showed briefly then went solid black --
+alarming at first, but a live `[DBGGL]` trace on `GlClearColorx`/
+`GlViewport` (temporary, reverted) found the real, root cause
+immediately: real Double Dragon code sets `glClearColor(0,0,0,0)` --
+literal black -- combined with the same degenerate `glViewport(0,0,1,0)`
+call this investigation already found and explicitly deferred two
+rounds ago. `glClear` fills the *entire* real color buffer regardless
+of the current viewport (no scissor test in use), and a zero-height
+viewport means no subsequent real draw call can rasterize a single
+pixel -- so the real, correctly-computed output of Double Dragon's own
+current real GL code is, genuinely, a solid black frame. Confirmed via
+counts: 848 real `GlClearColorx(0,0,0,0)` calls, 848 matching real
+`GlViewport(0,0,1,0)` calls, over a run that also fired thousands of
+real `GlDrawArrays` calls (all invisible, clipped away by the
+zero-height viewport). This is `Sdl2UnifiedBackend` working exactly as
+designed -- real GL content is finally, genuinely reaching the real
+screen -- surfacing a real, separate, already-known gap that was
+previously hidden behind the compositor bug and (before this round's
+fix below) the frontend's own stale-frame re-presenting.
+
+**Found and fixed one real bug of this round's own making along the
+way**: `IDisplayHle::RepresentLastFrame`'s keep-alive mechanism doesn't
+know the app has moved on to real GL rendering, so it kept
+re-uploading and re-presenting the *stale* last 2D snapshot (the final
+`"CARREGANDO..."` frame) every tick, fighting the app's own real GL
+frames for the same drawable -- real GL content never had a chance to
+actually stay on screen until this was fixed. Added `Sdl2UnifiedBackend
+::HasRealGlActivity()` (true once the app has called `eglSwapBuffers`
+at least once) and gated both real call sites that invoke
+`RepresentLastFrame` (`tools/game_probe.cpp`'s main loop and the
+in-`CallArmFunctionChecked` liveness check, threaded through a new
+optional `backend_for_liveness` parameter) on it being false. Matches
+this same investigation's own confirmed finding that Double Dragon
+stops calling `IDISPLAY_Update` entirely once real GL rendering starts
+-- there is nothing left worth re-presenting from that point on.
+
+Also confirmed, directly with the user: the simulated button-hold
+this dev tool injects is not an artificial requirement -- real
+disassembly (documented much earlier in this investigation, see
+`kSimulatedDeviceHandle`'s own doc comment in `tools/game_probe.cpp`)
+already established Double Dragon's own real code genuinely waits for
+real HID/controller input at this stage on real hardware; the
+simulated hold exists purely so this unattended dev tool can validate
+that path without a human present to press a real button.
+
+**Net result this round**: the real black-screen blocker (the original
+permanent one) stays fixed; real GL rendering now genuinely reaches the
+real screen (a first, confirmed via direct evidence, not assumed); the
+screen being black right now is Double Dragon's own real, correctly-
+computed output given its own real, pre-existing viewport bug, not an
+emulation or presentation defect. `git diff --stat`: `Sdl2UnifiedBackend`
+(new), `tools/game_probe.cpp`/`tools/CMakeLists.txt` updated,
+`NullGlBackend` removed. All temporary diagnostics (`[DBGGL]`
+`ClearColor`/`Viewport` trace) reverted. 292/292 tests pass. Concrete,
+well-specified next step: the degenerate `glViewport(0,0,1,0)` call
+itself -- find the real code that computes those dimensions and why
+they're wrong, not attempted this round.

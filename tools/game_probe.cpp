@@ -32,8 +32,7 @@
 #include "core/loader/ggz.h"
 #include "core/loader/mod.h"
 #include "core/loader/pkg.h"
-#include "frontends/standalone/sdl2_backend.h"
-#include "frontends/standalone/null_gl_backend.h"
+#include "frontends/standalone/sdl2_unified_backend.h"
 
 namespace {
 
@@ -179,7 +178,8 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
                                    uint32_t mod_base, uint32_t mod_size, uint32_t entry,
                                    uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
                                    bool trace = false, bool hle_trace = false,
-                                   zeebulator::IDisplayHle* display_for_liveness = nullptr) {
+                                   zeebulator::IDisplayHle* display_for_liveness = nullptr,
+                                   zeebulator::Sdl2UnifiedBackend* backend_for_liveness = nullptr) {
   constexpr uint64_t kMaxSteps = 5'000'000;
   cpu.SetRegister(zeebulator::kR0, r0);
   cpu.SetRegister(zeebulator::kR1, r1);
@@ -207,7 +207,9 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       result.exceeded_step_budget = true;
       break;
     }
-    if (display_for_liveness != nullptr && ++steps_since_liveness_check >= 20000) {
+    if (display_for_liveness != nullptr &&
+        (backend_for_liveness == nullptr || !backend_for_liveness->HasRealGlActivity()) &&
+        ++steps_since_liveness_check >= 20000) {
       steps_since_liveness_check = 0;
       auto now = std::chrono::steady_clock::now();
       if (now - last_liveness_present > std::chrono::milliseconds(200)) {
@@ -322,26 +324,26 @@ int main(int argc, char** argv) {
   constexpr int kWidth = 640;
   constexpr int kHeight = 480;
   constexpr int kAudioSampleRate = 22050;
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
   SDL_Window* window =
       SDL_CreateWindow("Zeebulator - game probe", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                        kWidth, kHeight, SDL_WINDOW_SHOWN);
-  SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+                        kWidth, kHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
 
   zeebulator::ArmInterpreter cpu;
   constexpr uint32_t kTrapBase = 0xF0000000;
   zeebulator::HleRuntime hle(cpu, kTrapBase, 0x10000);
-  zeebulator::Sdl2Backend backend(renderer, kWidth, kHeight, kAudioSampleRate);
+  // See Sdl2UnifiedBackend's own doc comment: a real host GL context
+  // anywhere in this process, coexisting with a *separate* 2D
+  // presentation path, reliably breaks this desktop's real compositor
+  // into no longer repainting the real visible window -- confirmed via
+  // a minimal, independent reproduction that a *single* real GL context
+  // used as the sole presentation mechanism does not have this problem.
+  // One real object implements both the 2D IDisplay surface and real
+  // IGL/IEGL rendering, on one real window/context, instead of two
+  // separate backends.
+  zeebulator::Sdl2UnifiedBackend backend(window, kWidth, kHeight, kAudioSampleRate);
   zeebulator::IDisplayHle display(backend, kWidth, kHeight);
-  // See NullGlBackend's own doc comment: a real host GL context anywhere
-  // in this process -- even an otherwise-idle, private, hidden one --
-  // reliably breaks this desktop's real compositor into no longer
-  // repainting the real, visible 2D IDisplay window above, a confirmed
-  // real environment bug no application-level workaround tried so far
-  // gets around. Real GLES rendering isn't a complete pipeline yet for
-  // actual games regardless, so this keeps IGL/IEGL answering plausibly
-  // without ever standing up a real context.
-  zeebulator::NullGlBackend gl_backend;
-  zeebulator::GlHle gl_hle(gl_backend);
+  zeebulator::GlHle gl_hle(backend);
   zeebulator::Mixer mixer(kAudioSampleRate);
   zeebulator::FileHle file_hle(cpu.GetMemory(), hle, vfs, /*object_region=*/0x80100000);
   zeebulator::MediaHle media_hle(cpu.GetMemory(), hle, vfs, mixer, /*object_region=*/0x80200000);
@@ -1092,7 +1094,7 @@ int main(int argc, char** argv) {
     constexpr uint32_t kPpModAddr = 0x00090000;
     auto load_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, entry, shell, 0,
                                                kPpModAddr, 0, /*trace=*/false, /*hle_trace=*/false,
-                                               &display);
+                                               &display, &backend);
     uint32_t module_ptr = mem.Read32(kPpModAddr);
     if (load_result.wandered_outside_module || load_result.exceeded_step_budget || !module_ptr) {
       std::printf("AEEMod_Load did not produce a trustworthy module pointer -- stopping.\n");
@@ -1107,7 +1109,7 @@ int main(int argc, char** argv) {
     constexpr uint32_t kPpObjAddr = 0x00090010;
     auto create_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, create_instance_fn,
                                                  module_ptr, shell, cls_id, kPpObjAddr,
-                                                 /*trace=*/false, /*hle_trace=*/false, &display);
+                                                 /*trace=*/false, /*hle_trace=*/false, &display, &backend);
     // *ppObj is the IApplet* itself, not a function pointer -- HandleEvent
     // is slot 2 of *its* vtable (AddRef=0, Release=1, HandleEvent=2, per
     // the real AEEAppGen.c reference source's IAppletVtbl init order).
@@ -1159,7 +1161,7 @@ int main(int argc, char** argv) {
     // boolean HandleEvent(IApplet *po, AEEEvent evt, uint16 wParam, uint32 dwParam)
     auto handle_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn,
                                                  applet_ptr, kEvtAppStart, 0, kAppStartAddr,
-                                                 /*trace=*/false, /*hle_trace=*/false, &display);
+                                                 /*trace=*/false, /*hle_trace=*/false, &display, &backend);
     if (handle_result.wandered_outside_module || handle_result.exceeded_step_budget) {
       std::printf("HandleEvent(EVT_APP_START) did not complete trustworthily -- stopping.\n");
       return 1;
@@ -1231,7 +1233,7 @@ int main(int argc, char** argv) {
           try {
             auto key_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size,
                                                       handle_event_fn, applet_ptr, evt, avk, 0,
-                                                      /*trace=*/false, /*hle_trace=*/false, &display);
+                                                      /*trace=*/false, /*hle_trace=*/false, &display, &backend);
             std::printf("HandleEvent(evt=0x%x, wParam=0x%x) returned %u%s\n", evt, avk,
                         key_result.r0,
                         key_result.wandered_outside_module ? " (wandered!)" : "");
@@ -1273,7 +1275,7 @@ int main(int argc, char** argv) {
       try {
         CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, *captured_download_callback,
                                *captured_download_context, kSimulatedEventStructAddr, 0, 0,
-                               /*trace=*/false, /*hle_trace=*/false, &display);
+                               /*trace=*/false, /*hle_trace=*/false, &display, &backend);
       } catch (const std::exception& e) {
         std::printf("  [input] download-complete callback threw: %s\n", e.what());
       }
@@ -1321,7 +1323,7 @@ int main(int argc, char** argv) {
       try {
         CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, *captured_button_callback,
                                *captured_button_context, 0, 0, 0, /*trace=*/false,
-                               /*hle_trace=*/false, &display);
+                               /*hle_trace=*/false, &display, &backend);
       } catch (const std::exception& e) {
         std::printf("  [input] button callback threw: %s\n", e.what());
       }
@@ -1333,7 +1335,7 @@ int main(int argc, char** argv) {
         auto tick_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, timer.callback,
                                                    timer.user_data, 0, 0, 0,
                                                    /*trace=*/false,
-                                                   /*hle_trace=*/trace_this_tick, &display);
+                                                   /*hle_trace=*/trace_this_tick, &display, &backend);
         if (tick_result.wandered_outside_module || tick_result.exceeded_step_budget) {
           std::printf("timer callback did not complete trustworthily -- stopping.\n");
           running = false;
@@ -1355,11 +1357,32 @@ int main(int argc, char** argv) {
     // in-loop check inside CallArmFunctionChecked covers long individual
     // real calls; this covers the (usually much smaller) gaps between
     // them.
-    display.RepresentLastFrame();
+    //
+    // Deliberately unthrottled: tried rate-limiting this to ~5/sec
+    // (TASKS.md Phase 8, real-desktop testing) on the theory that
+    // swapping the same unchanged frame at ~60Hz was stressing the real
+    // compositor -- confirmed, directly on the real desktop, to make a
+    // separate real compositor quirk (occasional brief black flashes)
+    // measurably *worse*, not better: less frequent presenting gave the
+    // compositor more, not less, room to lose track of this window's
+    // content, consistent with this file's much earlier finding that
+    // this same desktop's compositor needs frequent real presents to
+    // keep a window's content visible at all.
+    //
+    // Skipped entirely once the app has started real GL rendering --
+    // see Sdl2UnifiedBackend::HasRealGlActivity's own doc comment: real
+    // Double Dragon disassembly confirmed the app stops calling
+    // IDISPLAY_Update once it does, so this would otherwise keep
+    // re-presenting a stale snapshot on top of (and fighting for the
+    // same drawable against) the app's own real, current GL content --
+    // confirmed on the real desktop that real GL content never actually
+    // became visible until this guard was added.
+    if (!backend.HasRealGlActivity()) {
+      display.RepresentLastFrame();
+    }
     SDL_Delay(kTickMs);
   }
 
-  SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
   return 0;

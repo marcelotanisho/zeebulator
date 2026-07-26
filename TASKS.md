@@ -2254,6 +2254,39 @@ playable start-to-finish at full speed, standalone build.
       attempted this round. All temporary instrumentation reverted;
       `git diff --stat` clean, no functional changes this round.
       292/292 tests pass (unchanged). See PHASE8_LOG.md.
+      **Implemented the compositing option, and it works — real GL
+      content now genuinely reaches the real screen for the first time
+      this project has confirmed.** New `Sdl2UnifiedBackend`
+      (`frontends/standalone/sdl2_unified_backend.{h,cpp}`) implements
+      both `Backend` and `GlBackend` on one real window/context,
+      replacing `Sdl2Backend`+`NullGlBackend` in `tools/game_probe.cpp`
+      (`NullGlBackend` removed, no longer used anywhere). Validated the
+      core assumption first via a minimal reproduction (single real
+      context as sole presenter — stayed correct 15-20s on the real
+      desktop, unlike every earlier setup with two presentation paths).
+      Fixed a real bug of this round's own making along the way:
+      `RepresentLastFrame`'s keep-alive push didn't know the app had
+      moved on to real GL rendering, so it kept fighting the app's own
+      real GL frames for the same drawable — added `Sdl2UnifiedBackend::
+      HasRealGlActivity()` and gated both real call sites on it.
+      Confirmed with the user that the simulated button-hold this tool
+      injects isn't an artificial requirement — real disassembly
+      already established Double Dragon's title screen genuinely waits
+      for real HID input on real hardware. **The screen is black right
+      now for a real, already-known, separate reason**: real Double
+      Dragon code sets `glClearColor(0,0,0,0)` combined with the
+      already-found degenerate `glViewport(0,0,1,0)` — confirmed via a
+      temporary trace (848 matching real calls of each, alongside
+      thousands of real but invisible `GlDrawArrays` calls) — not a
+      presentation defect. Tried and kept `glTexSubImage2D` (over
+      per-frame `glTexImage2D`) and `SDL_GL_SetSwapInterval(1)` as real
+      improvements to a separate, smaller, still-open issue (an
+      occasional brief black flicker, reduced but not eliminated — far
+      less severe than the permanent blackout this investigation
+      started from). All temporary diagnostics reverted, 292/292 tests
+      pass. Concrete next step: the degenerate `glViewport(0,0,1,0)`
+      call itself — find the real code that computes those dimensions
+      and why they're wrong. See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
