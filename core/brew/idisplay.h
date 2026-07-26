@@ -45,6 +45,38 @@ class IDisplayHle {
   // can call GetDeviceBitmap without crashing.
   void SetDeviceBitmapInstance(uint32_t bitmap_ptr) { device_bitmap_ptr_ = bitmap_ptr; }
 
+  // Re-pushes the *last frame real app code actually committed via
+  // IDISPLAY_Update* to the backend -- a no-op if Update() has never
+  // been called. Meant to be called continuously by the frontend, at
+  // least roughly once a second, for as long as the app runs -- found
+  // necessary tracing Double Dragon (TASKS.md Phase 8), confirmed
+  // directly against a real desktop (not just automated screenshots):
+  // real code can legitimately call Update() exactly once (a static
+  // screen that never redraws) and real content is correctly computed
+  // and pushed, but at least one real desktop environment's window
+  // compositor stops actually displaying a window's content within
+  // about a second of it no longer receiving freshly presented frames,
+  // even though every real present succeeded and stayed byte-for-byte
+  // identical. Real display hardware has no such requirement (whatever
+  // was last drawn simply stays lit), so this compensates for that one
+  // specific environment's behavior rather than being a real BREW/Zeebo
+  // behavior in its own right -- and it needs to keep happening for the
+  // app's entire lifetime, not just once after the first real frame:
+  // a single priming burst right after the first Update() was tried
+  // and confirmed (directly, on a real desktop) to only postpone the
+  // blackout by exactly as long as the burst itself lasted.
+  //
+  // Deliberately re-presents a snapshot taken *at the real Update()
+  // call*, not the live `framebuffer_` directly -- real code can call
+  // DrawRect/DrawText again later without a following Update() (e.g.
+  // mid-way through composing the next real frame), and presenting that
+  // live, not-yet-committed content would show something real app code
+  // never actually intended to be visible.
+  void RepresentLastFrame() {
+    if (!has_presented_) return;
+    backend_.PushVideoFrame(last_presented_.data(), width_, height_, PixelFormat::kRGB565);
+  }
+
  private:
   void DrawText(IArmCore& core);
   void DrawRect(IArmCore& core);
@@ -56,6 +88,8 @@ class IDisplayHle {
   int width_;
   int height_;
   std::vector<uint16_t> framebuffer_;  // RGB565, width_ * height_
+  std::vector<uint16_t> last_presented_;  // snapshot as of the last real Update() call
+  bool has_presented_ = false;
   uint32_t current_rgbval_ = 0x00FFFFFF;  // last color SetColor() set (white by default)
   uint32_t device_bitmap_ptr_ = 0;
 };

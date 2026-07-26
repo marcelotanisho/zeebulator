@@ -5335,3 +5335,160 @@ the same slot -- reinforcing rather than narrowing the earlier
 conclusion that guessing a universal behavior here would be guessing,
 not reconstructing. No further action taken; read-only disassembly
 only, nothing to revert.
+
+## Double Dragon: real-desktop black-screen regression
+
+With the event loop reached and the "CARREGANDO..." loading screen
+rendering correctly, the user (running the real `zeebulator_game_probe`
+binary directly on their own real, non-VM Linux Mint/Cinnamon desktop --
+not relying on remote screenshots) reported the window showing correct
+white/yellow loading-screen content briefly, then going solid black and
+staying black indefinitely, with no flicker, no matter how long the run
+continued.
+
+**First, a major methodology bug in this investigation's own remote
+testing was found and fixed.** Killing background `zeebulator_game_probe`
+test processes via plain `kill` was not reliably terminating them,
+leaving many zombie windows sharing the identical title "Zeebulator -
+game probe" -- and `wmctrl -a "<title>"` (title-based window activation,
+used before every automated screenshot) was non-deterministically
+raising/capturing *stale* zombie windows instead of the current test's
+window. This retroactively explained several apparently-confirmed
+findings from earlier in the same investigation (GL context "stealing",
+an ARM step-count "threshold" for triggering the bug) as pure testing
+artifacts. Fixed by matching windows to their owning PID
+(`wmctrl -lp | awk -v pid=... '$3==pid {print $1}'`) and using `kill -9`
+for reliable termination; re-running the exact bisection tests that had
+shown a flaky threshold, with corrected methodology, showed the
+"threshold" never existed. From this point on, the user's own direct,
+real-time observation of the real window became the authoritative source
+of truth, not automated screenshots.
+
+**Systematically ruled out, via a mix of corrected-methodology
+Zeebulator runs and ~10 standalone, Zeebulator-independent minimal SDL2
+C programs (compiled against this project's vendored SDL2 headers but
+linked against the system's installed `libSDL2-2.0.so.0`, run
+individually with the user watching in real time):**
+- GL context creation/"stealing" on the same window as the 2D renderer
+- ARM interpreter step-count/timing thresholds and window-manager
+  "unresponsive app" detection tied to them
+- A one-time "priming burst" of extra presents right after the first
+  real `IDISPLAY_Update` call (postponed the blackout by exactly the
+  burst's own duration, then reverted)
+- Continuous periodic re-presenting of the last frame (a real,
+  functioning mechanism, confirmed via temporary instrumentation to be
+  running throughout -- did not prevent or reverse the blackout, since
+  it turned out to be a no-op the whole time this round, see below)
+- Real game code intentionally drawing black (a temporary `DrawRect`/
+  `Update` trace confirmed every real draw call, ~49 over 20 seconds,
+  used correct white-fill/yellow-text content, never black)
+- GPU/accelerated-renderer resource loss (`SDL_RENDERER_SOFTWARE`
+  showed identical behavior to `SDL_RENDERER_ACCELERATED`)
+- The `SDL_WINDOW_OPENGL` window-creation flag (removing it made no
+  difference)
+- Terminal I/O contention (redirecting the huge `[hle call]` trace
+  output to a file instead of the terminal made no difference)
+- A single one-time `SDL_GL_SwapWindow` call after GL context creation
+  (confirmed via a minimal test to leave the window unaffected)
+- SDL2 usage patterns in isolation and combination: streaming textures,
+  a real opened audio device fed continuous silence, game controller
+  polling, sustained ~98%-CPU same-process load, and ~10 seconds of not
+  calling `SDL_PollEvent` at all (simulating a long-running ARM
+  interpreter call starving the event loop) -- none reproduced it
+
+**Found the real trigger: real, repeated `glClear`+`eglSwapBuffers`
+activity on a window shared with the 2D `IDisplay` surface.** Added
+temporary `[GLDIAG]`-tagged tracing to every real `GlHle` EGL/GL entry
+point and a `[HEARTBEAT]` frame-content/timing log to
+`Sdl2Backend::PushVideoFrame` (all reverted afterward). Against a
+corrected run (an earlier re-run in this same round had used the wrong
+`cls_id` -- `274754`, the download-catalog folder number -- instead of
+the real, previously-documented `0x0102f789`/`16971657`, which made
+`CreateInstance` fail immediately; this file's own top-of-round doc
+comment on `cls_id` already warned about exactly this trap), the
+heartbeat log showed 863 real frames pushed over ~30 seconds, every one
+byte-identical correct white content, zero SDL error returns -- proving
+the application-level render pipeline was correct and live for the
+entire run, including exactly when the user reported the blackout. The
+GL trace showed real code calling `eglMakeCurrent` once near t=0, then
+starting at t~0.89-0.95s -- lining up almost exactly with the user's
+"about 1 second" report -- calling `eglSwapBuffers` *repeatedly*, every
+~60ms, for the rest of the run. Further tracing showed real, genuine GL
+draw activity too: `glClear`(mask `0x4100`), `glClearColorx`, and
+hundreds of `glDrawArrays(GL_TRIANGLES, ...)` calls -- plus a real,
+separate, unrelated gap: `glViewport(0,0,1,0)`, a degenerate near-zero
+viewport (not pursued further this round).
+
+A minimal, standalone reproduction confirmed the mechanism precisely: a
+single one-time `SDL_GL_SwapWindow` call, or repeated swaps of an
+*untouched* GL back buffer, left a shared window unaffected (at most a
+transient one-frame blink); repeated `glClearColor`(black)+`glClear`
+followed by `SDL_GL_SwapWindow`, on the same window a separate
+`SDL_Renderer` also presents to via `SDL_RenderPresent`, reproduced a
+**persistent** black lockup, matching the real bug exactly.
+
+**The obvious fix -- giving the raw GL context its own private, hidden
+window instead of sharing the visible one -- did not work.** Applied
+(new `Sdl2GlBackend(int width, int height)` constructor, creating and
+owning a hidden `SDL_WINDOW_HIDDEN` window internally) and verified
+against the real game: still went black. A further minimal reproduction
+(two completely separate `SDL_Window`s in one process -- window A
+visible, 2D-only, never touching GL at all; window B hidden, doing real
+`glClear`+`SDL_GL_SwapWindow` repeatedly on *itself only*) showed window
+A *also* goes persistently black once window B's GL activity starts --
+proving this isn't a shared-drawable bug at all, but something
+compositor-wide: merely having a second, real host GL context anywhere
+in the process breaks repainting for every window that process owns.
+Confirmed directly against the real `zeebulator_game_probe` binary too:
+moving the window makes the correct "CARREGANDO" content flash back
+before reverting to black -- an interactive title-bar drag (which
+forces the window manager to recompute geometry) is the only thing that
+forces a correct repaint, matching the minimal reproduction precisely.
+System: Cinnamon (Muffin/Mutter-based compositor) on X11, AMD Radeon
+780M (radeonsi/Mesa 25.2.8), confirmed via `glxinfo`/`ps`. Tried and
+confirmed ineffective: disabling SDL's default
+`SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR` hint (`SDL_VIDEO_X11_NET_WM_
+BYPASS_COMPOSITOR=0`); forcing synthetic `SDL_SetWindowPosition` changes
+once a second; forcing them every single frame (60Hz) instead. All
+consistent with a real Cinnamon/Muffin/Mesa compositor bug, not
+anything in this project's own code, that no application-level
+workaround tried could get around.
+
+**Fixed by not creating a real host GL context at all.** Added
+`NullGlBackend` (`frontends/standalone/null_gl_backend.h`): a
+`GlBackend` implementation that answers every real IGL/IEGL call with a
+plausible, harmless value (context creation always "succeeds",
+`GenTextures` hands back distinct nonzero names, everything else is a
+pure no-op) without a single real `SDL_GL_CreateContext`, `glClear`, or
+`glDrawArrays` ever executing. `tools/game_probe.cpp` now builds
+`NullGlBackend` instead of `Sdl2GlBackend` -- justified not just by the
+compositor bug but because real GLES rendering isn't a complete,
+correct pipeline for this title regardless (the degenerate viewport
+found above). `frontends/standalone/main.cpp`'s isolated `hello_gl`
+demo, which gives GL its own dedicated window and has no competing 2D
+surface in its own process, is unaffected and keeps using the real
+`Sdl2GlBackend`. Verified directly on the user's real desktop: the
+loading screen now stays visible and correct for 45+ sustained seconds,
+no regression.
+
+**Also fixed a latent bug discovered along the way**:
+`IDisplayHle::RepresentLastFrame()` (the periodic re-presenting
+mechanism believed, earlier in this same investigation, to be running
+and simply insufficient) was actually a silent no-op the whole time --
+an over-broad `git checkout` earlier in this investigation, used to
+revert temporary `DrawRect`/`Update` trace prints, also reverted the
+(never separately committed) `last_presented_`/`has_presented_`-setting
+lines inside `Update()` without reverting `RepresentLastFrame()`'s own
+declaration in the header. Re-added `Update()`'s real plumbing, plus a
+periodic in-loop liveness check inside `CallArmFunctionChecked`
+(checked cheaply every 20,000 interpreted steps) so a single
+long-running real ARM call can't leave the window unrepresented for a
+full real second, matching `RepresentLastFrame`'s own documented
+"at least roughly once a second" contract.
+
+All temporary instrumentation ([GLDIAG]/[HEARTBEAT] tags in
+`core/brew/gl_hle.cpp`/`frontends/standalone/sdl2_backend.cpp`, the
+two-constructor `Sdl2GlBackend` experiment) reverted; `git diff --stat`
+clean except the real fix (`core/brew/idisplay.{h,cpp}`,
+`tools/game_probe.cpp`, new `frontends/standalone/null_gl_backend.h`).
+292/292 tests pass.

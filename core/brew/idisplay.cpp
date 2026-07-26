@@ -131,6 +131,8 @@ void IDisplayHle::GetDeviceBitmap(IArmCore& core) {
 }
 
 void IDisplayHle::Update(IArmCore&) {
+  last_presented_ = framebuffer_;
+  has_presented_ = true;
   backend_.PushVideoFrame(framebuffer_.data(), width_, height_,
                            PixelFormat::kRGB565);
 }

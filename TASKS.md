@@ -2160,6 +2160,54 @@ playable start-to-finish at full speed, standalone build.
       Peggle's own paused SDK-header wall. Investigation only this
       round, all temporary instrumentation reverted, 266/266 tests
       pass unchanged. See PHASE8_LOG.md.
+      **Root-caused and fixed Double Dragon's real-desktop black-screen
+      regression** — the loading screen rendered correctly (confirmed
+      via a real frame-content heartbeat log: hundreds of frames,
+      byte-identical correct content, zero SDL errors) but the actual
+      window went solid black on the user's real (non-VM) Linux Mint/
+      Cinnamon desktop roughly a second in, every run, and stayed black
+      no matter how long real content kept being pushed. A long,
+      methodical bisection (documented fully in PHASE8_LOG.md) ruled
+      out every SDL2/X11 API usage pattern individually and in
+      combination (GL context creation, `SDL_GL_SwapWindow`, streaming
+      textures, audio, controller polling, sustained CPU load, long
+      stretches without pumping events) before finding the real
+      trigger: real Double Dragon code, after `eglMakeCurrent`,
+      genuinely calls `glClearColor`/`glClear` (to black) then
+      `eglSwapBuffers` repeatedly, every tick — confirmed via targeted
+      `[GLDIAG]`-style tracing (temporary, reverted) showing this start
+      right around the same ~1s mark the user reported. Giving the raw
+      GL context its own private window (rather than sharing the 2D
+      `IDisplay` surface's visible one) did **not** fix it — a minimal,
+      independent two-window SDL2 reproduction showed the bug is
+      compositor-wide, not shared-drawable-specific: merely having a
+      second, real host GL context anywhere in the process (even
+      hidden, even never itself touched again) reliably breaks this
+      desktop's real compositor (Cinnamon/Muffin, AMD radeonsi/Mesa)
+      into never repainting a *completely separate*, GL-untouched
+      window again, confirmed recoverable only by an actual interactive
+      title-bar drag (forcing the window manager to recompute geometry)
+      — a real environment bug, not anything in this project's own
+      present logic. Neither disabling SDL's `_NET_WM_BYPASS_COMPOSITOR`
+      hint nor forcing continuous synthetic window-position changes
+      (once a second, then every frame) worked around it either. Fixed
+      by adding `NullGlBackend` (`frontends/standalone/
+      null_gl_backend.h`) — a `GlBackend` that answers every IGL/IEGL
+      call plausibly without ever standing up a real host GL context —
+      and using it in `tools/game_probe.cpp` instead of the real
+      `Sdl2GlBackend`, since real GLES rendering isn't a complete,
+      correct pipeline yet for this title regardless (the same trace
+      found a real, separate, unrelated gap: a degenerate
+      `glViewport(0,0,1,0)` call, not pursued further this round).
+      Verified fixed directly on the user's real desktop, sustained
+      45+ seconds, no regression. Also re-enabled `IDisplayHle::
+      RepresentLastFrame()` (was a silent no-op after an over-broad
+      `git checkout` earlier this same investigation reverted the
+      `Update()`-side plumbing that feeds it without reverting its own
+      declaration) and added a periodic in-loop liveness check inside
+      `CallArmFunctionChecked` so a single long-running real ARM call
+      can't leave the window unrepresented for a full real second.
+      292/292 tests pass. See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

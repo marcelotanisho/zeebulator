@@ -10,6 +10,7 @@
 #include <SDL.h>
 
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -32,7 +33,7 @@
 #include "core/loader/mod.h"
 #include "core/loader/pkg.h"
 #include "frontends/standalone/sdl2_backend.h"
-#include "frontends/standalone/sdl2_gl_backend.h"
+#include "frontends/standalone/null_gl_backend.h"
 
 namespace {
 
@@ -177,7 +178,8 @@ struct CallResult {
 CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap_base,
                                    uint32_t mod_base, uint32_t mod_size, uint32_t entry,
                                    uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
-                                   bool trace = false, bool hle_trace = false) {
+                                   bool trace = false, bool hle_trace = false,
+                                   zeebulator::IDisplayHle* display_for_liveness = nullptr) {
   constexpr uint64_t kMaxSteps = 5'000'000;
   cpu.SetRegister(zeebulator::kR0, r0);
   cpu.SetRegister(zeebulator::kR1, r1);
@@ -189,12 +191,29 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
   CallResult result;
   uint32_t last_in_module_pc = 0;
   uint32_t last_lr = 0;
+  // See IDisplayHle::RepresentLastFrame's own doc comment: a single real
+  // ARM call below can run for millions of interpreted instructions
+  // without ever returning control to the outer tick loop that normally
+  // keeps the window's last real frame visible -- checked cheaply (a
+  // counter, not a clock read, on every single step) so a real call that
+  // legitimately runs long doesn't let a whole real second pass with the
+  // window never re-presented.
+  uint64_t steps_since_liveness_check = 0;
+  auto last_liveness_present = std::chrono::steady_clock::now();
   for (uint64_t steps = 0; cpu.GetRegister(zeebulator::kPC) != trap_base; ++steps) {
     if (steps >= kMaxSteps) {
       std::printf("warning: exceeded %llu steps without returning -- aborting this call\n",
                   static_cast<unsigned long long>(kMaxSteps));
       result.exceeded_step_budget = true;
       break;
+    }
+    if (display_for_liveness != nullptr && ++steps_since_liveness_check >= 20000) {
+      steps_since_liveness_check = 0;
+      auto now = std::chrono::steady_clock::now();
+      if (now - last_liveness_present > std::chrono::milliseconds(200)) {
+        last_liveness_present = now;
+        display_for_liveness->RepresentLastFrame();
+      }
     }
     uint32_t pc = cpu.GetRegister(zeebulator::kPC);
     bool in_module = pc >= mod_base && pc < mod_base + mod_size;
@@ -303,10 +322,9 @@ int main(int argc, char** argv) {
   constexpr int kWidth = 640;
   constexpr int kHeight = 480;
   constexpr int kAudioSampleRate = 22050;
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
   SDL_Window* window =
       SDL_CreateWindow("Zeebulator - game probe", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                        kWidth, kHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
+                        kWidth, kHeight, SDL_WINDOW_SHOWN);
   SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
   zeebulator::ArmInterpreter cpu;
@@ -314,7 +332,15 @@ int main(int argc, char** argv) {
   zeebulator::HleRuntime hle(cpu, kTrapBase, 0x10000);
   zeebulator::Sdl2Backend backend(renderer, kWidth, kHeight, kAudioSampleRate);
   zeebulator::IDisplayHle display(backend, kWidth, kHeight);
-  zeebulator::Sdl2GlBackend gl_backend(window);
+  // See NullGlBackend's own doc comment: a real host GL context anywhere
+  // in this process -- even an otherwise-idle, private, hidden one --
+  // reliably breaks this desktop's real compositor into no longer
+  // repainting the real, visible 2D IDisplay window above, a confirmed
+  // real environment bug no application-level workaround tried so far
+  // gets around. Real GLES rendering isn't a complete pipeline yet for
+  // actual games regardless, so this keeps IGL/IEGL answering plausibly
+  // without ever standing up a real context.
+  zeebulator::NullGlBackend gl_backend;
   zeebulator::GlHle gl_hle(gl_backend);
   zeebulator::Mixer mixer(kAudioSampleRate);
   zeebulator::FileHle file_hle(cpu.GetMemory(), hle, vfs, /*object_region=*/0x80100000);
@@ -1064,8 +1090,9 @@ int main(int argc, char** argv) {
   try {
     std::printf("Calling AEEMod_Load...\n");
     constexpr uint32_t kPpModAddr = 0x00090000;
-    auto load_result =
-        CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, entry, shell, 0, kPpModAddr, 0);
+    auto load_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, entry, shell, 0,
+                                               kPpModAddr, 0, /*trace=*/false, /*hle_trace=*/false,
+                                               &display);
     uint32_t module_ptr = mem.Read32(kPpModAddr);
     if (load_result.wandered_outside_module || load_result.exceeded_step_budget || !module_ptr) {
       std::printf("AEEMod_Load did not produce a trustworthy module pointer -- stopping.\n");
@@ -1078,8 +1105,9 @@ int main(int argc, char** argv) {
     uint32_t create_instance_fn = mem.Read32(module_vtable + 2 * 4);
     std::printf("Calling IModule::CreateInstance(ClsId=%u)...\n", cls_id);
     constexpr uint32_t kPpObjAddr = 0x00090010;
-    auto create_result = CallArmFunctionChecked(
-        cpu, kTrapBase, kBase, mod_size, create_instance_fn, module_ptr, shell, cls_id, kPpObjAddr);
+    auto create_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, create_instance_fn,
+                                                 module_ptr, shell, cls_id, kPpObjAddr,
+                                                 /*trace=*/false, /*hle_trace=*/false, &display);
     // *ppObj is the IApplet* itself, not a function pointer -- HandleEvent
     // is slot 2 of *its* vtable (AddRef=0, Release=1, HandleEvent=2, per
     // the real AEEAppGen.c reference source's IAppletVtbl init order).
@@ -1130,7 +1158,8 @@ int main(int argc, char** argv) {
     std::printf("Calling HandleEvent(EVT_APP_START)...\n");
     // boolean HandleEvent(IApplet *po, AEEEvent evt, uint16 wParam, uint32 dwParam)
     auto handle_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn,
-                                                 applet_ptr, kEvtAppStart, 0, kAppStartAddr);
+                                                 applet_ptr, kEvtAppStart, 0, kAppStartAddr,
+                                                 /*trace=*/false, /*hle_trace=*/false, &display);
     if (handle_result.wandered_outside_module || handle_result.exceeded_step_budget) {
       std::printf("HandleEvent(EVT_APP_START) did not complete trustworthily -- stopping.\n");
       return 1;
@@ -1201,7 +1230,8 @@ int main(int argc, char** argv) {
           uint32_t evt = (event.type == SDL_KEYDOWN) ? kEvtKeyDown : kEvtKeyUp;
           try {
             auto key_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size,
-                                                       handle_event_fn, applet_ptr, evt, avk, 0);
+                                                      handle_event_fn, applet_ptr, evt, avk, 0,
+                                                      /*trace=*/false, /*hle_trace=*/false, &display);
             std::printf("HandleEvent(evt=0x%x, wParam=0x%x) returned %u%s\n", evt, avk,
                         key_result.r0,
                         key_result.wandered_outside_module ? " (wandered!)" : "");
@@ -1242,7 +1272,8 @@ int main(int argc, char** argv) {
                   *captured_download_callback);
       try {
         CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, *captured_download_callback,
-                               *captured_download_context, kSimulatedEventStructAddr, 0, 0);
+                               *captured_download_context, kSimulatedEventStructAddr, 0, 0,
+                               /*trace=*/false, /*hle_trace=*/false, &display);
       } catch (const std::exception& e) {
         std::printf("  [input] download-complete callback threw: %s\n", e.what());
       }
@@ -1289,7 +1320,8 @@ int main(int argc, char** argv) {
       }
       try {
         CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, *captured_button_callback,
-                               *captured_button_context, 0, 0, 0);
+                               *captured_button_context, 0, 0, 0, /*trace=*/false,
+                               /*hle_trace=*/false, &display);
       } catch (const std::exception& e) {
         std::printf("  [input] button callback threw: %s\n", e.what());
       }
@@ -1301,7 +1333,7 @@ int main(int argc, char** argv) {
         auto tick_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, timer.callback,
                                                    timer.user_data, 0, 0, 0,
                                                    /*trace=*/false,
-                                                   /*hle_trace=*/trace_this_tick);
+                                                   /*hle_trace=*/trace_this_tick, &display);
         if (tick_result.wandered_outside_module || tick_result.exceeded_step_budget) {
           std::printf("timer callback did not complete trustworthily -- stopping.\n");
           running = false;
@@ -1317,6 +1349,13 @@ int main(int argc, char** argv) {
       ++tick_count;
     }
     mixer.Mix(backend, static_cast<size_t>(kAudioSampleRate * kTickMs / 1000));
+    // See IDisplayHle::RepresentLastFrame's own doc comment: keeps the
+    // window actually showing whatever was last drawn even on ticks
+    // where real app code doesn't call IDISPLAY_Update itself. The
+    // in-loop check inside CallArmFunctionChecked covers long individual
+    // real calls; this covers the (usually much smaller) gaps between
+    // them.
+    display.RepresentLastFrame();
     SDL_Delay(kTickMs);
   }
 
