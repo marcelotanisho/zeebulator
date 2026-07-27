@@ -6476,3 +6476,82 @@ reverted; `git status` clean (`core/brew/gl_backend.h`,
 `frontends/standalone/sdl2_{gl,unified}_backend.{h,cpp}`,
 `tests/gl_hle_test.cpp`, `tests/gl_lifecycle_test.cpp`,
 `tests/obm1_test.cpp`).
+
+## Real controller input, live from the keyboard: fully traced, fully wired, fully verified
+
+The user asked directly: "hook up the controllers to the keyboard, so
+I can control the screen and check that here." This turned into one of
+this project's deepest live-tracing sessions -- and it fully worked,
+confirmed end to end against the real, already-documented title-screen
+progression gate.
+
+**Re-confirmed the title screen genuinely never asks for anything on
+its own** first (temporary `[DBGCLS]` `CreateInstance` trace, reverted):
+90 real seconds with the now-fully-working textures/transparency, still
+zero new `ClsId` requests beyond the same eight calls in the first
+150ms. No shortcuts available -- real controller input is the only way
+forward, exactly as the user proposed.
+
+**Found the real, live consumer of the already-wired-but-never-fed real
+HID button mechanism** (`hid_device_methods[9]`/`captured_button_callback`,
+long present in `tools/game_probe.cpp` but never driven by anything).
+A live read-watch (the same real technique from this project's earlier
+rounds: a temporary global in `core/memory/memory.{h,cpp}`, a PC
+tracker in `core/cpu/arm_interpreter.cpp`, both reverted after use) on
+`captured_button_context+0x28` immediately found a real, consistent
+per-tick reader at `ddragonz.mod` offset `0x12376c` -- a real per-
+gamepad-slot "latch this frame's input, reset the one-shot edges"
+function (`0x123740`), itself feeding a real "OR both gamepad slots
+together" combine function (`0x11a2ec`) that writes
+`applet+0x3618/0x361c/0x3620` -- confirmed via a second live write-
+watch landing exactly where static disassembly predicted. `applet+
+0x361c` bit `0x100` is the exact real bit this project's own much
+earlier investigation (before this session) found gates the title
+screen's progression -- full circle, same real struct, independently
+re-derived.
+
+**Injected a real test button press through the real callback and
+watched it silently fail** -- `queue_remaining=0` (consumed) but the
+callback's own internal translator function (`0x100740`) returned
+failure. Traced *that* function directly rather than guess again:
+it subtracts a real base UID from the real `nButtonUID` field and
+jump-tables the result into a small `nButtonID`, silently dropping
+anything outside its own real 10-entry recognized subset. **Found the
+real base UID is real, named, and documented** -- one off from this
+project's own already-confirmed `AEEUID_HID_Joystick_Device`
+(`0x0106c3fd`) sits `research/docs/sdk_installer_extract/
+sdk_installer_cab/_23C2FF7AB01B49768D1DB61FA4834C66`
+(`AEEHIDDevice_Joystick.h`, real bundled Qualcomm header, 2008
+copyright), naming all 16 real joystick button/axis UIDs explicitly.
+Made one real off-by-one mistake deriving the jump table's real target
+addresses (ARM's `add pc,pc,r1,lsl#2` reads `pc` as the *next*
+instruction's address, not the current one) -- caught it by directly
+instrumenting the branch targets (temporary, reverted) rather than
+trusting the arithmetic blindly, then re-verified.
+
+**Confirmed the real, complete result live, tick by tick** (temporary
+prints, reverted): injecting the real `AEEUID_HIDJoystick_Back`
+(`0x0106c403`) UID through the exact same path a real keypress now
+uses shows `context+0x28`/`+0x2c` set (bit `0x100`) the instant the
+callback runs, `applet+0x3618` (held) and `applet+0x361c` (just-
+pressed) both showing bit `0x100` exactly one real tick later, held
+persisting indefinitely (never released) while the press-edge
+correctly self-clears the following tick -- textbook correct real
+edge-triggered input state, matching this project's own already-
+documented gate check precisely.
+
+**Implemented for real**: `SdlKeyToHidButton` (`tools/game_probe.cpp`)
+maps real keys to the real, named UID constants Double Dragon's own
+table actually recognizes -- confirmed by the same live trace, not
+assumed from the header alone: arrows -> real D-pad, Enter/Backspace ->
+real `Back` (the confirmed progression button), Q/E -> real upper
+shoulder buttons, Z/X/C/V -> real face buttons 1-4. `Start` and both
+real thumbstick-click UIDs are real and valid but simply outside Double
+Dragon's own recognized subset -- not a project gap, a real fact about
+this specific title. Wired into the main loop's existing key-handling
+block, alongside (not replacing) the classic AVK path: every keypress
+now drives both real input mechanisms this codebase implements. All
+temporary instrumentation (`[DBGWATCH]`, `[DBGNORM]`, `[DBGBR]`,
+`[DBGCB]`, `[DBGSLOT9]`, `[DBGVERIFY]`, the one-shot test injection)
+reverted; `git status` clean except `tools/game_probe.cpp`'s real,
+permanent feature.

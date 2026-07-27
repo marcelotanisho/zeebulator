@@ -2469,6 +2469,31 @@ playable start-to-finish at full speed, standalone build.
       tests pass. **Verified on the real desktop**: the magenta panels
       behind the logo are gone, real dragon line-art shows through
       cleanly. See PHASE8_LOG.md's "Real transparency" section.
+      **Real controller input wired to the keyboard next**, at the
+      user's request. Live-traced the whole real chain end to end (a
+      real read-watch + write-watch, both reverted): the already-
+      present-but-never-fed real HID button callback
+      (`ddragonz.mod` `0x11bdf4`) → a real per-tick latch function
+      (`0x123740`) → a real combine function (`0x11a2ec`) that ORs two
+      real gamepad slots into `applet+0x3618/0x361c/0x3620` — the
+      exact real struct this project's own much earlier investigation
+      found gates title-screen progression (bit `0x100` at
+      `+0x361c`). The callback's own real UID→button translator
+      (`0x100740`) only recognizes 10 of 16 real joystick UIDs, all
+      confirmed named and numbered against a real bundled Qualcomm
+      header (`AEEHIDDevice_Joystick.h`) — full real D-pad, `Back`
+      (the confirmed progression button), both upper shoulders, and
+      four face buttons. Caught and fixed one real off-by-one in the
+      jump table's own address arithmetic by instrumenting the branch
+      targets directly rather than trusting hand arithmetic.
+      **Verified live, tick by tick**: an injected real button press
+      propagates correctly through every stage, matching the known-
+      real gate exactly, edge-trigger semantics textbook-correct.
+      `SdlKeyToHidButton` (`tools/game_probe.cpp`) now maps arrows/
+      Enter-Backspace/Q-E/Z-X-C-V to the real recognized UIDs, wired
+      into the existing key-handling loop alongside the classic AVK
+      path. All temporary instrumentation reverted. See PHASE8_LOG.md's
+      "Real controller input" section for the full derivation.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

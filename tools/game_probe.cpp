@@ -275,6 +275,67 @@ uint32_t SdlKeyToAvk(SDL_Keycode key) {
   }
 }
 
+// Maps a subset of SDL keys to real HID `nButtonUID` values, for the
+// *other* real input path this codebase has wired up but never fed
+// live input into: the real HID/gamepad button-event mechanism
+// (`hid_device_methods[9]`/`captured_button_callback` below), separate
+// from the classic AVK key path `SdlKeyToAvk` feeds.
+//
+// Real disassembly this round traced the whole real pipeline live, end
+// to end, not guessed: the registered callback (`ddragonz.mod`
+// `0x11bdf4`) calls a real translation function (`0x100740`) that
+// subtracts a real base UID from `nButtonUID` and jump-tables the
+// result (0-15) into a real, small `nButtonID`, unrecognized codes
+// (outside the game's own real 10-button subset) making the whole
+// event get silently dropped. That callback then writes a real per-
+// gamepad held/pressed/released bitmask, a real per-tick function
+// (`0x123740`) latches it, and a real combine function (`0x11a2ec`)
+// ORs both real gamepad slots together into
+// `applet+0x3618/0x361c/0x3620` -- all confirmed via live watch/write-
+// watch, including a full injected keypress observed propagating
+// through every single stage up to the real, already-documented
+// title-screen progression gate (`tst [applet+0x361c], #0x100`).
+//
+// The real UID *values* being subtracted from aren't guessed either --
+// they're this project's own bundled, genuine Qualcomm SDK header
+// (`research/docs/sdk_installer_extract/sdk_installer_cab/
+// _23C2FF7AB01B49768D1DB61FA4834C66`, `AEEHIDDevice_Joystick.h`),
+// giving every one of these a real name, not just a real number. Of
+// the header's 16 real joystick UIDs, Double Dragon's own real table
+// recognizes exactly 10: the full real D-pad, `Back` (confirmed live,
+// see above -- this is the real title-progression button), both real
+// *upper* shoulder buttons, and all four real face buttons
+// (`Button_1`-`Button_4`). `Start` and both real thumbstick-click UIDs
+// are real, valid, and simply not in Double Dragon's own recognized
+// subset -- not a project gap.
+uint32_t SdlKeyToHidButton(SDL_Keycode key) {
+  constexpr uint32_t kDPadUp = 0x0106c3fe;
+  constexpr uint32_t kDPadLeft = 0x0106c3ff;
+  constexpr uint32_t kDPadDown = 0x0106c400;
+  constexpr uint32_t kDPadRight = 0x0106c401;
+  constexpr uint32_t kBack = 0x0106c403;              // confirmed real: the title-progression button
+  constexpr uint32_t kLeftShoulderUpper = 0x0106c406;
+  constexpr uint32_t kRightShoulderUpper = 0x0106c408;
+  constexpr uint32_t kButton1 = 0x0106c40a;
+  constexpr uint32_t kButton2 = 0x0106c40b;
+  constexpr uint32_t kButton3 = 0x0106c40c;
+  constexpr uint32_t kButton4 = 0x0106c40d;
+  switch (key) {
+    case SDLK_UP: return kDPadUp;
+    case SDLK_DOWN: return kDPadDown;
+    case SDLK_LEFT: return kDPadLeft;
+    case SDLK_RIGHT: return kDPadRight;
+    case SDLK_BACKSPACE: case SDLK_RETURN: return kBack;
+    case SDLK_q: return kLeftShoulderUpper;
+    case SDLK_e: return kRightShoulderUpper;
+    case SDLK_z: return kButton1;
+    case SDLK_x: return kButton2;
+    case SDLK_c: return kButton3;
+    case SDLK_v: return kButton4;
+    default: return 0;  // 0 is not a real UID any real device would ever send
+  }
+}
+
 // EXPERIMENTAL: a fake connected-joystick handle, reported by the HID
 // scaffold below instead of the honest "zero devices" answer this
 // project used through TASKS.md Phase 8's Double Dragon investigation.
@@ -1240,6 +1301,35 @@ int main(int argc, char** argv) {
           } catch (const std::exception& e) {
             std::printf("key event threw: %s (pc=0x%08x, offset 0x%08x from mod base)\n", e.what(),
                         cpu.GetRegister(zeebulator::kPC), cpu.GetRegister(zeebulator::kPC) - kBase);
+          }
+        }
+        // Second, separate real input path (see SdlKeyToHidButton's own
+        // doc comment): feed the same real keypress into the real HID
+        // button-event mechanism too, the same way a real fired
+        // ISignal would -- push the event for GetNextButtonEvent to
+        // hand out, then invoke the real registered callback directly
+        // (real IDLECBFUNC signature: void (*)(void *pUser), confirmed
+        // by this callback's own real disassembly taking exactly one
+        // incoming argument).
+        uint32_t hid_button_uid = SdlKeyToHidButton(event.key.keysym.sym);
+        if (hid_button_uid != 0 && *captured_button_callback != 0) {
+          int state = (event.type == SDL_KEYDOWN) ? 1 : 0;
+          // nButtonID (first field) is a don't-care: the real callback's
+          // own translation function overwrites it from nButtonUID (see
+          // SdlKeyToHidButton's doc comment) before ever reading it back.
+          simulated_button_events->push_back({0, state, static_cast<int32_t>(hid_button_uid)});
+          try {
+            auto cb_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size,
+                                                     *captured_button_callback,
+                                                     *captured_button_context, 0, 0, 0,
+                                                     /*trace=*/false, /*hle_trace=*/false, &display,
+                                                     &backend);
+            std::printf("HID button callback(uid=0x%x, state=%d) ran%s\n", hid_button_uid, state,
+                        cb_result.wandered_outside_module ? " (wandered!)" : "");
+          } catch (const std::exception& e) {
+            std::printf("HID button callback threw: %s (pc=0x%08x, offset 0x%08x from mod base)\n",
+                        e.what(), cpu.GetRegister(zeebulator::kPC),
+                        cpu.GetRegister(zeebulator::kPC) - kBase);
           }
         }
       }
