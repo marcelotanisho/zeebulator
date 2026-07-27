@@ -6655,3 +6655,79 @@ All temporary instrumentation (`[DBGPACE]`, `[DBGTIMER]`, the
 `#include <cstdio>` it needed in `core/brew/ishell.cpp`) fully
 reverted; `git diff --stat` clean except the two real, permanent
 fixes (`CMakeLists.txt`, `tools/game_probe.cpp`).
+
+## Real freeze on the second button press: a missing per-event re-arm
+
+The user reported: "If I press right the entire game freezes." Reproduced
+live (real XTest-simulated keyboard input into the real window, via a
+real focus-then-inject script -- no physical keyboard access needed) and
+root-caused with real evidence, not guesswork; the actual bug turned out
+to have nothing to do with "Right" specifically.
+
+**First reproduction**: fresh process, real Right press -> both real
+input paths (`HandleEvent`/classic AVK and the real HID button callback)
+threw `Miscellaneous instruction space (MRS/MSR/etc.)` at a real,
+consistent `pc=0x00090024`, and the window visibly stopped updating
+(two screen captures several seconds apart were bit-for-bit identical --
+even the title screen's own real "press HOME" blink animation had
+stopped). A full instruction trace (`trace=true`, temporary) showed
+the real callback (`ddragonz.mod` `0x11bdf4`) calling the already-
+documented UID-translation dispatcher (`0x100740`) with `r0=0`; inside
+it, `LDR r1,[r0]` then `LDR r12,[r1,#0x24]` then `BX r12` chains three
+reads off a null base straight to `PC=0`, then (this project's
+already-documented behavior) wanders ~400-500 harmlessly-zero-decoded
+steps until PC coincidentally lands on a real, non-zero byte pattern
+(Double Dragon's own real ClsId constant, `0x0102f789`, sitting at
+`0x00090024`) that happens to decode as an unimplemented MRS/MSR-space
+instruction.
+
+**Assumed "Right" was special and it wasn't.** A direct side-by-side
+comparison (same process, same real focus, `Down` then `Right`, full
+trace) found `Down` succeeds completely -- `LDR r1,[r0]` returns a real,
+valid pointer (`0x80064000`, confirmed to be this project's own
+`kHidDeviceObject`, i.e. `r0` pointed at a real per-device struct
+whose first field correctly held a pointer back to the scaffolded
+`IHIDDevice` object). **Right crashed only because it happened to be
+the button pressed *after* a full press+release cycle already
+completed.** A temporary write-watch on that exact field
+(`*captured_button_context`, `0x80300a54` this run) caught the real
+culprit directly: real code at `ddragonz.mod` `0x10ada4`/`0x10adb8`
+(inside `0x100740` itself) writes `0` into that field as part of its
+own real cleanup once a full press+release cycle finishes. Nothing
+ever writes a valid pointer back in -- confirmed by 20+ minutes of
+pure idle waiting with zero writes, and by the field simply staying
+`0` for every subsequent press. On real hardware this field is almost
+certainly re-armed by firmware as part of genuinely delivering a new
+signal; this project's own simulated injection (`tools/game_probe.cpp`,
+directly invoking the captured real callback) was skipping that step
+entirely, since it calls the callback straight through without going
+through whatever real mechanism would normally repopulate it.
+
+**Fixed** with one line, right before invoking the simulated callback:
+
+```cpp
+cpu.GetMemory().Write32(*captured_button_context, kHidDeviceObject);
+```
+
+**Verified live**: 8 real presses in one run (`Right, Right, Up, Down,
+Left, Right, Right, Right`, deliberately hammering Right specifically
+and repeatedly, interleaved with other directions) -- every single one
+now succeeds via the real HID callback path (`... ran`, never `...
+threw`), confirmed by a final screen capture still showing a live,
+correctly-updating `FPS:31` readout, no freeze. 303/303 tests pass.
+
+One separate, lower-priority loose end left alone: the *other*,
+already-documented-as-experimental classic AVK path
+(`SdlKeyToAvk`/`HandleEvent`, its own doc comment already says "not a
+claimed-correct real key mapping") still throws for Right's specific
+synthetic AVK code (`0xe02e`) even after this fix -- confirmed
+harmless (doesn't poison later ticks or other presses, every
+subsequent real interaction keeps succeeding) and out of scope here:
+the real, permanent, confirmed-correct input mechanism is the HID
+path, which is now fully fixed.
+
+All temporary instrumentation (`trace=true` on both key-handling call
+sites, the `=== BEGIN uid=... ===` marker, the write-watch globals in
+`core/memory/memory.{h,cpp}`, the matching `g_debug_current_pc` tracker
+in `core/cpu/arm_interpreter.cpp`) fully reverted; `git diff --stat`
+clean except the one real, permanent fix in `tools/game_probe.cpp`.

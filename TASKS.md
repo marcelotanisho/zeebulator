@@ -2494,6 +2494,28 @@ playable start-to-finish at full speed, standalone build.
       into the existing key-handling loop alongside the classic AVK
       path. All temporary instrumentation reverted. See PHASE8_LOG.md's
       "Real controller input" section for the full derivation.
+- [x] Fixed a real freeze: "if I press right the entire game freezes".
+      Root cause had nothing to do with Right specifically -- real code
+      (`ddragonz.mod` `0x100740`, the UID-translator this project
+      already found) clears `*captured_button_context` (the real
+      per-device pointer real code passes to the HID button callback)
+      back to `0` as its own real cleanup once a full press+release
+      cycle finishes, and nothing ever re-populates it, because real
+      firmware presumably does that as part of genuinely delivering
+      the *next* signal -- a step this project's simulated callback
+      injection was skipping. Confirmed live: **any** button pressed
+      right after a completed press+release cycle null-pointer-crashed
+      the real callback, freezing the display (confirmed via two
+      screen captures, seconds apart, bit-for-bit identical -- even
+      the title screen's own blink animation had stopped). Fixed with
+      one line in `tools/game_probe.cpp`: re-write the field
+      (`kHidDeviceObject`) right before every simulated callback
+      invocation, mirroring what real signal delivery must do.
+      Verified live with 8 real presses in one run, deliberately
+      hammering Right repeatedly and interleaved with other
+      directions -- every one now succeeds, confirmed by a final,
+      still-live `FPS:31` screen capture. 303/303 tests pass. See
+      PHASE8_LOG.md's "Real freeze on the second button press" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

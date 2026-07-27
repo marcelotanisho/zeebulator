@@ -1319,6 +1319,24 @@ int main(int argc, char** argv) {
           // own translation function overwrites it from nButtonUID (see
           // SdlKeyToHidButton's doc comment) before ever reading it back.
           simulated_button_events->push_back({0, state, static_cast<int32_t>(hid_button_uid)});
+          // Real-evidenced re-arm, not optional: `*captured_button_context`
+          // (the real per-device struct real code passes as `pUser`) has
+          // its own first field (offset 0) read by the real translator
+          // function (`0x100740`) as a pointer back to the real device
+          // object (its vtable slot 9, byte offset 0x24, resolves to a
+          // real `GetNextButtonEvent`-shaped trap) -- and real code
+          // *clears that field to 0* as part of its own real cleanup once
+          // a full press+release cycle finishes (confirmed live via a
+          // temporary write-watch, PHASE8_LOG.md: real PCs
+          // `ddragonz.mod` 0x10ada4/0x10adb8, inside 0x100740 itself).
+          // Nothing re-populates it afterward, because on real hardware
+          // that's presumably firmware's job when delivering a genuine
+          // new signal -- a step this simulated injection has to do
+          // itself, or every button press after the very first
+          // press+release cycle null-pointer-crashes the real callback
+          // (confirmed live: this is what was happening, for *any*
+          // button, not one specific direction).
+          cpu.GetMemory().Write32(*captured_button_context, kHidDeviceObject);
           try {
             auto cb_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size,
                                                      *captured_button_callback,
