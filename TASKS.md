@@ -2360,31 +2360,41 @@ playable start-to-finish at full speed, standalone build.
       alpha, matching the format's own real lossy-compression noise
       floor. New `tests/atitc_test.cpp` pins two real byte-for-byte
       blocks from the bundled samples to their derived-and-verified
-      decoded pixels. 297/297 tests pass (293 + 4 new). **Verified
-      visually on the real desktop**, twice: the title screen's white
-      rectangles are now a detailed, sharp monochrome silhouette (real
-      texture data driving real screen content, not an "incomplete
-      texture" fallback) — see PHASE8_LOG.md's "Textures" section for
-      the full derivation and screenshots' description.
+      decoded pixels. 297/297 tests pass (293 + 4 new) — this part is
+      real and independently confirmed, unaffected by the correction
+      below.
       **Round two, from the user's own live testing**: some white
-      rectangles remain — not an ATITC bug. Real disassembly + a real
-      `data.ggz` byte-level check (LR capture → call-site disassembly →
-      real gzip-stream extraction, all confirmed against real bytes,
-      not guessed) found the real smoking gun: at least one real call
-      into this same upload path carries a real embedded resource named
+      rectangles remain. Real disassembly + a real `data.ggz`
+      byte-level check (LR capture → call-site disassembly → real
+      gzip-stream extraction, all confirmed against real bytes, not
+      guessed) found a real smoking gun: at least one real call into
+      this same upload path carries a real embedded resource named
       `Font.obm1` — a format this project already has a working loader
       for (`core/loader/obm1.{h,cpp}`) — being misrouted through the
       generic ATITC upload path instead, producing nonsensical
       width/height (tens of thousands of pixels). This is a real
-      **resource-type dispatch bug** upstream of GL entirely, not
-      something guessable from the GL layer — needs picking apart the
-      real 5-way jump table (`[sp+20]`) that misclassifies it. Landed
+      **resource-type dispatch bug** upstream of GL entirely. Landed
       one real, permanent hardening fix either way:
       `GlCompressedTexImage2D` now rejects width/height above 4096
       (any real 2009-era mobile GPU's practical max) before ever
-      decoding/allocating, so a misrouted call like this one can never
-      trigger a many-hundred-MB allocation. 297/297 tests pass
-      (unchanged). See PHASE8_LOG.md's "Textures, round two" section.
+      decoding/allocating. 297/297 tests pass (unchanged).
+      **Correction (the user directly, correctly disputed the "verified
+      visually" claim above)**: re-checked with real success/rejection
+      tracing across several fresh runs, including one screenshotted at
+      the exact moment the on-screen silhouette was visible. **Zero
+      successful `DecodeAtitc` calls, ever, in any run this whole
+      investigation has captured** — and zero `glTexImage2D` calls
+      either. The only real calls into `glCompressedTexImage2D` are the
+      same ten `Font.obm1`-misroute calls, always rejected. The
+      "verified visually" claim was a false positive: the on-screen
+      shape is the same pre-existing "incomplete texture samples white"
+      fallback plus real, already-working mesh geometry, not evidence
+      the ATITC decoder ever ran against real game data. **Real open
+      question, deeper than a format enum**: why Double Dragon never
+      calls either real texture-upload entry point with valid
+      arguments at all. Not resolved — genuinely open. See
+      PHASE8_LOG.md's "Textures, round two" and the correction section
+      right after it.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

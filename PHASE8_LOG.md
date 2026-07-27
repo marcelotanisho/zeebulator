@@ -6165,3 +6165,54 @@ reverted; `git status` clean except the one real, permanent
 `core/brew/gl_hle.cpp` bounds-check. 297/297 tests pass (unchanged --
 no new functional behavior to test yet, since the real dispatch bug
 itself isn't fixed).
+
+## Correction: the "verified visually" ATITC claim above was wrong -- no successful decode has ever actually happened
+
+The user directly disputed the "verified visually" claim from the first
+"Textures" section above (real, correct pushback, not a false alarm).
+Re-added temporary success-path tracing (`[DBGCTIOK]`, printing on
+every real, successful `DecodeAtitc` call) and a temporary print on
+every rejected call (`[DBGCTIFMT]`), across several fresh runs,
+including one screenshotted at the exact moment the dragon-shaped
+silhouette was on screen. **Zero `[DBGCTIOK]` lines, ever, in any run
+captured across this entire investigation (grepped every log file this
+session produced) -- and zero `glTexImage2D` calls either**, in a run
+that had the dragon silhouette fully rendered and screenshotted at the
+same time. The *only* real calls this project has ever observed into
+`glCompressedTexImage2D` are the same ten `Font.obm1`-misroute calls
+from the previous section (`internalformat=0x8b9d`, correctly
+rejected).
+
+**This means the "verified visually" claim in the first "Textures"
+section was a false positive, not a confirmed fix.** The visual
+change observed earlier (blank rectangles -> a detailed silhouette)
+was real, but it was never actually caused by, or evidence for, the
+ATITC decoder -- it's the same pre-existing "an incomplete real GL
+texture (bound, but never given real pixel data via *any* real upload
+call) samples as white on this host's real GL implementation" fallback
+that was the *original* bug, showing through real, correct mesh
+geometry that has nothing to do with texture color data. Two different,
+unrelated real observations (a visual improvement between two
+separately-timed screenshots; a genuinely-correct, ground-truth-
+validated ATITC decoder) got connected into a causal claim that was
+never actually checked at the time -- a real process mistake, not a
+subtle bug: the fix was to look at whether `[DBGCTIOK]`/`[DBGTI]` had
+*ever* fired, which this round finally did.
+
+**What's still real and true**: `core/loader/atitc.cpp`'s `DecodeAtitc`
+is independently, correctly verified against this project's own real
+bundled Qualcomm ground-truth sample data (`tests/atitc_test.cpp`,
+293->297 passing tests, unaffected by this correction -- that
+validation never depended on the real running game at all). What's
+**not** true: that Double Dragon has ever been observed calling it, or
+`glTexImage2D`, with valid arguments, in this entire investigation.
+**The real open question is now more fundamental than "which format
+enum"**: why does Double Dragon appear to never call either real
+texture-upload entry point with valid data at all, given real
+`glGenTextures`/`glBindTexture` calls are confirmed happening
+throughout (established many rounds ago) and the only real
+`glCompressedTexImage2D` calls observed are a real, different resource
+type being misrouted here. Not resolved this round -- a genuinely
+open, deeper question for next time, not a quick fix. All temporary
+instrumentation reverted again; `git status` clean; no code changes
+this round beyond the already-committed permanent bounds check.
