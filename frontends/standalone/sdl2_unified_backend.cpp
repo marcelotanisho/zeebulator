@@ -13,6 +13,35 @@
 
 namespace zeebulator {
 
+namespace {
+
+// Minimal 3x5 dot-matrix font, just the glyphs the FPS overlay needs.
+// Each row's 3 bits are columns left..right (bit2=leftmost).
+struct FontGlyph {
+  char c;
+  uint8_t rows[5];
+};
+
+constexpr FontGlyph kFont3x5[] = {
+    {'0', {0x7, 0x5, 0x5, 0x5, 0x7}}, {'1', {0x2, 0x6, 0x2, 0x2, 0x7}},
+    {'2', {0x7, 0x1, 0x7, 0x4, 0x7}}, {'3', {0x7, 0x1, 0x7, 0x1, 0x7}},
+    {'4', {0x5, 0x5, 0x7, 0x1, 0x1}}, {'5', {0x7, 0x4, 0x7, 0x1, 0x7}},
+    {'6', {0x7, 0x4, 0x7, 0x5, 0x7}}, {'7', {0x7, 0x1, 0x1, 0x1, 0x1}},
+    {'8', {0x7, 0x5, 0x7, 0x5, 0x7}}, {'9', {0x7, 0x5, 0x7, 0x1, 0x7}},
+    {'F', {0x7, 0x4, 0x7, 0x4, 0x4}}, {'P', {0x7, 0x5, 0x7, 0x4, 0x4}},
+    {'S', {0x7, 0x4, 0x7, 0x1, 0x7}}, {':', {0x0, 0x2, 0x0, 0x2, 0x0}},
+    {' ', {0x0, 0x0, 0x0, 0x0, 0x0}},
+};
+
+const FontGlyph* FindGlyph(char c) {
+  for (const auto& glyph : kFont3x5) {
+    if (glyph.c == c) return &glyph;
+  }
+  return nullptr;
+}
+
+}  // namespace
+
 Sdl2UnifiedBackend::Sdl2UnifiedBackend(SDL_Window* window, int width, int height,
                                         int audio_sample_rate)
     : window_(window),
@@ -138,6 +167,83 @@ void Sdl2UnifiedBackend::PushVideoFrame(const void* framebuffer, int width, int 
   glPopMatrix();
   glPopAttrib();
 
+  PresentFrame();
+}
+
+// Drawn last, on top of whatever real content (2D quad above or the
+// real app's own GLES draws via SwapBuffers) is already in the
+// backbuffer for this frame -- same save/restore-state pattern as the
+// PushVideoFrame quad above, so it never leaks state back to real app
+// or video-quad rendering next frame.
+void Sdl2UnifiedBackend::DrawFpsOverlay() {
+  char text[16];
+  std::snprintf(text, sizeof(text), "FPS:%d", static_cast<int>(fps_display_value_ + 0.5));
+
+  glPushAttrib(GL_ALL_ATTRIB_BITS);
+  glDisable(GL_TEXTURE_2D);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_BLEND);
+  glDisable(GL_CULL_FACE);
+
+  glMatrixMode(GL_PROJECTION);
+  glPushMatrix();
+  glLoadIdentity();
+  glOrtho(0.0, width_, height_, 0.0, -1.0, 1.0);  // (0,0) top-left, in real screen pixels
+
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix();
+  glLoadIdentity();
+
+  glColor4f(1.0f, 1.0f, 0.0f, 1.0f);
+
+  constexpr int kPixel = 3;    // real screen pixels per font "pixel"
+  constexpr int kGap = 1;      // real screen pixels between font pixels
+  constexpr int kCharGap = 6;  // extra real screen pixels between glyphs
+  constexpr int kOriginX = 6;
+  constexpr int kOriginY = 6;
+
+  int pen_x = kOriginX;
+  for (const char* p = text; *p != '\0'; ++p) {
+    const FontGlyph* glyph = FindGlyph(*p);
+    if (glyph != nullptr) {
+      for (int row = 0; row < 5; ++row) {
+        for (int col = 0; col < 3; ++col) {
+          if (((glyph->rows[row] >> (2 - col)) & 1) == 0) continue;
+          int x = pen_x + col * (kPixel + kGap);
+          int y = kOriginY + row * (kPixel + kGap);
+          glBegin(GL_QUADS);
+          glVertex2i(x, y);
+          glVertex2i(x + kPixel, y);
+          glVertex2i(x + kPixel, y + kPixel);
+          glVertex2i(x, y + kPixel);
+          glEnd();
+        }
+      }
+    }
+    pen_x += 3 * (kPixel + kGap) + kCharGap;
+  }
+
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix();
+  glMatrixMode(GL_MODELVIEW);
+  glPopMatrix();
+  glPopAttrib();
+}
+
+// Real display refresh rate is capped well below 1000Hz, so a 500ms
+// window is both frequent-enough to feel live and long-enough to
+// average out real single-frame jitter.
+void Sdl2UnifiedBackend::PresentFrame() {
+  ++fps_frame_count_;
+  Uint32 now = SDL_GetTicks();
+  if (fps_last_tick_ms_ == 0) {
+    fps_last_tick_ms_ = now;
+  } else if (now - fps_last_tick_ms_ >= 500) {
+    fps_display_value_ = fps_frame_count_ * 1000.0 / (now - fps_last_tick_ms_);
+    fps_frame_count_ = 0;
+    fps_last_tick_ms_ = now;
+  }
+  DrawFpsOverlay();
   SDL_GL_SwapWindow(window_);
 }
 
@@ -217,7 +323,7 @@ void Sdl2UnifiedBackend::SwapBuffers() {
   if (gl_context_ == nullptr) return;
   gl_swap_seen_ = true;
   SDL_GL_MakeCurrent(window_, gl_context_);
-  SDL_GL_SwapWindow(window_);
+  PresentFrame();
 }
 
 void Sdl2UnifiedBackend::Clear(GLbitfield mask) { glClear(mask); }

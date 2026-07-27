@@ -100,12 +100,25 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
   ZPadState PollController();
   ZPadState PollKeyboard();
 
+  // Common tail of both real presentation paths (PushVideoFrame's 2D
+  // quad and the real app's own eglSwapBuffers): updates the rolling
+  // FPS estimate, draws it as a small top-left overlay (immediate-mode
+  // GL quads, matching the save/restore-state pattern PushVideoFrame
+  // already uses, so it never corrupts real app-owned GL state), then
+  // does the one real SDL_GL_SwapWindow for this frame.
+  void PresentFrame();
+  void DrawFpsOverlay();
+
   SDL_Window* window_;
   SDL_GLContext gl_context_;
   int width_;
   int height_;
   GLuint video_texture_ = 0;  // lazily created on first PushVideoFrame
   bool gl_swap_seen_ = false;
+
+  Uint32 fps_last_tick_ms_ = 0;
+  int fps_frame_count_ = 0;
+  double fps_display_value_ = 0.0;
 
   SDL_AudioDeviceID audio_device_ = 0;
   int audio_sample_rate_;
