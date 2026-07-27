@@ -5912,3 +5912,91 @@ reverted; `git diff --stat`: `core/brew/ishell.{h,cpp}` (real
 `tools/game_probe.cpp`/`frontends/standalone/main.cpp` (pass real
 width/height; button-hold injection removed). 293/293 tests pass (292
 + the new `GetDeviceInfo` test).
+
+## Sound: `MediaHle` is real and wired, but never registered -- and Double Dragon's title screen doesn't ask for it anyway
+
+With the title screen now visible and stable, the next candidate was
+audio. `core/brew/media_hle.h`/`.cpp` turned out to already be a
+complete, real `IMedia` implementation (WAV/MIDI decode via
+`core/loader/{wav,midi}.h` -> `Mixer` -> real SDL2 audio device), and
+`tools/game_probe.cpp` already constructs it (`MediaHle media_hle(...)`)
+and drives its output every real tick (`mixer.Mix(backend, ...)`,
+confirmed already present in the main loop). **But `media_hle.Build()`
+is called and the object is never handed to `shell_hle.RegisterInstance`
+under any `ClsId` at all** -- a real, concrete, no-guessing-required bug:
+any real `ISHELL_CreateInstance(shell, AEECLSID_MEDIA, ...)` call the
+game makes is guaranteed to fail today, regardless of which numeric
+`ClsId` value is correct.
+
+Finding that numeric value turned into a real dead end this round, not
+a guess-and-move-on: no bundled reference header in `research/` defines
+`AEECLSID_MEDIA` (only usage-doc comments in the real `AEEIShell.h`
+reference and the real `AEEMediaUtil.c` sample, neither with the
+literal value). A temporary `[DBGCLS]` print added to
+`IShellHle::CreateInstanceImpl` (reverted after use) recorded every
+`ClsId` Double Dragon's own code actually requests and fails to get,
+across a clean, unmodified, **100-real-second** idle run of the already-
+stable title screen: exactly eight calls total, covering six distinct
+`ClsId`s (`0x01001002`, `0x0102f679`, `0x01030852`, `0x0102f681`, then
+`0x0100550a` and `0x01005501` twice each), and **all eight happen within
+the first ~150ms of the run** -- zero further `CreateInstance` calls of
+any kind for the remaining ~99.85 real seconds of idle title-screen
+time. The `0x0100550a`/`0x01005501` pair fires specifically from inside
+the already-identified real download/install-progress notification
+callback (`0x0011d020`, see the `0x01005511` class doc comment above) --
+numerically adjacent to it (`0x010055xx`) and reached from the exact
+same real call chain, not independently -- strong evidence this is the
+*same* download/catalog subsystem, not `IMedia`. None of the eight shows
+an `IMedia`-shaped call pattern (no `SetMediaParm`-style
+`(nParamID, p1, p2)` triple was ever going to be observable anyway,
+since every one of these `CreateInstance` calls fails before any method
+could be invoked on a result).
+
+Tried the project's own established "give it a generic per-slot-logging
+scaffold and watch what real code does with it" technique (temporary,
+reverted) on all six -- this was informative but in the wrong direction:
+registering a fake object for `0x01001002` let real code proceed into
+new territory that hadn't been reached before, ending in a real crash
+(`pc=0x00000000` wandered outside the module after ~97871 steps, from a
+`timer callback threw: Miscellaneous instruction space` exception).
+`0x01001002` sits in the same real low system-class range as the
+already-confirmed `AEECLSID_DISPLAY` (`0x01001001`) and `AEECLSID_
+FILEMGR` (`0x01001003`) -- almost certainly a real core BREW class
+(plausibly `AEECLSID_STATIC`), and definitely not safe to paper over
+with a blind stub. Reverted immediately; not registered.
+
+Also chased a real, distinctive anchor -- the literal string `sound.ggz`
+appears twice in `ddragonz.mod`'s own rodata (file offsets `0x4dae8`/
+`0x4e1a8`), sitting inside what a raw hex dump confirms is a genuine,
+large, fixed-stride (0x4c-byte) per-asset resource descriptor table
+(hundreds of `data.ggz`-referencing entries follow, continuing across
+multiple regions of the file). This is real and worth returning to --
+it's very likely the real per-resource-to-archive index Double Dragon's
+own asset loader walks -- but decoding its field layout (which field
+selects an audio vs. image handler, if any) wasn`t attempted this round;
+`objdump -b binary` on this file gives no symbol/relocation information
+to mechanically trace which code reads which literal-pool entry, so
+this would need real, careful manual disassembly around the functions
+referencing offsets `0x4dae0`-`0x4e460`, not a quick check.
+
+**Conclusion for this round**: on the real, already-fixed, stable title
+screen, Double Dragon genuinely does not request `IMedia` (or anything
+else) at all without further real interaction -- title-screen audio
+(if any) is gated behind real menu/gameplay progression this project
+deliberately no longer auto-simulates (see the button-hold removal
+above). Getting further on sound needs either (a) a real human driving
+real keyboard/controller input far enough to reach a state that
+actually calls `CreateInstance` for `IMedia`, live-traced the same way
+the `GetDeviceInfo`/viewport bug was found, or (b) manually walking the
+real `0x4dae0`-region resource table's real field layout to find a
+static, not-yet-reached real call site. Not a wasted round -- the
+`MediaHle`-never-registered bug is confirmed and real regardless of
+which path resolves the `ClsId` question -- but no numeric `ClsId` was
+registered this round, since every candidate examined turned out to
+belong to a different, already-identified real subsystem or an
+unconfirmed core system class, and guessing one in would violate this
+project's whole evidence-first approach. All temporary instrumentation
+(`[DBGCLS]`, the per-slot scaffold, a `[DBGSPIN]`/`[DBGTICK]` step-count
+check that disproved an initial false-alarm "hang" reading -- the
+title screen just stops being *traced* past tick 9, it never stops
+*running*) reverted; `git status` clean; 293/293 tests still pass.

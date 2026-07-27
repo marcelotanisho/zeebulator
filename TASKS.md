@@ -2324,6 +2324,28 @@ playable start-to-finish at full speed, standalone build.
       real ATITC compression) not yet implemented at all. 293/293 tests
       pass (new `IShellHle.GetDeviceInfoWritesRealScreenDimensions`
       test). All temporary diagnostics reverted. See PHASE8_LOG.md.
+      **Sound investigated next**: `MediaHle` (`core/brew/media_hle.h`)
+      is a real, complete `IMedia` implementation already wired into
+      `tools/game_probe.cpp`'s tick loop (`mixer.Mix` runs every real
+      tick) — but `media_hle.Build()`'s object is never registered with
+      `shell_hle.RegisterInstance` under any `ClsId`, so any real
+      `CreateInstance(AEECLSID_MEDIA, ...)` is guaranteed to fail today.
+      The real numeric `ClsId` wasn't found this round: no bundled
+      reference header defines it, and a temporary `[DBGCLS]` trace over
+      a clean 100-real-second idle run of the stable title screen showed
+      Double Dragon makes exactly 8 `CreateInstance` calls total, all
+      within the first ~150ms of startup, all belonging to already-
+      identified other subsystems (the download/catalog notification
+      family, an early core-system class) — zero further calls of any
+      kind for the remaining ~99.85s. Real title-screen audio (if any)
+      is apparently gated behind real menu/gameplay input this project
+      deliberately no longer auto-simulates. A real, large (hundreds-of-
+      entries, 0x4c-byte stride) per-asset resource table was found in
+      `ddragonz.mod`'s own rodata (anchored on the literal string
+      `sound.ggz` at file offset `0x4dae8`) as a promising real lead for
+      a static answer, not yet decoded. All temporary instrumentation
+      reverted; `git status` clean; 293/293 tests pass. See
+      PHASE8_LOG.md's "Sound" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
