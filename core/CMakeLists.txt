@@ -23,6 +23,8 @@ add_library(zeebulator_core STATIC
   loader/wav.h
   loader/midi.cpp
   loader/midi.h
+  loader/atitc.cpp
+  loader/atitc.h
   audio/mixer.cpp
   audio/mixer.h
   brew/hle_runtime.cpp

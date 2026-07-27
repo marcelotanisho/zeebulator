@@ -115,6 +115,14 @@ constexpr GLenum kGlUnsignedShort565 = 0x8363;
 constexpr GLenum kGlUnsignedShort4444 = 0x8033;
 constexpr GLenum kGlUnsignedShort5551 = 0x8034;
 
+// GL_ATI_texture_compression_atitc's two real internalformat tokens
+// (standard, publicly-registered Khronos extension enum values, not
+// Qualcomm-specific text -- same status as the kGl* constants above).
+// See core/loader/atitc.h for the real compressed block format these
+// select and how it was derived.
+constexpr GLenum kGlCompressedRgbAtiTc = 0x8C92;
+constexpr GLenum kGlCompressedRgbaAtiTc = 0x8C93;
+
 constexpr int GlFormatComponents(GLenum format) {
   switch (format) {
     case kGlAlpha:

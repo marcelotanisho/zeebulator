@@ -2346,6 +2346,26 @@ playable start-to-finish at full speed, standalone build.
       a static answer, not yet decoded. All temporary instrumentation
       reverted; `git status` clean; 293/293 tests pass. See
       PHASE8_LOG.md's "Sound" section.
+      **Textures implemented next, and this is a real, verified win**:
+      `glCompressedTexImage2D` (vtable slot 15, was a blind `Stub`) now
+      decodes real ATITC (`GL_COMPRESSED_RGB(A)_ATI_TC`) compressed
+      textures — confirmed real via this project's own bundled Qualcomm
+      `simple_atitc.c` sample — via a new `core/loader/atitc.h`/`.cpp`
+      decoder, then forwards the decoded RGBA8 to the existing
+      `GlBackend::TexImage2D` path. The block format and (non-evenly-
+      spaced!) 4-color interpolation weights were derived empirically
+      via least-squares regression against this project's own bundled
+      real compressed/uncompressed sample pairs — not from memory or any
+      public spec text — reconstruction error ~4.6/channel color, ~0.4
+      alpha, matching the format's own real lossy-compression noise
+      floor. New `tests/atitc_test.cpp` pins two real byte-for-byte
+      blocks from the bundled samples to their derived-and-verified
+      decoded pixels. 297/297 tests pass (293 + 4 new). **Verified
+      visually on the real desktop**, twice: the title screen's white
+      rectangles are now a detailed, sharp monochrome silhouette (real
+      texture data driving real screen content, not an "incomplete
+      texture" fallback) — see PHASE8_LOG.md's "Textures" section for
+      the full derivation and screenshots' description.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

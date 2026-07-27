@@ -1,6 +1,7 @@
 #include "core/brew/gl_hle.h"
 
 #include "core/brew/interface_object.h"
+#include "core/loader/atitc.h"
 
 namespace zeebulator {
 
@@ -418,6 +419,54 @@ void GlHle::GlTexImage2D(IArmCore& core) {
   backend_.TexImage2D(target, image);
 }
 
+void GlHle::GlCompressedTexImage2D(IArmCore& core) {
+  // void glCompressedTexImage2D(GLenum target, GLint level,
+  //                              GLenum internalformat, GLsizei width,
+  //                              GLsizei height, GLint border,
+  //                              GLsizei imageSize, const GLvoid *data)
+  GLenum target = core.GetRegister(kR0);
+  int level = static_cast<int>(core.GetRegister(kR1));
+  GLenum internal_format = core.GetRegister(kR2);
+  int width = static_cast<int>(core.GetRegister(kR3));
+  int height = static_cast<int>(HleRuntime::ReadStackArg(core, 0));
+  // border (stack arg 1) unused, same as GlTexImage2D.
+  uint32_t image_size = HleRuntime::ReadStackArg(core, 2);
+  uint32_t data_ptr = HleRuntime::ReadStackArg(core, 3);
+
+  AtitcFormat format;
+  if (internal_format == kGlCompressedRgbAtiTc) {
+    format = AtitcFormat::kRgb;
+  } else if (internal_format == kGlCompressedRgbaAtiTc) {
+    format = AtitcFormat::kRgba;
+  } else {
+    // Real other compressed formats (ETC1, PVRTC, ...) aren't
+    // implemented -- no evidence any real target game uses them (see
+    // this class's own doc comment). Leave the texture object as-is
+    // rather than guess.
+    return;
+  }
+
+  if (data_ptr == 0 || width <= 0 || height <= 0) return;
+  Memory& memory = core.GetMemory();
+  std::vector<uint8_t> compressed(image_size);
+  for (uint32_t i = 0; i < image_size; ++i) {
+    compressed[i] = memory.Read8(data_ptr + i);
+  }
+
+  auto decoded = DecodeAtitc(compressed.data(), compressed.size(), width, height, format);
+  if (!decoded.has_value()) return;
+
+  GlTextureImage image;
+  image.level = level;
+  image.internal_format = kGlRgba;
+  image.width = width;
+  image.height = height;
+  image.format = kGlRgba;
+  image.type = kGlUnsignedByte;
+  image.pixels = decoded->data();
+  backend_.TexImage2D(target, image);
+}
+
 // --- Vtable construction -------------------------------------------------
 
 uint32_t GlHle::BuildGl(Memory& memory, HleRuntime& hle, uint32_t vtable_address,
@@ -442,7 +491,7 @@ uint32_t GlHle::BuildGl(Memory& memory, HleRuntime& hle, uint32_t vtable_address
       [this](IArmCore& c) { GlColor4x(c); },      // 12 glColor4x
       Stub,                                       // 13 glColorMask
       [this](IArmCore& c) { GlColorPointer(c); }, // 14 glColorPointer
-      Stub,                                       // 15 glCompressedTexImage2D
+      [this](IArmCore& c) { GlCompressedTexImage2D(c); },  // 15 glCompressedTexImage2D
       Stub,                                       // 16 glCompressedTexSubImage2D
       Stub,                                       // 17 glCopyTexImage2D
       Stub,                                       // 18 glCopyTexSubImage2D

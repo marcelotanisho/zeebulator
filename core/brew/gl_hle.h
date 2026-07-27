@@ -57,10 +57,21 @@ namespace zeebulator {
 // glTexImage2D) -- glTexImage2D's pixel bytes are copied out of emulated
 // memory into a host-owned buffer sized from the real (format, type,
 // width, height), same emulated-memory-only-at-the-boundary approach as
-// the vertex arrays above.
+// the vertex arrays above. glCompressedTexImage2D is implemented too,
+// for the one real compressed format Double Dragon actually uses
+// (GL_COMPRESSED_RGB_ATI_TC / GL_COMPRESSED_RGBA_ATI_TC -- confirmed via
+// real disassembly showing glGenTextures/glBindTexture calls with no
+// glTexImage2D ever following them, and this project's own bundled real
+// Qualcomm ATITC sample; see TASKS.md/PHASE8_LOG.md Phase 8): decoded
+// host-side via core/loader/atitc.h into plain RGBA8, then forwarded to
+// GlBackend::TexImage2D like an ordinary uncompressed upload, since a
+// real desktop host GL implementation won't have this real mobile-GPU-
+// only extension. Real other formats (ETC1, PVRTC, ...) are NOT
+// implemented -- this project has no evidence any real target game uses
+// them.
 // The rest of the fixed-function state (lighting, texture combiners,
-// glTexSubImage2D, compressed textures, ...) is still Stubs (see
-// TASKS.md Phase 5 for what's next). EGLDisplay/EGLSurface/EGLContext/
+// glTexSubImage2D, ...) is still Stubs (see TASKS.md Phase 5 for what's
+// next). EGLDisplay/EGLSurface/EGLContext/
 // EGLConfig handles are
 // simulated as small sentinel integers; this class does not talk to any
 // real host EGL implementation itself -- GlBackend is responsible for the
@@ -125,6 +136,7 @@ class GlHle {
   void GlBindTexture(IArmCore& core);
   void GlTexParameterx(IArmCore& core);
   void GlTexImage2D(IArmCore& core);
+  void GlCompressedTexImage2D(IArmCore& core);
 
   // One array-pointer binding, as set by glVertexPointer/glColorPointer/
   // glTexCoordPointer/glNormalPointer -- kept exactly as declared

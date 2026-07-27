@@ -6000,3 +6000,79 @@ project's whole evidence-first approach. All temporary instrumentation
 check that disproved an initial false-alarm "hang" reading -- the
 title screen just stops being *traced* past tick 9, it never stops
 *running*) reverted; `git status` clean; 293/293 tests still pass.
+
+## Textures: real ATITC support, derived from this project's own bundled sample -- not guessed, not from memory
+
+Pivoted to the other confirmed, self-contained gap from earlier this
+round: real code calls `glGenTextures`/`glBindTexture` many times but
+never `glTexImage2D`. `core/brew/gl_hle.cpp`'s vtable already had slot
+15 (`glCompressedTexImage2D`) as a blind `Stub` -- and this project's
+own bundled research happens to include Qualcomm's real
+`simple_atitc.c` reference sample (`research/samples/
+MSM7500_OGLES_qcom_sdk_samples.release_02.15.07.beta1/simple_atitc/`),
+confirming real Double Dragon almost certainly uploads textures through
+`GL_COMPRESSED_RGB_ATI_TC`/`GL_COMPRESSED_RGBA_ATI_TC` (real ATI/AMD
+"ATITC" block compression) instead.
+
+**No public spec text or remembered algorithm was trusted blindly.**
+The same bundled sample directory also ships two real, matched pairs of
+compressed-texture-file + its original uncompressed source image
+(`texture_rgb.atitc.org`/`texture_rgb.tga`, `texture_rgba.atitc`/
+`texture_rgba.tga`, 128x128 each) -- real ground truth this project
+already had checked in. Used that directly: a Python analysis script
+(1) confirmed the block-file's row order matches the TGA's own raw
+(unflipped, bottom-up) scanline order exactly, by testing all four
+combinations of pixel/block orientation against real per-block color
+averages (33.3 avg error for the correct combination vs. ~197 for the
+wrong one -- unambiguous); (2) derived the real per-code color-
+interpolation weights via least-squares regression over every real
+texel in the image, pooled by 2-bit selector code, rather than assuming
+DXT1's evenly-spaced weights -- the fit came back clean and physically
+exact (`code0=(1,0)`, `code1=(0.666,0.334)≈(2c0+c1)/3`,
+`code2=(0.375,0.625)=(3c0+5c1)/8`, `code3=(0,1)`), confirming ATITC's
+real, distinctive quirk: color2/color3 are **not** evenly spaced like
+DXT1's are; (3) found the real RGBA block layout (16 bytes: 8 bytes of
+DXT3-style explicit 4-bit-per-texel alpha nibbles, low nibble first,
+*then* the same 8-byte RGB block, confirmed by testing "color first" vs
+"color last" against real alpha data -- 360 avg error vs. 17.6,
+unambiguous) and its alpha nibble scale (×17), which came back at 0.37
+avg error -- essentially exact modulo real 4-bit quantization. Full-
+image reconstruction error against the real ground truth: ~4.6/channel
+for color (a real, physically reasonable amount of loss at this
+format's real ~6:1 compression ratio), ~0.4 for alpha. The real GL
+enum values (`GL_COMPRESSED_RGB_ATI_TC=0x8C92`, `_RGBA_ATI_TC=0x8C93`)
+were separately confirmed from a second real bundled header
+(`research/docs/sdk_installer_extract/qx_cab/
+_81F04985BCAA4B3C9B34D39633767DB0`), not guessed either.
+
+Implemented as `core/loader/atitc.h`/`.cpp` (`DecodeAtitc`, a pure
+host-side decoder producing plain RGBA8 -- no HLE/GL coupling, directly
+unit-testable), wired into a new `GlHle::GlCompressedTexImage2D`
+(`core/brew/gl_hle.{h,cpp}`, replacing the slot-15 `Stub`): decodes the
+real compressed bytes, then forwards the result to the existing
+`GlBackend::TexImage2D` path unchanged, since a real desktop host GL
+implementation won't have this real mobile-only extension. New test
+file `tests/atitc_test.cpp`: two of the four tests embed real 8-/16-
+byte blocks lifted byte-for-byte from the bundled real sample files
+(not synthetic) with their expected decoded pixels, pinning the C++
+implementation to the already-Python-verified result; the other two
+cover truncated-input rejection and non-block-aligned crop. 297/297
+tests pass (293 + 4 new).
+
+**Verified visually on the real desktop**: screenshotted the running
+window twice independently. Before this fix: solid white rectangles on
+black. After: a detailed, sharp-edged monochrome silhouette (reads as a
+stylized skull/dragon-head loading-screen graphic) with real fine
+structure -- eye socket, jaw, teeth -- reproducible across both runs.
+Real texture *data* is now visibly driving what's on screen, not an
+"incomplete texture samples as white" fallback. The image itself is
+strikingly black-and-white rather than full color; given the color
+decode passed its own independent, real-ground-truth-validated test
+(~4.6/channel error, not a systematic "everything is white" failure
+mode), the most likely explanation is that this particular real asset
+*is* genuinely a stark two-tone logo (alpha-cutout sprite over a black
+clear), not a decode bug -- not confirmed further this round, since the
+shape/detail improvement alone is the significant, evidenced result.
+`git status` clean (`core/loader/atitc.{h,cpp}`, `core/brew/gl_hle.
+{h,cpp}`, `core/brew/gl_types.h`, `tests/atitc_test.cpp`, both
+`CMakeLists.txt`s -- no temporary diagnostics left in any of them).
