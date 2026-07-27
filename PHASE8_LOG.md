@@ -6076,3 +6076,92 @@ shape/detail improvement alone is the significant, evidenced result.
 `git status` clean (`core/loader/atitc.{h,cpp}`, `core/brew/gl_hle.
 {h,cpp}`, `core/brew/gl_types.h`, `tests/atitc_test.cpp`, both
 `CMakeLists.txt`s -- no temporary diagnostics left in any of them).
+
+## Textures, round two: not every white rectangle is ATITC -- one confirmed misrouted real OBM1 font, real root cause still open
+
+The user ran the fixed build directly and reported textures still not
+loading -- screenshotted their own live session (twice, after fixing a
+window-focus/monitor issue) and confirmed: the *first* real texture
+this session already found (the skull/dragon-head silhouette) still
+renders correctly, but a *later* real screen state shows large,
+undifferentiated white rectangular panels -- the original "incomplete
+texture" symptom, just for different real assets than the one already
+fixed.
+
+Added temporary, targeted tracing (all reverted after use) to find out
+why, rather than guessing: a debug print in `GlCompressedTexImage2D`
+itself first showed real calls with `internalformat=0x8b9d` (not
+either real ATI_TC token, correctly rejected as "unhandled format" by
+the existing code) and absurd `width`/`height` (tens of thousands of
+pixels -- e.g. `50385`x`18715`). Captured the real caller's `LR` and
+disassembled the actual real ARM call site (`ddragonz.mod` offset
+`0x11e14c`, calling a real thin `IGL_glCompressedTexImage2D`-shaped
+trampoline confirmed to start at `0x124188`, itself doing nothing but
+forwarding all 8 real arguments unchanged from *its own* caller through
+vtable slot 15 -- so the real 4-register + 4-stack-word ABI assumption
+already in this code was confirmed correct, not the bug).
+
+Traced back further: `width`/`height` come from real memory fields
+`*(r4+0)`/`*(r4+4)`, not registers, where `r4` is a real per-resource
+descriptor pointer walking a small array (a real, incrementing index
+field at `r4+8`: `2, 3, 4, 5, 6, 7, ...`). A PC-gated register/memory
+dump (temporary, reverted) at the trampoline's entry confirmed these
+memory values are real, deterministic, non-garbage data -- not
+uninitialized memory -- ruling out a simple "stale stack slot" bug.
+The surrounding real function (a large block of real per-pixel
+bit-field extract/repack code just before the call, handling several
+real pixel-format cases via a real 5-way jump table on a value at
+`[sp+20]`) is genuine real texture/pixel-format-conversion logic, not
+misidentified code.
+
+**Found the real, concrete smoking gun by checking what `data.ggz`
+actually contains at the exact real file position/size the traced
+`IFILE_Read` calls request** (temporary `OpenFile`/`Read` tracing,
+reverted -- confirmed `data.ggz` is loaded as a single flat, padded
+1,229,921-byte blob under the literal VFS name `"data.ggz"`, matching
+this project's own long-established "real code streams its own GGZ
+archive and decompresses members itself" finding, not a per-entry-
+decompressed archive). Extracted the real bytes at one traced read's
+exact `(pos, want)` in Python: a genuine gzip stream (real `1f 8b 08`
+magic, `FNAME` flag set) whose real embedded filename is
+**`Font.obm1`** -- a real OBM1-format bitmap/font resource, a format
+this project already has its own working, tested loader for
+(`core/loader/obm1.{h,cpp}`), decompressing (real Python `zlib`,
+matching this project's own already-confirmed real gzip framing) to
+exactly the requested `16904` bytes, confirming the *read* itself is
+correct -- the compressed stream is genuinely only `774` of those bytes
+though (`d.unused_data` len `16130`), meaning real code's own read-size
+request already assumes the *decompressed* size, not the compressed
+size, consistent with (not necessarily itself broken by) real code
+performing its own real in-ARM gzip inflation after the read.
+
+**Conclusion**: this is not an ATITC decoding bug, and not a data.ggz/
+file-reading bug -- it's a real, more fundamental **resource-type
+dispatch bug**: this real font/bitmap resource is reaching the exact
+same generic real per-resource pixel-conversion-then-
+`glCompressedTexImage2D`-upload code path that real ATITC textures use,
+instead of whatever real, different path would correctly route it to
+this project's own already-working OBM1 loader. The real cause of that
+misrouting (a wrong branch taken at the `[sp+20]` 5-way jump table, or
+a wrong value feeding it, likely from some other still-Stub or
+partially-implemented real HLE call upstream) is not found yet -- real,
+concrete evidence narrows it to "some real dispatch/classification
+value is wrong," not "which specific missing HLE call computes it,"
+which needs picking the `[sp+20]` value's own real producer apart next,
+a genuinely separate investigation from anything ATITC-shaped.
+
+**Landed a real, permanent, defensive fix, not just a revert**:
+`GlCompressedTexImage2D` now rejects `width`/`height` above 4096 (any
+real 2009-era mobile GPU's real practical max texture size) before
+ever attempting a decode/allocation -- so a future call like this one
+(a real non-texture resource wrongly routed here) can never trigger a
+many-hundred-megabyte `DecodeAtitc` buffer allocation, regardless of
+whether the real dispatch bug above is fixed first. This is separate
+from, and doesn't change, the already-correct-and-verified real ATITC
+decode path itself. All temporary diagnostics (`[DBGCTI]`, the
+`[DBGCALLER]` PC-gated probe in `tools/game_probe.cpp`, the
+`[DBGFILE]` `data.ggz` open/read tracing in `core/brew/file_hle.cpp`)
+reverted; `git status` clean except the one real, permanent
+`core/brew/gl_hle.cpp` bounds-check. 297/297 tests pass (unchanged --
+no new functional behavior to test yet, since the real dispatch bug
+itself isn't fixed).

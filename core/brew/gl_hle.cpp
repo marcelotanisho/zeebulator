@@ -446,7 +446,23 @@ void GlHle::GlCompressedTexImage2D(IArmCore& core) {
     return;
   }
 
-  if (data_ptr == 0 || width <= 0 || height <= 0) return;
+  // Real disassembly this round (TASKS.md/PHASE8_LOG.md Phase 8) found at
+  // least one real call site reaching this slot with a real, non-texture
+  // resource (a real embedded "Font.obm1" -- this project's own already-
+  // implemented core/loader/obm1.h format -- misrouted through this same
+  // real generic per-resource upload path) rather than a real ATITC
+  // texture, producing nonsensical width/height (tens of thousands of
+  // pixels -- far beyond any real 2009-era mobile GPU's actual max
+  // texture size). The real root cause (why that resource takes this
+  // branch instead of the real OBM1 path) isn't found yet -- this is a
+  // defensive bound against ever attempting a many-hundred-MB decode/
+  // allocation for a call that was never a real texture upload to begin
+  // with, not a fix for the real misrouting itself.
+  constexpr int kMaxPlausibleTextureDimension = 4096;
+  if (data_ptr == 0 || width <= 0 || height <= 0 || width > kMaxPlausibleTextureDimension ||
+      height > kMaxPlausibleTextureDimension) {
+    return;
+  }
   Memory& memory = core.GetMemory();
   std::vector<uint8_t> compressed(image_size);
   for (uint32_t i = 0; i < image_size; ++i) {

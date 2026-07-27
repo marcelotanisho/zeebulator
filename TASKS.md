@@ -2366,6 +2366,25 @@ playable start-to-finish at full speed, standalone build.
       texture data driving real screen content, not an "incomplete
       texture" fallback) — see PHASE8_LOG.md's "Textures" section for
       the full derivation and screenshots' description.
+      **Round two, from the user's own live testing**: some white
+      rectangles remain — not an ATITC bug. Real disassembly + a real
+      `data.ggz` byte-level check (LR capture → call-site disassembly →
+      real gzip-stream extraction, all confirmed against real bytes,
+      not guessed) found the real smoking gun: at least one real call
+      into this same upload path carries a real embedded resource named
+      `Font.obm1` — a format this project already has a working loader
+      for (`core/loader/obm1.{h,cpp}`) — being misrouted through the
+      generic ATITC upload path instead, producing nonsensical
+      width/height (tens of thousands of pixels). This is a real
+      **resource-type dispatch bug** upstream of GL entirely, not
+      something guessable from the GL layer — needs picking apart the
+      real 5-way jump table (`[sp+20]`) that misclassifies it. Landed
+      one real, permanent hardening fix either way:
+      `GlCompressedTexImage2D` now rejects width/height above 4096
+      (any real 2009-era mobile GPU's practical max) before ever
+      decoding/allocating, so a misrouted call like this one can never
+      trigger a many-hundred-MB allocation. 297/297 tests pass
+      (unchanged). See PHASE8_LOG.md's "Textures, round two" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
