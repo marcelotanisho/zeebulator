@@ -6216,3 +6216,77 @@ type being misrouted here. Not resolved this round -- a genuinely
 open, deeper question for next time, not a quick fix. All temporary
 instrumentation reverted again; `git status` clean; no code changes
 this round beyond the already-committed permanent bounds check.
+
+## Root cause found for real: a currently-Stub static-base gate function lets real code run on still-compressed data
+
+Picked the real dispatch chain apart by disassembling further, not
+guessing. `0x11ddb8` (the function feeding `glCompressedTexImage2D`'s
+bogus args) turns out to call three things through the app's own real
+static-base function-pointer table (`core/brew/mod_runtime.cpp`'s
+`Install()`, table at `0x80280000`, real address confirmed by decoding
+the exact ROPI PC-relative computation at the real call site, not
+assumed): slot `0xDC` first (`unknown_0xdc_fn` -- one of several real,
+previously-unidentified slots this project already flagged as unknown
+and Stubbed years of rounds ago), gating everything that follows; then,
+if that returns success, slot `0x0` -- which is `kMemcpySlotOffset`,
+i.e. **real `memcpy`**, not a property accessor as read last round.
+The "`GetProperty(propid, out, count)`"-shaped calls traced previously
+are really just `memcpy(dest, src, n)` with `src` = a real pointer
+(`r6`) at small fixed byte offsets (+2, +3, +4, +6).
+
+**Dumped `r6`'s real memory directly** (a temporary PC-gated probe,
+reverted after use) across every one of the ten real calls this
+project has ever observed reaching this path. Every single one starts
+with real, live gzip magic bytes (`1f 8b 08 08`) -- **`r6` is the raw,
+still-*compressed* resource stream**, not decompressed data, not a
+parsed header. The real embedded gzip filenames (`FNAME` field) are
+`Font.obm1`, `FONT_L.obm1`, `FONT_L2.obm1`, `Title.obm1`, `Menu_P.obm1`,
+`OptionBG1.obm1`, `OptionBG2.obm1`, `HowTo.obm1`, `HowToBG1.obm1`,
+`HowToBG2.obm1` -- **every single real title-screen/menu/how-to-play
+graphic this title has, all real OBM1 bitmaps** (this project's own
+already-working `core/loader/obm1.{h,cpp}` format), not one ATITC
+texture among them. The earlier "`Font.obm1` misroute" framing
+undersold this: it isn't one stray resource hitting the wrong branch,
+it's *the entire real title-screen asset set* never reaching real
+decompression before this generic property-extraction code runs.
+
+**Proved this mathematically, not just by inspection**: the observed,
+always-identical rejected `internalformat` (`0x8b9d`) is computed by
+real code as `local20 + 0x8b95`, where `local20` is `memcpy`'d from
+`r6+2` -- gzip's own **compression-method byte**, which is always `8`
+(deflate) for every real gzip stream. `0x8b95 + 8 = 0x8b9d` exactly.
+The "format enum" was never a format enum at all -- it's gzip header
+byte 2 plus a constant, an arithmetic artifact of running real
+width/height/format-extraction logic against raw compressed bytes it
+was never meant to see at this point. Likewise `width`/`height` are 2-
+byte slices of gzip's own `MTIME` field, not image dimensions.
+
+**Real, confirmed root cause**: `unknown_0xdc_fn` (static-base offset
+`0xDC`, `core/brew/mod_runtime.cpp`) is currently `[](IArmCore& core) {
+core.SetRegister(kR0, 0); }` -- an unconditional "success, proceed"
+Stub. Real disassembly shows it's called first, on the raw compressed
+stream pointer, and gates (via its return value) whether the rest of
+this function runs at all. Its real job is almost certainly to trigger
+real decompression (or detect "not yet decompressed" and dispatch
+elsewhere) before any of this generic property/format extraction is
+valid to run -- with it permanently stubbed to "yes, proceed," every
+real OBM1 asset this title has runs straight through width/height/
+format extraction against compressed garbage instead. This is
+consistent with, and finally fully explains, the project's very first
+Double Dragon texture finding many rounds ago: "`glGenTextures`/
+`glBindTexture` many times, never once `glTexImage2D`" -- the real
+asset pipeline for every title-screen graphic dead-ends here, before
+any real upload call could ever be reached with valid data.
+
+**Not fixed this round** -- implementing `unknown_0xdc_fn` correctly
+needs a real design decision this project hasn't made yet (does real
+decompression belong inside this HLE slot itself -- i.e. should we
+gzip-inflate host-side and hand back decompressed bytes through some
+new mechanism -- or does real ARM code do its own inflate elsewhere,
+meaning this slot's real job is something narrower like a format-
+sniff/redirect this project would need to identify first) rather than
+a quick guess. Documented here precisely so it's a concrete, scoped
+starting point, not an open-ended mystery, next time. All temporary
+instrumentation (the `[DBGR6]` PC-gated probe) reverted; `git status`
+clean; 297/297 tests pass (unchanged -- no functional code touched
+this round).

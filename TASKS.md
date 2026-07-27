@@ -2389,12 +2389,37 @@ playable start-to-finish at full speed, standalone build.
       "verified visually" claim was a false positive: the on-screen
       shape is the same pre-existing "incomplete texture samples white"
       fallback plus real, already-working mesh geometry, not evidence
-      the ATITC decoder ever ran against real game data. **Real open
-      question, deeper than a format enum**: why Double Dragon never
-      calls either real texture-upload entry point with valid
-      arguments at all. Not resolved — genuinely open. See
-      PHASE8_LOG.md's "Textures, round two" and the correction section
-      right after it.
+      the ATITC decoder ever ran against real game data.
+      **Root cause found for real**: dumped the real memory `r6` points
+      to at the actual call site (temporary probe, reverted) across all
+      ten observed calls — every one starts with live gzip magic bytes
+      (`1f 8b 08 08`), meaning real code is reading width/height/format
+      from the **still-compressed** stream, not decompressed data.
+      Proved it mathematically: the always-rejected `internalformat`
+      (`0x8b9d`) is real code computing `gzip_method_byte(8) + 0x8b95`
+      — not a format enum at all, an arithmetic artifact. The real
+      gzip `FNAME` fields are `Title.obm1`, `Menu_P.obm1`,
+      `OptionBG1/2.obm1`, `HowTo*.obm1`, `Font*.obm1` — every single
+      real title-screen/menu graphic this game has, all real OBM1
+      bitmaps (this project's own already-working
+      `core/loader/obm1.{h,cpp}` format), none of them ATITC. The real
+      gate: `unknown_0xdc_fn` (static-base offset `0xDC`,
+      `core/brew/mod_runtime.cpp`) — a previously-unidentified slot
+      this project stubbed years ago — is called first and its return
+      value decides whether the rest of this function runs; currently
+      an unconditional "proceed" Stub, so every real OBM1 asset runs
+      straight through bogus width/height/format extraction against
+      raw compressed bytes instead of ever reaching real decompression.
+      This finally fully explains the project's original Double Dragon
+      finding: `glGenTextures`/`glBindTexture` many times, never once
+      `glTexImage2D` with valid data — the real pipeline dead-ends at
+      this gate for every title-screen graphic. **Not fixed yet** —
+      implementing `unknown_0xdc_fn` correctly needs a real design
+      decision (does decompression belong host-side in this HLE slot,
+      or does real ARM code inflate elsewhere and this slot's real job
+      is a narrower format-sniff/redirect) rather than a guess. 297/297
+      tests pass (unchanged). See PHASE8_LOG.md's "Root cause found for
+      real" section for the full derivation.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
