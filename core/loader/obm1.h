@@ -6,11 +6,15 @@
 namespace zeebulator {
 
 // A decoded, palette-resolved image: width*height RGB888 triples,
-// row-major, top-to-bottom, left-to-right.
+// row-major, top-to-bottom, left-to-right, plus a parallel one-byte-
+// per-pixel alpha channel (255 opaque, 0 transparent -- see
+// `Obm1Image::Decode`'s own doc comment for the real color-key
+// convention this is derived from).
 struct DecodedImage {
   uint32_t width = 0;
   uint32_t height = 0;
-  std::vector<uint8_t> rgb;  // width * height * 3 bytes
+  std::vector<uint8_t> rgb;    // width * height * 3 bytes
+  std::vector<uint8_t> alpha;  // width * height bytes
 };
 
 // Decodes a real Zeebo/BREW ".obm1" sprite/texture asset. Reverse-
@@ -37,12 +41,21 @@ struct DecodedImage {
 //             pixel, most-significant-bits-first within each byte,
 //             row-major
 //
-// Many real sprite assets use a distinctly magenta (near-0xFF00FF)
-// palette entry as an apparent background/transparency color-key, but
-// the exact convention (which index, exact color-key value, or
-// whether it's even a fixed convention vs. per-asset) isn't confirmed
-// -- this decoder returns raw RGB888 with no alpha/transparency
-// handling; that's a separate, not-yet-investigated concern.
+// The real transparency color-key convention is now confirmed (TASKS.md/
+// PHASE8_LOG.md Phase 8): real palette index 0 is *always* the exact
+// RGB565 value 0xF83E (R=31,G=1,B=30 -> real, near-pure magenta,
+// (255,4,246) in RGB888) -- checked across every real OBM1 asset this
+// project has observed a real width/height/palette for, zero
+// exceptions, regardless of image size or bpp. Confirmed as the real
+// transparency signal, not just a coincidental magenta color, by real
+// disassembly of Double Dragon's own rendering setup: it enables real
+// `GL_ALPHA_TEST` with `glAlphaFuncx(GL_NOTEQUAL, 0.0)` (discard exactly
+// alpha==0 pixels) alongside real `GL_BLEND`/`glBlendFunc(GL_SRC_ALPHA,
+// GL_ONE_MINUS_SRC_ALPHA)` before drawing these sprites -- the standard
+// real GLES1.x sprite-transparency combination. `Decode` outputs
+// `alpha[i] = 0` for every pixel whose palette index is 0, `255`
+// otherwise; real index-0 pixels' *color* (magenta) is decoded into
+// `rgb` as normal too, for callers that don't care about transparency.
 class Obm1Image {
  public:
   // Throws std::runtime_error on a malformed image (bad magic, an

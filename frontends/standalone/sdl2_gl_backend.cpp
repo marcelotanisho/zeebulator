@@ -60,6 +60,8 @@ void Sdl2GlBackend::Rotate(float angle_degrees, float x, float y, float z) {
 }
 void Sdl2GlBackend::Scale(float x, float y, float z) { glScalef(x, y, z); }
 void Sdl2GlBackend::Color4(float r, float g, float b, float a) { glColor4f(r, g, b, a); }
+void Sdl2GlBackend::AlphaFunc(GLenum func, float ref) { glAlphaFunc(func, ref); }
+void Sdl2GlBackend::BlendFunc(GLenum sfactor, GLenum dfactor) { glBlendFunc(sfactor, dfactor); }
 
 void Sdl2GlBackend::DrawArrays(GLenum mode, const GlVertexArrays& arrays) {
   if (arrays.has_position) {

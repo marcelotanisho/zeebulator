@@ -90,6 +90,28 @@ TEST(Obm1, Decodes1x2EightBppImageWithCorrectColors) {
             (std::vector<uint8_t>{255, 255, 255}));
 }
 
+TEST(Obm1, PaletteIndexZeroIsAlwaysTransparentRegardlessOfItsStoredColor) {
+  // Real convention (see Obm1Image::Decode's own doc comment): index 0
+  // is always alpha=0, even though its real, always-observed stored
+  // color is a specific magenta (0xF83E) -- this test uses a
+  // deliberately different color at index 0 to prove the rule keys off
+  // the *index*, not a color match.
+  std::vector<uint16_t> palette(16, 0);
+  palette[0] = 0xF800;  // pure red, not the real magenta value
+  palette[1] = 0x07E0;  // pure green
+  auto data = BuildObm1(2, 1, 4, palette, {0, 1});
+
+  DecodedImage image = Obm1Image::Decode(data);
+
+  ASSERT_EQ(image.alpha.size(), 2u);
+  EXPECT_EQ(image.alpha[0], 0) << "index 0 is always transparent";
+  EXPECT_EQ(image.alpha[1], 255) << "every other index is always opaque";
+  // The real color still decodes normally into rgb -- alpha is a
+  // separate, additional signal, not a replacement for it.
+  EXPECT_EQ((std::vector<uint8_t>(image.rgb.begin(), image.rgb.begin() + 3)),
+            (std::vector<uint8_t>{255, 0, 0}));
+}
+
 TEST(Obm1, RejectsFileTooSmallForAHeader) {
   std::vector<uint8_t> data = {'O', 'I', 0x04, 0x04, 0, 0};  // only 6 bytes
   EXPECT_THROW(Obm1Image::Decode(data), std::runtime_error);

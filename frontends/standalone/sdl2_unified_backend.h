@@ -86,6 +86,8 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
   void Rotate(float angle_degrees, float x, float y, float z) override;
   void Scale(float x, float y, float z) override;
   void Color4(float r, float g, float b, float a) override;
+  void AlphaFunc(GLenum func, float ref) override;
+  void BlendFunc(GLenum sfactor, GLenum dfactor) override;
   void DrawArrays(GLenum mode, const GlVertexArrays& arrays) override;
 
   void GenTextures(GLsizei n, GLuint* textures) override;

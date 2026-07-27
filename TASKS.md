@@ -2451,6 +2451,24 @@ playable start-to-finish at full speed, standalone build.
       this project has ever rendered end to end with real texture data.
       See PHASE8_LOG.md's "Fixed for real" section for the full
       derivation.
+      **Transparency fixed next** — the user immediately caught a real
+      magenta border/background around the graphics. Traced (not
+      guessed) via real `glEnable`/`glAlphaFuncx`/`glBlendFunc` call
+      values: Double Dragon pairs real `GL_ALPHA_TEST`
+      (`glAlphaFuncx(GL_NOTEQUAL, 0.0)`) with real `GL_BLEND`
+      (`glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)`) — the
+      standard real GLES1.x sprite-transparency combo. Dumped every
+      real OBM1 palette this project has observed: **palette index 0
+      is always the exact real magenta `0xF83E`**, zero exceptions —
+      confirming a real, simple, index-keyed color-key convention.
+      `core/loader/obm1.{h,cpp}`'s `DecodedImage` now outputs a real
+      `alpha` channel (index 0 → 0, else 255); `GlHle::
+      GlCompressedTexImage2D` uploads real RGBA instead of RGB;
+      `glAlphaFuncx`/`glBlendFunc` (previously blind Stubs) now forward
+      real arguments to both real `GlBackend` implementations. 303/303
+      tests pass. **Verified on the real desktop**: the magenta panels
+      behind the logo are gone, real dragon line-art shows through
+      cleanly. See PHASE8_LOG.md's "Real transparency" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

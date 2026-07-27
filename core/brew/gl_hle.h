@@ -111,6 +111,8 @@ class GlHle {
   void GlViewport(IArmCore& core);
   void GlEnable(IArmCore& core);
   void GlDisable(IArmCore& core);
+  void GlAlphaFuncx(IArmCore& core);
+  void GlBlendFunc(IArmCore& core);
   void GlMatrixMode(IArmCore& core);
   void GlLoadIdentity(IArmCore& core);
   void GlOrthox(IArmCore& core);

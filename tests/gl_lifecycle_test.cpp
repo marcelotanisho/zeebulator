@@ -56,6 +56,8 @@ class RecordingGlBackend : public GlBackend {
   void Rotate(float, float, float, float) override {}
   void Scale(float, float, float) override {}
   void Color4(float, float, float, float) override {}
+  void AlphaFunc(zeebulator::GLenum, float) override {}
+  void BlendFunc(zeebulator::GLenum, zeebulator::GLenum) override {}
   void DrawArrays(zeebulator::GLenum mode, const GlVertexArrays& arrays) override {
     ++draw_count;
     last_mode = mode;

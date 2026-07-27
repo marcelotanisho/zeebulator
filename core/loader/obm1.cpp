@@ -60,6 +60,7 @@ DecodedImage Obm1Image::Decode(const std::vector<uint8_t>& data) {
   uint32_t mask = (1u << bpp) - 1;
 
   image.rgb.resize(static_cast<size_t>(pixel_count) * 3);
+  image.alpha.resize(static_cast<size_t>(pixel_count));
   for (uint64_t i = 0; i < pixel_count; ++i) {
     uint8_t byte = pixel_data[i / pixels_per_byte];
     uint32_t slot_in_byte = static_cast<uint32_t>(i % pixels_per_byte);
@@ -69,6 +70,9 @@ DecodedImage Obm1Image::Decode(const std::vector<uint8_t>& data) {
     image.rgb[static_cast<size_t>(i) * 3 + 0] = color[0];
     image.rgb[static_cast<size_t>(i) * 3 + 1] = color[1];
     image.rgb[static_cast<size_t>(i) * 3 + 2] = color[2];
+    // Real color-key convention (see this class's own doc comment):
+    // palette index 0 is always the real transparency signal.
+    image.alpha[static_cast<size_t>(i)] = (index == 0) ? 0 : 255;
   }
 
   return image;

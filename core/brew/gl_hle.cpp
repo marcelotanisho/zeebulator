@@ -170,6 +170,23 @@ void GlHle::GlViewport(IArmCore& core) {
 
 void GlHle::GlEnable(IArmCore& core) { backend_.Enable(core.GetRegister(kR0)); }
 void GlHle::GlDisable(IArmCore& core) { backend_.Disable(core.GetRegister(kR0)); }
+
+void GlHle::GlAlphaFuncx(IArmCore& core) {
+  // void glAlphaFuncx(GLenum func, GLclampx ref) -- real disassembly
+  // (TASKS.md/PHASE8_LOG.md Phase 8) confirms Double Dragon calls this
+  // with (GL_NOTEQUAL, 0.0) before drawing real OBM1 sprites, pairing
+  // it with GL_ALPHA_TEST/GL_BLEND to discard the real magenta color-
+  // key pixels this project's OBM1 decoder outputs as alpha=0.
+  backend_.AlphaFunc(core.GetRegister(kR0), FixedToFloat(static_cast<GLfixed>(core.GetRegister(kR1))));
+}
+
+void GlHle::GlBlendFunc(IArmCore& core) {
+  // void glBlendFunc(GLenum sfactor, GLenum dfactor) -- confirmed real
+  // args (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA), the standard real
+  // GLES1.x sprite-alpha-blending pair (see GlAlphaFuncx's own comment).
+  backend_.BlendFunc(core.GetRegister(kR0), core.GetRegister(kR1));
+}
+
 void GlHle::GlMatrixMode(IArmCore& core) { backend_.MatrixMode(core.GetRegister(kR0)); }
 void GlHle::GlLoadIdentity(IArmCore&) { backend_.LoadIdentity(); }
 
@@ -465,14 +482,29 @@ void GlHle::GlCompressedTexImage2D(IArmCore& core) {
     } catch (const std::exception&) {
       return;  // malformed -- leave the texture object as-is, not a guess
     }
+    // Real transparency (TASKS.md/PHASE8_LOG.md Phase 8): interleave
+    // the decoder's real alpha channel (palette index 0 -> 0, confirmed
+    // as Double Dragon's real magenta color-key) into RGBA -- real code
+    // pairs GL_ALPHA_TEST/GL_BLEND with these uploads (see
+    // GlAlphaFuncx's own comment), which need a real alpha channel to
+    // act on; a plain RGB upload leaves every sprite's color-key border
+    // fully opaque.
+    size_t pixel_count = decoded_obm1.rgb.size() / 3;
+    std::vector<uint8_t> rgba(pixel_count * 4);
+    for (size_t i = 0; i < pixel_count; ++i) {
+      rgba[i * 4 + 0] = decoded_obm1.rgb[i * 3 + 0];
+      rgba[i * 4 + 1] = decoded_obm1.rgb[i * 3 + 1];
+      rgba[i * 4 + 2] = decoded_obm1.rgb[i * 3 + 2];
+      rgba[i * 4 + 3] = decoded_obm1.alpha[i];
+    }
     GlTextureImage image;
     image.level = level;
-    image.internal_format = kGlRgb;
+    image.internal_format = kGlRgba;
     image.width = static_cast<int>(decoded_obm1.width);
     image.height = static_cast<int>(decoded_obm1.height);
-    image.format = kGlRgb;
+    image.format = kGlRgba;
     image.type = kGlUnsignedByte;
-    image.pixels = decoded_obm1.rgb.data();
+    image.pixels = rgba.data();
     backend_.TexImage2D(target, image);
     return;
   }
@@ -532,9 +564,9 @@ uint32_t GlHle::BuildGl(Memory& memory, HleRuntime& hle, uint32_t vtable_address
       Stub,                                       // 1  Release
       Stub,                                       // 2  QueryInterface
       Stub,                                       // 3  glActiveTexture
-      Stub,                                       // 4  glAlphaFuncx
+      [this](IArmCore& c) { GlAlphaFuncx(c); },     // 4  glAlphaFuncx
       [this](IArmCore& c) { GlBindTexture(c); },  // 5  glBindTexture
-      Stub,                                       // 6  glBlendFunc
+      [this](IArmCore& c) { GlBlendFunc(c); },      // 6  glBlendFunc
       [this](IArmCore& c) { GlClear(c); },        // 7  glClear
       [this](IArmCore& c) { GlClearColorx(c); },  // 8  glClearColorx
       Stub,                                       // 9  glClearDepthx

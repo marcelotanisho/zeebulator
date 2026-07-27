@@ -90,6 +90,16 @@ class GlBackend {
   virtual void Rotate(float angle_degrees, float x, float y, float z) = 0;
   virtual void Scale(float x, float y, float z) = 0;
   virtual void Color4(float r, float g, float b, float a) = 0;
+  // Real, confirmed-needed for real OBM1 sprite transparency (TASKS.md/
+  // PHASE8_LOG.md Phase 8): Double Dragon's own real disassembly shows
+  // it pairing GL_ALPHA_TEST (glAlphaFuncx(GL_NOTEQUAL, 0.0), discarding
+  // exactly the real magenta-color-key pixels this project's OBM1
+  // decoder now outputs as alpha=0) with GL_BLEND (glBlendFunc(
+  // GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)) before drawing sprites --
+  // the standard real GLES1.x combination. `func`/`sfactor`/`dfactor`
+  // pass through as raw Khronos enums, same rationale as Enable/Disable.
+  virtual void AlphaFunc(GLenum func, float ref) = 0;
+  virtual void BlendFunc(GLenum sfactor, GLenum dfactor) = 0;
 
   // A single draw call covers both glDrawArrays and glDrawElements --
   // GlHle resolves either into the same already-host-native

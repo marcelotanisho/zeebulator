@@ -6402,3 +6402,77 @@ screen has rendered with real, correct texture data end to end. `git
 status` clean (`core/brew/gl_hle.cpp`, `core/brew/mod_runtime.{h,cpp}`,
 `tests/mod_runtime_test.cpp`, `tests/gl_hle_test.cpp` -- no temporary
 diagnostics left in any of them).
+
+## Real transparency: the magenta color-key, confirmed and fixed
+
+The user caught it immediately on the very next look: real graphics
+were rendering with a visible pink/magenta border/background instead
+of being transparent -- exactly the gap `core/loader/obm1.h`'s own doc
+comment had already flagged as unconfirmed ("many real sprite assets
+use a distinctly magenta... palette entry as an apparent... color-key,
+but the exact convention... isn't confirmed").
+
+**Found the real mechanism by tracing what Double Dragon's own code
+calls around these uploads**, not by guessing (temporary `[DBGCAP]`
+prints on `glEnable`/`glDisable`, and temporary real-but-logging
+implementations of the previously-Stubbed `glAlphaFuncx`/`glBlendFunc`
+slots, all reverted after use): real code enables both `GL_ALPHA_TEST`
+(`0xbc0`) and `GL_BLEND` (`0xbe2`) before drawing these sprites, with
+`glAlphaFuncx(GL_NOTEQUAL, 0.0)` (discard exactly alpha==0 pixels) and
+`glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)` (standard alpha
+blending for the rest) -- the textbook real GLES1.x sprite-
+transparency combination, confirmed via real, live register values,
+not assumed from the API shape alone.
+
+**Found the exact real color-key value the same evidence-first way**:
+dumped every real OBM1 palette this project has observed a real width/
+height for (temporary `[DBGPAL]` print, reverted) -- all ten showed
+**palette index 0 == `0xF83E`** (RGB565: R=31,G=1,B=30 -> real,
+near-pure magenta, `(255,4,246)` in RGB888), zero exceptions, across
+every size and bpp. Combined with the `GL_NOTEQUAL 0.0` alpha-test
+finding above, this confirms the real, simple, robust rule: **palette
+index 0 is always the real transparency signal**, keyed by index, not
+by re-matching a specific color value per pixel.
+
+**Implemented for real**:
+- `core/loader/obm1.h`/`.cpp`: `DecodedImage` gained a parallel
+  `alpha` channel (`0` for real palette-index-0 pixels, `255`
+  otherwise), populated in the same per-pixel decode loop that already
+  resolves `rgb` -- an additive, backward-compatible change (the one
+  other real consumer, `tools/obm1_inspector.cpp`, only ever read
+  `.rgb` and needed no changes). New `tests/obm1_test.cpp` test proves
+  the rule keys off the *index*, not the stored color (index 0 set to
+  a deliberately non-magenta color still comes out alpha=0).
+- `core/brew/gl_backend.h`: new `AlphaFunc`/`BlendFunc` virtual
+  methods, implemented in both real backends
+  (`frontends/standalone/sdl2_unified_backend.{h,cpp}`, the active one,
+  and the legacy `sdl2_gl_backend.{h,cpp}`) as thin forwards to real
+  host `glAlphaFunc`/`glBlendFunc` -- same "raw Khronos enums pass
+  through unchanged" rationale already established for Enable/Disable.
+- `core/brew/gl_hle.{h,cpp}`: `GlAlphaFuncx`/`GlBlendFunc` replace the
+  two real slots (4, 6) that were blind Stubs, forwarding real
+  arguments (with real `GLfixed` decoding for the alpha reference,
+  matching every other `...x`-suffixed GLES1.x entry point this
+  project already implements). `GlCompressedTexImage2D`'s real OBM1
+  path now interleaves `rgb`+`alpha` into a real RGBA buffer and
+  uploads with `format = kGlRgba` instead of `kGlRgb` -- a real alpha
+  channel now actually exists for `GL_ALPHA_TEST`/`GL_BLEND` to act on.
+- New tests: `tests/gl_hle_test.cpp` confirms the real OBM1 upload path
+  now produces RGBA with the real color-key pixel at alpha=0, and that
+  `glAlphaFuncx`/`glBlendFunc` forward their real confirmed argument
+  values to the backend. `RecordingGlBackend`
+  (`tests/gl_lifecycle_test.cpp`) and both real `GlBackend`
+  implementations updated for the two new pure-virtual methods.
+  303/303 tests pass (301 + 2 new... plus the existing OBM1 upload test
+  updated in place for the new RGBA shape).
+
+**Verified on the real desktop, screenshotted directly, immediately
+after the fix**: the solid magenta panels behind the kanji logo and
+"DOUBLE DRAGON" text are gone -- the real dragon line-art now shows
+through cleanly where they used to be, exactly as real transparency
+should look. All temporary instrumentation (`[DBGCAP]`, `[DBGPAL]`)
+reverted; `git status` clean (`core/brew/gl_backend.h`,
+`core/brew/gl_hle.{h,cpp}`, `core/loader/obm1.{h,cpp}`,
+`frontends/standalone/sdl2_{gl,unified}_backend.{h,cpp}`,
+`tests/gl_hle_test.cpp`, `tests/gl_lifecycle_test.cpp`,
+`tests/obm1_test.cpp`).

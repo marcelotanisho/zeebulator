@@ -57,6 +57,14 @@ class FakeGlBackend : public zeebulator::GlBackend {
   }
   void Scale(float x, float y, float z) override { scale = {x, y, z}; }
   void Color4(float r, float g, float b, float a) override { color4 = {r, g, b, a}; }
+  void AlphaFunc(zeebulator::GLenum func, float ref) override {
+    last_alpha_func = func;
+    last_alpha_ref = ref;
+  }
+  void BlendFunc(zeebulator::GLenum sfactor, zeebulator::GLenum dfactor) override {
+    last_blend_sfactor = sfactor;
+    last_blend_dfactor = dfactor;
+  }
   void DrawArrays(zeebulator::GLenum mode, const zeebulator::GlVertexArrays& arrays) override {
     ++draw_count;
     last_mode = mode;
@@ -125,6 +133,10 @@ class FakeGlBackend : public zeebulator::GlBackend {
   std::array<float, 4> rotate{};
   std::array<float, 3> scale{};
   std::array<float, 4> color4{};
+  zeebulator::GLenum last_alpha_func = 0;
+  float last_alpha_ref = 0.0f;
+  zeebulator::GLenum last_blend_sfactor = 0;
+  zeebulator::GLenum last_blend_dfactor = 0;
 };
 
 struct Fixture {
@@ -591,8 +603,10 @@ TEST(GlHle, TexImage2DHandlesPackedRgb565PixelSize) {
 // that the app itself already parsed to get this call's width/height.
 TEST(GlHle, CompressedTexImage2DDecodesARealObm1ImageWhenMagicBytesPrecedeTheData) {
   Fixture f;
-  // A real-shaped 2x2, 4bpp OBM1 image: palette[0]=red, palette[1]=
-  // green, pixels (row-major) red/green/green/red.
+  // A real-shaped 2x2, 4bpp OBM1 image: palette[0]=the real magenta
+  // color-key (always transparent, regardless of stored color -- see
+  // core/loader/obm1.h), palette[1]=green, pixels (row-major)
+  // key/green/green/key.
   uint32_t header_addr = kScratch + 0x1200;
   zeebulator::Memory& mem = f.cpu.GetMemory();
   mem.Write8(header_addr + 0, 'O');
@@ -602,12 +616,12 @@ TEST(GlHle, CompressedTexImage2DDecodesARealObm1ImageWhenMagicBytesPrecedeTheDat
   mem.Write16(header_addr + 4, 2);    // width
   mem.Write16(header_addr + 6, 2);    // height
   uint32_t data_addr = header_addr + 8;
-  mem.Write16(data_addr + 0 * 2, 0xF800);  // palette[0] = pure red
+  mem.Write16(data_addr + 0 * 2, 0xF83E);  // palette[0] = real magenta color-key
   mem.Write16(data_addr + 1 * 2, 0x07E0);  // palette[1] = pure green
   for (uint32_t i = 2; i < 16; ++i) mem.Write16(data_addr + i * 2, 0);
   uint32_t pixel_addr = data_addr + 16 * 2;
-  mem.Write8(pixel_addr + 0, 0x01);  // pixels (0,0)=0=red, (1,0)=1=green
-  mem.Write8(pixel_addr + 1, 0x10);  // pixels (0,1)=1=green, (1,1)=0=red
+  mem.Write8(pixel_addr + 0, 0x01);  // pixels (0,0)=0=key, (1,0)=1=green
+  mem.Write8(pixel_addr + 1, 0x10);  // pixels (0,1)=1=green, (1,1)=0=key
   uint32_t image_size = 16 * 2 + 2;  // palette + packed pixel bytes
 
   uint32_t stack = kScratch + 0x1300;
@@ -626,18 +640,39 @@ TEST(GlHle, CompressedTexImage2DDecodesARealObm1ImageWhenMagicBytesPrecedeTheDat
   EXPECT_EQ(f.backend.last_teximage_target, 0x0DE1u);
   EXPECT_EQ(f.backend.last_teximage.width, 2);
   EXPECT_EQ(f.backend.last_teximage.height, 2);
-  EXPECT_EQ(f.backend.last_teximage.format, zeebulator::kGlRgb);
+  EXPECT_EQ(f.backend.last_teximage.format, zeebulator::kGlRgba)
+      << "real sprites need a real alpha channel for GL_ALPHA_TEST/GL_BLEND to act on";
   EXPECT_EQ(f.backend.last_teximage.type, zeebulator::kGlUnsignedByte);
-  ASSERT_EQ(f.backend.last_teximage_pixels.size(), 2u * 2u * 3u);
+  ASSERT_EQ(f.backend.last_teximage_pixels.size(), 2u * 2u * 4u);
   auto PixelAt = [&](int x, int y) {
-    size_t base = (static_cast<size_t>(y) * 2 + x) * 3;
+    size_t base = (static_cast<size_t>(y) * 2 + x) * 4;
     return std::vector<uint8_t>(f.backend.last_teximage_pixels.begin() + base,
-                                 f.backend.last_teximage_pixels.begin() + base + 3);
+                                 f.backend.last_teximage_pixels.begin() + base + 4);
   };
-  EXPECT_EQ(PixelAt(0, 0), (std::vector<uint8_t>{255, 0, 0}));
-  EXPECT_EQ(PixelAt(1, 0), (std::vector<uint8_t>{0, 255, 0}));
-  EXPECT_EQ(PixelAt(0, 1), (std::vector<uint8_t>{0, 255, 0}));
-  EXPECT_EQ(PixelAt(1, 1), (std::vector<uint8_t>{255, 0, 0}));
+  EXPECT_EQ(PixelAt(0, 0), (std::vector<uint8_t>{255, 4, 246, 0}))
+      << "the real color-key pixel: real magenta color, alpha=0";
+  EXPECT_EQ(PixelAt(1, 0), (std::vector<uint8_t>{0, 255, 0, 255}));
+  EXPECT_EQ(PixelAt(0, 1), (std::vector<uint8_t>{0, 255, 0, 255}));
+  EXPECT_EQ(PixelAt(1, 1), (std::vector<uint8_t>{255, 4, 246, 0}));
+}
+
+// Real disassembly (TASKS.md/PHASE8_LOG.md Phase 8): Double Dragon
+// pairs GL_ALPHA_TEST/GL_BLEND with these real OBM1 uploads --
+// confirmed real args glAlphaFuncx(GL_NOTEQUAL, 0.0) and
+// glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA).
+TEST(GlHle, AlphaFuncxAndBlendFuncForwardRealArgsToBackend) {
+  Fixture f;
+  constexpr zeebulator::GLenum kGlNotequal = 0x0205;
+  constexpr zeebulator::GLenum kGlSrcAlpha = 0x0302;
+  constexpr zeebulator::GLenum kGlOneMinusSrcAlpha = 0x0303;
+
+  f.hle.CallArmFunction(f.GlSlot(4), kGlNotequal, ToFixed(0.0f));
+  EXPECT_EQ(f.backend.last_alpha_func, kGlNotequal);
+  EXPECT_FLOAT_EQ(f.backend.last_alpha_ref, 0.0f);
+
+  f.hle.CallArmFunction(f.GlSlot(6), kGlSrcAlpha, kGlOneMinusSrcAlpha);
+  EXPECT_EQ(f.backend.last_blend_sfactor, kGlSrcAlpha);
+  EXPECT_EQ(f.backend.last_blend_dfactor, kGlOneMinusSrcAlpha);
 }
 
 TEST(GlHle, CompressedTexImage2DWithNoObm1MagicAndAnUnrecognizedFormatUploadsNothing) {
