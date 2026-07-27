@@ -5801,3 +5801,114 @@ emulation or presentation defect. `git diff --stat`: `Sdl2UnifiedBackend`
 well-specified next step: the degenerate `glViewport(0,0,1,0)` call
 itself -- find the real code that computes those dimensions and why
 they're wrong, not attempted this round.
+
+---
+
+## The degenerate viewport: root-caused and fixed for real
+
+Went straight after the concrete next step from the previous round: a
+live `pc==`-gated trace (temporary, reverted) on the real `GlViewport`
+call found its real caller at `0x0011d47c`. Disassembling backward from
+there found a thin real dispatch wrapper (`0x124498`, a real GL
+function-table call, unrelated to the bug) and, one level further back,
+the real values themselves: `applet_ptr+0xad0+24`/`+26`, read as signed
+16-bit halfwords, with `width` getting a real `+1` added before being
+stored (explaining the observed `w=1` from a real `0` -- `0+1=1` -- not
+a literal hardcoded `1`).
+
+**Traced the real writer with a live memory watchpoint** (temporary,
+reverted, same `g_debug_watch_addr`/`g_debug_last_pc` bridge this log
+has used before) armed on the correct address *before* `CreateInstance`
+even runs (an earlier attempt armed it right after, and missed the
+write entirely -- the real value is already wrong by the time
+`CreateInstance` returns). Found the exact real write site
+(`pc=0x0011d6b4`) and, walking a little further back, its own real
+source: a real vtable call through `[applet_ptr+12]` -- confirmed,
+via this project's own already-documented `mod_runtime.cpp`
+(`kAppContextShellOffset = 12`), to be the real `IShell` pointer --
+slot 4 of its vtable, i.e. the real, standard BREW
+`ISHELL_GetDeviceInfo(IShell*, AEEDeviceInfo*)` call, which
+`core/brew/ishell.cpp` already correctly identified by name (comment:
+`// 4  GetDeviceInfo`) but left a blind `Stub` -- confirming the
+degenerate viewport was never a rendering bug at all, just an
+unimplemented real BREW API silently returning zeroed output.
+
+**Confirmed the real struct layout against the real bundled SDK header**
+(`research/docs/sdk_installer_extract/brew_sdk_headers_reference/
+brew_mp_7.12.5_sdk/AEEShell.h`) rather than guessing: real
+`AEEDeviceInfo` starts `uint16 cxScreen; uint16 cyScreen;` at offsets
+0/2 -- an exact match for what real Double Dragon code reads out of
+this call's own output buffer.
+
+**Implemented `IShellHle::GetDeviceInfoImpl`** for real: writes
+`cxScreen`/`cyScreen` from a new `screen_width`/`screen_height`
+constructor parameter (defaulted to 640/480, Zeebo's one real native
+resolution, so every existing call site -- ten-plus in `tests/
+brew_test.cpp` alone -- keeps compiling unchanged; `tools/game_probe.cpp`
+and `frontends/standalone/main.cpp` now pass `kWidth`/`kHeight`
+explicitly). New test `IShellHle.GetDeviceInfoWritesRealScreenDimensions`
+confirms the real write. **Verified against the real Double Dragon run
+on the real desktop**: the viewport is now correct (`w=641 h=480` --
+the real `+1` on width lines up exactly), and real geometry finally
+became visible on screen for the first time this whole investigation --
+directly observed by the user as "forms trying to be real game
+graphics."
+
+**A new, real, separate symptom appeared once real content was finally
+visible: the screen settled into solid white after a few frames.** A
+live `[DBGGL2]`-tagged trace (temporary, reverted) found the real cause
+immediately: real code calls `glGenTextures`/`glBindTexture` many times
+with real, freshly-generated texture names, but **never once** calls
+`glTexImage2D` -- confirmed via the same trace run showing thousands of
+real `glDrawArrays` calls but zero `glTexImage2D` calls. Real GLES
+texture objects with no image data ever uploaded are "incomplete";
+sampling one is undefined/white on many real implementations, and with
+this many real draw calls covering the screen, the cumulative visual
+result is exactly the observed solid white. `core/brew/gl_hle.h`'s own
+existing doc comment already flagged this precisely: "glTexSubImage2D,
+compressed textures, ... is still Stubs" -- real Double Dragon almost
+certainly uploads texture data through a real compressed-texture path
+(this project's own bundled research samples reference real ATITC
+compression) that this project has never implemented at all. Not
+pursued further this round -- a concrete, well-evidenced next target.
+
+**Separately, and just as significant: the simulated button-hold this
+file has relied on since early in the Double Dragon investigation
+turned out to be actively harmful, not helpful, once real rendering
+started working.** Direct real-desktop testing, at the user's own
+suggestion, with the simulated hold shortened from ~4 seconds (240
+ticks) down to ~250ms (16 ticks) still showed the game visibly racing
+through several distinct real screens (loading -> a title-shaped
+screen -> a selection -> white -> another screen -> white) well before
+any one could be observed stably. **Testing with the simulated press
+removed entirely settled the question directly**: with zero simulated
+input, the game reaches a real, stable title screen on its own and
+*stays there* -- the original assumption (from early HID-investigation
+rounds, before real rendering worked) that a held press was needed to
+get past the loading state was never correct; what that early testing
+actually observed was the real per-tick state machine legitimately
+advancing on a real timer/loading-completion condition, misattributed
+to the simulated input because nothing could be *seen* to distinguish
+the two before real rendering existed. Removed the simulated
+button-hold injection from `tools/game_probe.cpp` entirely (not
+shortened further -- deleted): real, sustained per-tick "held" input
+apparently reads to real game code as repeated discrete presses, not a
+single hold, racing through screens; a real human's own real keyboard/
+controller input (already separately wired up via `PollInput`/
+`SdlKeyToAvk`) is the correct way to navigate further now that there's
+something real to navigate. The `simulated_button_events` queue and the
+real HID `GetNextButtonEvent` plumbing draining it are kept intact,
+just no longer auto-populated.
+
+**Verified end to end on the real desktop, twice independently**: the
+game now reaches the real, correctly-computed title screen (black
+background, white unrendered-texture rectangles where real sprite
+assets should be -- the confirmed-real, separate `glTexImage2D` gap
+above) and stays there stably, both immediately after this round's
+fixes and again after a full clean rebuild. All temporary
+instrumentation (`[DBGGL2]`, the `GlViewport`/write-site watchpoints)
+reverted; `git diff --stat`: `core/brew/ishell.{h,cpp}` (real
+`GetDeviceInfo`), `tests/brew_test.cpp` (new test),
+`tools/game_probe.cpp`/`frontends/standalone/main.cpp` (pass real
+width/height; button-hold injection removed). 293/293 tests pass (292
++ the new `GetDeviceInfo` test).

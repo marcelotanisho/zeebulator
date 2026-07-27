@@ -148,6 +148,24 @@ TEST(IShellHle, CreateInstanceReturnsARegisteredInstance) {
   EXPECT_EQ(cpu.GetMemory().Read32(kPpObjAddr), kDisplayObj);
 }
 
+TEST(IShellHle, GetDeviceInfoWritesRealScreenDimensions) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle, /*screen_width=*/640, /*screen_height=*/480);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 4 * 4);
+  constexpr uint32_t kDeviceInfoAddr = 0x90000;
+  cpu.GetMemory().Write32(kDeviceInfoAddr, 0xDEADBEEF);  // poison, confirms a real write happens
+  // void GetDeviceInfo(IShell *po, AEEDeviceInfo *pdi)
+  hle.CallArmFunction(sentinel, kObjectAddr, kDeviceInfoAddr);
+  // Real AEEDeviceInfo starts with uint16 cxScreen; uint16 cyScreen; --
+  // see GetDeviceInfoImpl's own doc comment for the real header/
+  // disassembly evidence.
+  EXPECT_EQ(cpu.GetMemory().Read16(kDeviceInfoAddr + 0), 640u);
+  EXPECT_EQ(cpu.GetMemory().Read16(kDeviceInfoAddr + 2), 480u);
+}
+
 TEST(IShellHle, SetTimerThenTickFiresAfterElapsedTimeReachesDeadline) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

@@ -2287,6 +2287,43 @@ playable start-to-finish at full speed, standalone build.
       pass. Concrete next step: the degenerate `glViewport(0,0,1,0)`
       call itself — find the real code that computes those dimensions
       and why they're wrong. See PHASE8_LOG.md.
+      **Root-caused and fixed the degenerate viewport for real — it was
+      never a rendering bug.** A live watchpoint traced the real
+      `w=1,h=0` values to a real, unimplemented BREW API:
+      `ISHELL_GetDeviceInfo` (`core/brew/ishell.cpp` already correctly
+      named it — slot 4 — but left it a blind stub returning zeroed
+      output). Confirmed the real `AEEDeviceInfo` struct layout against
+      the bundled real SDK header (`cxScreen`/`cyScreen` at offsets
+      0/2, an exact match for what real Double Dragon code reads) and
+      implemented it for real, defaulted to 640×480 so every existing
+      call site keeps compiling. Verified on the real desktop: the
+      viewport is now correct (`w=641 h=480`) and real game geometry
+      became visible for the first time this investigation — directly
+      observed by the user.
+      **Also found the simulated button-hold this file has relied on
+      since early in this investigation was actively harmful once real
+      rendering worked**: even a short ~250ms hold visibly raced the
+      game through several real screens before any could be observed
+      stably (real code reads a sustained per-tick "held" input as
+      repeated discrete presses, not one hold). Removed the simulated
+      press entirely — with zero simulated input, the game reaches a
+      real, stable title screen on its own and stays there, confirmed
+      twice independently on the real desktop. The original "needs a
+      held press" assumption (from early HID-investigation rounds,
+      before real rendering existed to observe) was never correct.
+      Real further navigation is now left to a real human's own
+      keyboard/controller input, already separately wired up.
+      **New, confirmed-real, separate next gap**: the title screen
+      shows black background with white unrendered-texture rectangles
+      — real code calls `glGenTextures`/`glBindTexture` many times but
+      never once calls `glTexImage2D` (confirmed via live trace:
+      thousands of real draw calls, zero texture uploads); real Double
+      Dragon almost certainly uses a real compressed-texture upload
+      path (`core/brew/gl_hle.h` already flagged "compressed textures"
+      as unimplemented; this project's own bundled research references
+      real ATITC compression) not yet implemented at all. 293/293 tests
+      pass (new `IShellHle.GetDeviceInfoWritesRealScreenDimensions`
+      test). All temporary diagnostics reverted. See PHASE8_LOG.md.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

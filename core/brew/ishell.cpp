@@ -24,7 +24,8 @@ std::string ReadCString(Memory& memory, uint32_t addr) {
 
 }  // namespace
 
-IShellHle::IShellHle(Memory& memory, HleRuntime& hle) : memory_(memory), hle_(hle) {}
+IShellHle::IShellHle(Memory& memory, HleRuntime& hle, int screen_width, int screen_height)
+    : memory_(memory), hle_(hle), screen_width_(screen_width), screen_height_(screen_height) {}
 
 void IShellHle::RegisterInstance(uint32_t cls_id, uint32_t object_ptr) {
   instances_[cls_id] = object_ptr;
@@ -45,6 +46,30 @@ void IShellHle::CreateInstanceImpl(IArmCore& core) {
   }
   memory_.Write32(ppobj, it->second);
   core.SetRegister(kR0, 0);  // SUCCESS
+}
+
+void IShellHle::GetDeviceInfoImpl(IArmCore& core) {
+  // void GetDeviceInfo(IShell *po, AEEDeviceInfo *pdi)
+  // po is R0 (unused, matches "this"), pdi R1. Real AEEDeviceInfo (see
+  // the real bundled AEEShell.h reference, research/docs/
+  // sdk_installer_extract/brew_sdk_headers_reference/) starts with
+  // `uint16 cxScreen; uint16 cyScreen;` at offsets 0/2 -- confirmed
+  // against real Double Dragon disassembly (TASKS.md/PHASE8_LOG.md
+  // Phase 8): its own real screen-size-query call site reads exactly
+  // those two offsets out of this call's own output buffer, and (before
+  // this fix) got 0/0 back from this slot's old blind-stub behavior,
+  // producing a real, confirmed-via-live-GL-trace degenerate
+  // `glViewport(0,0,1,0)` call downstream. Every other real
+  // AEEDeviceInfo field is left zeroed (this project doesn't have
+  // evidence any real game reads them yet) -- not a claim the rest of
+  // the struct is correctly populated, just that these two confirmed-
+  // read fields are.
+  uint32_t pdi = core.GetRegister(kR1);
+  if (pdi != 0) {
+    memory_.Write16(pdi + 0, static_cast<uint16_t>(screen_width_));   // cxScreen
+    memory_.Write16(pdi + 2, static_cast<uint16_t>(screen_height_));  // cyScreen
+  }
+  core.SetRegister(kR0, 0);
 }
 
 void IShellHle::ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data) {
@@ -146,7 +171,7 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       Stub,                                            // 1  Release
       [this](IArmCore& c) { CreateInstanceImpl(c); },   // 2  CreateInstance
       Stub,  // 3  QueryClass
-      Stub,  // 4  GetDeviceInfo
+      [this](IArmCore& c) { GetDeviceInfoImpl(c); },  // 4  GetDeviceInfo
       Stub,  // 5  StartApplet
       Stub,  // 6  CloseApplet
       Stub,  // 7  CanStartApplet

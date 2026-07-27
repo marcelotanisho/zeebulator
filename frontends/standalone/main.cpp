@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
 
   uint32_t display_obj =
       display.Build(cpu.GetMemory(), hle, /*vtable=*/0x80002000, /*object=*/0x80003000);
-  zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
+  zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle, kWidth, kHeight);
   shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
   uint32_t shell =
       shell_hle.Build(/*vtable=*/0x80000000, /*object=*/0x80001000);

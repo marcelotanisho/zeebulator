@@ -54,7 +54,13 @@ namespace zeebulator {
 // code itself -- see Tick().
 class IShellHle {
  public:
-  IShellHle(Memory& memory, HleRuntime& hle);
+  // `screen_width`/`screen_height` default to Zeebo's one real native
+  // resolution (640x480, the same constant every frontend already
+  // hardcodes) -- real GetDeviceInfo (slot 4) needs them to answer real
+  // `AEEDeviceInfo::cxScreen`/`cyScreen` queries; real code that never
+  // calls GetDeviceInfo doesn't need this, hence the default rather than
+  // a required constructor argument.
+  IShellHle(Memory& memory, HleRuntime& hle, int screen_width = 640, int screen_height = 480);
 
   // Registers the object pointer ISHELL_CreateInstance should hand back
   // for `cls_id`. Must be called before Build(), for any class the app
@@ -105,12 +111,15 @@ class IShellHle {
   };
 
   void CreateInstanceImpl(IArmCore& core);
+  void GetDeviceInfoImpl(IArmCore& core);
   void SetTimerImpl(IArmCore& core);
   void CancelTimerImpl(IArmCore& core);
   void LoadResDataExImpl(IArmCore& core);
 
   Memory& memory_;
   HleRuntime& hle_;
+  int screen_width_;
+  int screen_height_;
   std::unordered_map<uint32_t, uint32_t> instances_;
   std::vector<PendingTimer> timers_;
   std::unordered_map<std::string, BarArchive> resource_files_;

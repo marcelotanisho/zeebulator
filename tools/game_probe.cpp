@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
   // Real compiled app code obtains IDisplay through
   // ISHELL_CreateInstance(AEECLSID_DISPLAY, ...), not directly -- found
   // via real disassembly of AEEApplet_New's call chain (PHASE8_LOG.md).
-  zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle);
+  zeebulator::IShellHle shell_hle(cpu.GetMemory(), hle, kWidth, kHeight);
   // Real ISHELL_LoadResDataEx(shell, "resources.bar", id, type, ...)
   // calls (real slot 41, confirmed live against Peggle -- see
   // core/brew/ishell.h) need the real file's own bytes registered
@@ -1280,54 +1280,29 @@ int main(int argc, char** argv) {
         std::printf("  [input] download-complete callback threw: %s\n", e.what());
       }
     }
-    // Simulate a real, held button press once the game has genuinely
-    // registered for button events (captured_button_callback nonzero) and
-    // had a fair chance to finish resource loading. Re-fires every tick
-    // for a real ~4-second window (ticks 60-300) rather than once: a
-    // single momentary press only ever set the gate for one tick before
-    // the real per-tick "publish" logic (traced live, `ddragonz.mod`
-    // 0x123740) cleared it again, and a real held press is what actually
-    // drove the real per-tick state machine (`applet+0x50`/`+0x54`)
-    // through multiple distinct, confirmed-live real states -- genuine
-    // evidence this matters, not a guess. Queues real, valid button UIDs
-    // (confirmed against the real AEEHIDButtons.h Zeebo mapping table)
-    // for every real Zeebo action button and the d-pad, plus UID
-    // 0x0106C403 -- not one of AEEHIDButtons.h's documented Zeebo
-    // buttons, but a real, working case in ddragonz.mod's own compiled
-    // dispatch table that remaps to nButtonID=8 (bit 0x100), the exact
-    // bit `applet+0x361c`'s real consumer checks for (confirmed several
-    // rounds ago by tracing that consumer directly) and the only one of
-    // the 16 real cases that produces it (worked out from disassembly,
-    // not guessed). Start/HOME deliberately excluded: its real case
-    // (`ddragonz.mod` 0x10080c) returns failure without touching the
-    // button-info struct at all, aborting the real callback's own
-    // event-processing loop immediately and dropping every event queued
-    // after it -- confirmed live.
-    if (*captured_button_callback != 0 && tick_count >= 60 && tick_count <= 300) {
-      *simulated_button_events = {
-          {0, 1, 0x0106C40A},  // Button_1 (ZEEBO_BUTTON_WEST)
-          {1, 1, 0x0106C40B},  // Button_2 (ZEEBO_BUTTON_SOUTH)
-          {2, 1, 0x0106C40C},  // Button_3 (ZEEBO_BUTTON_NORTH)
-          {3, 1, 0x0106C40D},  // Button_4 (ZEEBO_BUTTON_EAST)
-          {4, 1, 0x0106C3FE},  // DPAD_UP
-          {5, 1, 0x0106C3FF},  // DPAD_LEFT
-          {6, 1, 0x0106C400},  // DPAD_DOWN
-          {7, 1, 0x0106C401},  // DPAD_RIGHT
-          {8, 1, 0x0106C403},  // unnamed but real; the one case that sets bit 0x100
-      };
-      if (tick_count == 60) {
-        std::printf("  [input] holding a simulated button press (ticks 60-300): invoking "
-                    "button callback 0x%08x\n",
-                    *captured_button_callback);
-      }
-      try {
-        CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, *captured_button_callback,
-                               *captured_button_context, 0, 0, 0, /*trace=*/false,
-                               /*hle_trace=*/false, &display, &backend);
-      } catch (const std::exception& e) {
-        std::printf("  [input] button callback threw: %s\n", e.what());
-      }
-    }
+    // No automatic simulated button press here (a real, held simulated
+    // press was tried in earlier rounds of this investigation, from a
+    // single tick up through a sustained ~4-second/240-tick hold -- see
+    // PHASE8_LOG.md). Removed for real reasons, confirmed directly on
+    // the real desktop (TASKS.md Phase 8): the real, correct BREW
+    // title-screen transition out of the loading state happens on its
+    // own, with zero simulated input at all -- the earlier assumption
+    // that it needed a simulated press was wrong, and any sustained
+    // simulated hold (even a brief ~250ms/16-tick one) visibly raced the
+    // game through several distinct further real screens in one
+    // uncontrolled burst (each repeated per-tick "press" event read as a
+    // separate, discrete confirm by real game code, not a single sustained
+    // hold), never leaving any one of them observable. With real
+    // rendering now working (Sdl2UnifiedBackend), the better default is
+    // to let the tool settle on whatever real, stable state the game
+    // reaches on its own and leave further navigation to a real human's
+    // own real keyboard/controller input (already wired up separately,
+    // see PollInput/SdlKeyToAvk) rather than an automated guess at how
+    // hard or how long to simulate a press. `simulated_button_events`
+    // (populated by nothing now) and the real HID `GetNextButtonEvent`
+    // plumbing draining it are kept intact as correct, real
+    // infrastructure for whoever picks up real controller-driven
+    // navigation next.
     for (const auto& timer : shell_hle.Tick(kTickMs)) {
       bool trace_this_tick = tick_count < 10;
       if (trace_this_tick) std::printf("--- tick %llu ---\n", static_cast<unsigned long long>(tick_count));
