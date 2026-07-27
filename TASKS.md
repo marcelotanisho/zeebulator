@@ -2516,6 +2516,36 @@ playable start-to-finish at full speed, standalone build.
       directions -- every one now succeeds, confirmed by a final,
       still-live `FPS:31` screen capture. 303/303 tests pass. See
       PHASE8_LOG.md's "Real freeze on the second button press" section.
+- [x] Reached real gameplay for the first time (past the title screen,
+      into Chinatown level 1) and fixed a real bug the user hit
+      immediately: pressing Right made "a lot of sprites disappear"
+      (confirmed via before/after screenshots -- player, enemy,
+      weapon, and the entire HUD gone, only the background tilemap
+      left). First had to fix an unrelated tooling trap that wasted
+      several repro rounds: `tools/game_probe.cpp` never flushed
+      stdout (glibc fully block-buffers non-TTY output by default),
+      so a live `tail`/`grep` on its redirected log could show zero
+      new lines despite real input being processed -- fixed
+      permanently with `std::setvbuf(stdout, nullptr, _IOLBF, 0)`.
+      With that fixed, live GL-call tracing (temporary, reverted)
+      showed the *same* already-known-about classic-AVK-path bug from
+      the freeze fix above is not actually harmless: Right's made-up
+      AVK code still makes real `HandleEvent` jump through a null
+      pointer and wander through real memory, and this time caught it
+      corrupting whatever real per-frame sprite/HUD draw loop reads
+      its active-entity list from -- every real texture bind+draw for
+      every sprite/HUD element (7-8 of them, every tick) stops
+      happening, permanently, the instant this occurs, while the
+      background tilemap keeps rendering fine. Fixed at the root
+      (`tools/game_probe.cpp`): the classic AVK path now only runs for
+      keys with no real HID mapping, since every key this project maps
+      already has one. Verified live with 36 separate real Right
+      presses in one run, zero throws, user confirmed: "Controller
+      seems to be working fine." 303/303 tests pass. See
+      PHASE8_LOG.md's "Real gameplay reached for the first time"
+      section. Other, not-yet-detailed issues remain (user's own
+      words: "There are some other issues though") -- tracked as open
+      follow-up, not guessed at here.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

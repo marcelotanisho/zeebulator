@@ -351,6 +351,15 @@ constexpr uint32_t kSimulatedDeviceHandle = 1;
 }  // namespace
 
 int main(int argc, char** argv) {
+  // glibc fully block-buffers stdout by default whenever it isn't a
+  // TTY (i.e. whenever it's redirected to a file/pipe, as this tool's
+  // whole live-debugging workflow depends on) -- sparse output (a
+  // single key event's worth of printf calls) can then sit unflushed
+  // in memory indefinitely while the process keeps running, making a
+  // live `tail`/`grep` on the redirected log look like nothing
+  // happened even though it did. Line-buffered instead, so every
+  // printed line reaches the file the moment it's printed.
+  std::setvbuf(stdout, nullptr, _IOLBF, 0);
   if (argc < 5) {
     // cls_id is IModule::CreateInstance's real AEECLSID -- the literal
     // the module's own code compares the passed ClsId against (found by
@@ -1283,7 +1292,27 @@ int main(int argc, char** argv) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) running = false;
       if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !event.key.repeat) {
-        uint32_t avk = SdlKeyToAvk(event.key.keysym.sym);
+        uint32_t hid_button_uid = SdlKeyToHidButton(event.key.keysym.sym);
+        // The classic AVK path only runs for keys with *no* real HID
+        // mapping. SdlKeyToAvk's own doc comment already says its
+        // codes are invented, "not a claimed-correct real key
+        // mapping" -- and this project has direct, live proof they
+        // can be actively harmful, not just ineffective: Right's made-
+        // up code (0xe02e) makes real HandleEvent code jump through a
+        // null function pointer, which wanders hundreds of steps
+        // through low, mostly-zero memory before crashing (caught,
+        // logged, doesn't halt the loop) -- but during that wander,
+        // real non-zero bytes elsewhere in that low range get
+        // misinterpreted as real instructions, some of which are real
+        // stores, and it corrupts whatever real per-frame sprite/HUD
+        // draw loop reads its active-entity list from: every real
+        // texture bind+draw call for every sprite/HUD element stops
+        // happening, permanently, immediately after (confirmed live,
+        // PHASE8_LOG.md -- only the background tilemap keeps
+        // rendering). Since every key this project maps has a real,
+        // confirmed-correct HID equivalent already, there's no reason
+        // to keep taking that risk here.
+        uint32_t avk = (hid_button_uid == 0) ? SdlKeyToAvk(event.key.keysym.sym) : 0;
         if (avk != 0 && applet_ptr != 0) {
           // boolean HandleEvent(IApplet *po, AEEEvent evt, uint16 wParam, uint32 dwParam)
           // evt 0x101/0x102 confirmed via real disassembly of Double
@@ -1312,7 +1341,6 @@ int main(int argc, char** argv) {
         // (real IDLECBFUNC signature: void (*)(void *pUser), confirmed
         // by this callback's own real disassembly taking exactly one
         // incoming argument).
-        uint32_t hid_button_uid = SdlKeyToHidButton(event.key.keysym.sym);
         if (hid_button_uid != 0 && *captured_button_callback != 0) {
           int state = (event.type == SDL_KEYDOWN) ? 1 : 0;
           // nButtonID (first field) is a don't-care: the real callback's

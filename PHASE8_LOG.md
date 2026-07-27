@@ -6731,3 +6731,85 @@ sites, the `=== BEGIN uid=... ===` marker, the write-watch globals in
 `core/memory/memory.{h,cpp}`, the matching `g_debug_current_pc` tracker
 in `core/cpu/arm_interpreter.cpp`) fully reverted; `git diff --stat`
 clean except the one real, permanent fix in `tools/game_probe.cpp`.
+
+## Real gameplay reached for the first time: a silent stdout buffering trap, then sprites vanishing forever on Right
+
+With the freeze fixed, the user reached real Double Dragon gameplay
+(the title screen's own "APERTE O BOTÃO HOME" prompt, then actual
+Chinatown level 1) for the first time this project has ever gotten
+that far, and reported a real, reproducible bug: pressing Right made
+"a lot of sprites disappear" -- confirmed via two screenshots, one
+right after gameplay starts (player, enemy, weapon, full HUD all
+visible) and one right after pressing Right (only the background
+brick wall/door/garage-door/poster remain; player, enemy, weapon, and
+the entire HUD are gone).
+
+**First real obstacle: an invisible stdout buffering trap that wasted
+several repro rounds.** Live reproduction depends on the user playing
+against a real window while this project reads `tools/game_probe.cpp`'s
+redirected stdout log afterward -- but repeated attempts showed zero
+new lines in the log despite the user confirming they'd played and
+reproduced the bug. Root cause: glibc fully block-buffers stdout by
+default whenever it isn't a real TTY (true for `> file.log`
+redirection, this tool's entire live-debugging workflow) -- sparse
+output (a handful of printf calls per keypress) can sit unflushed in
+memory indefinitely while the process keeps running, so a live
+`tail`/`grep` on the redirected log looks like nothing happened even
+though it did. **Fixed for real, permanently** (not a workaround):
+`std::setvbuf(stdout, nullptr, _IOLBF, 0);` at the top of `main()`,
+switching stdout to line-buffered so every printed line reaches the
+file the instant it's printed. Immediately confirmed working: the very
+next repro round captured every real keypress.
+
+**Root-caused the sprite loss with the same live-tracing technique
+this project always uses.** Added temporary, unconditional one-line
+prints inside `GlHle`'s real `EglSwapBuffers`/`GlEnable`/`GlBindTexture`
+/`GlDrawArrays`/`GlDrawElements`/`GlDeleteTextures` (reverted after
+use) to see every real GL call the game itself makes, tick by tick,
+with no gating. **Direct, unambiguous evidence**: every tick before
+the Right press binds and draws 7-8 real textures (one big background
+batch, texture 3, `count=1980`, plus several smaller per-sprite/HUD
+batches on textures 4/5/6/7/8/9/10) before each real `eglSwapBuffers`.
+**The instant after Right is processed, every tick for the rest of the
+run draws texture 3 alone** -- textures 4-10 (every sprite and the
+entire HUD) simply stop being submitted, permanently, matching the
+screenshots exactly (background survives, everything else is gone).
+
+This is the *same* already-documented bug from the freeze
+investigation, not a new one: the classic, explicitly-experimental AVK
+path (`SdlKeyToAvk`, its own doc comment already says "not a claimed-
+correct real key mapping") still makes real `HandleEvent` code jump
+through a null function pointer for Right's made-up code (`0xe02e`),
+wandering hundreds of steps through low, mostly-zero real memory
+before finally crashing on an unimplemented instruction (caught,
+logged, previously judged "harmless" since it doesn't halt the loop).
+**It isn't harmless.** During that wander, real non-zero bytes
+elsewhere in that low address range get misinterpreted as real ARM
+instructions -- and evidently at least one of those accidental
+"instructions" is a real store that corrupts whatever real per-frame
+sprite/HUD draw loop reads its active-entity list from, permanently,
+since the exception is caught and the loop just keeps going with
+already-corrupted state.
+
+**Fixed** by removing the risk at its source rather than special-
+casing Right: the classic AVK path now only runs for keys with *no*
+real HID mapping (`uint32_t avk = (hid_button_uid == 0) ?
+SdlKeyToAvk(...) : 0;`). Every key this project currently maps
+(arrows, Enter/Backspace, Q/E, Z/X/C/V) already has a real, confirmed-
+correct HID equivalent, so this doesn't lose any real functionality --
+it just stops taking a demonstrated-harmful risk with an admittedly-
+fake, unconfirmed key code for no benefit.
+
+**Verified live**: fresh build, same repro (Enter x2 into gameplay,
+then Right pressed repeatedly -- 36 separate real Right button events
+in one run), zero `key event threw` lines (the AVK path never fires
+for it anymore) and the user confirmed directly: "Controller seems to
+be working fine." 303/303 tests pass. All temporary GL-call
+instrumentation (`core/brew/gl_hle.cpp`) and tick-tracing scaffolding
+(`tools/game_probe.cpp`) fully reverted; `git diff --stat` clean
+except the two real, permanent fixes (the `setvbuf` line and the
+AVK-gating change), both in `tools/game_probe.cpp`.
+
+Explicitly out of scope, called out by the user directly and left for
+next: "There are some other issues though" -- not yet described in
+detail, tracked as open follow-up work rather than guessed at here.
