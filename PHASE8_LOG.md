@@ -6555,3 +6555,103 @@ temporary instrumentation (`[DBGWATCH]`, `[DBGNORM]`, `[DBGBR]`,
 `[DBGCB]`, `[DBGSLOT9]`, `[DBGVERIFY]`, the one-shot test injection)
 reverted; `git status` clean except `tools/game_probe.cpp`'s real,
 permanent feature.
+
+## Real 12fps -> 31fps: a missing -O flag, and a double wait stacked on real vsync
+
+With the FPS overlay above in place (top-left "FPS:N" readout,
+`Sdl2UnifiedBackend`), the user asked why Double Dragon's real title
+screen was only running at ~12fps against a real "locked 30fps" they
+found documented online. Investigated as two real, separate, additive
+bugs -- neither guessed, both confirmed live.
+
+**Bug 1: this project's entire build has never been optimized.**
+`build/core/CMakeFiles/zeebulator_core.dir/flags.make` showed
+`CXX_FLAGS = -std=gnu++20 -Wall -Wextra` -- no `-O` flag at all, and
+`CMakeCache.txt` had `CMAKE_BUILD_TYPE` empty. CMake's single-config
+generators default to no optimization at all when `CMAKE_BUILD_TYPE`
+is unset -- meaning every build of this software ARM interpreter,
+including every FPS measurement taken before this session, was
+running fully unoptimized. Confirmed zero `assert()` usage anywhere
+under `core/` first (so `-DNDEBUG` carries no correctness risk), then
+added a standard, non-forcing default to the top of `CMakeLists.txt`:
+
+```cmake
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+endif()
+```
+
+Reconfigured, confirmed `flags.make` now reads `-O3 -DNDEBUG ...`,
+full rebuild, 303/303 tests still pass (and the test binary itself
+runs measurably faster: 1.05s -> 0.73s wall time for the whole
+suite -- indirect but real corroborating evidence). Live-measured via
+the FPS overlay against real Double Dragon: **12fps -> 27fps**, more
+than double, from this one flag alone.
+
+**Bug 2: `tools/game_probe.cpp`'s main loop was double-waiting on top
+of real vsync.** 27fps was still short of the real ~30fps target, so
+rather than guess further, added temporary instrumentation (reverted
+after use) to get real evidence of where the remaining time went:
+
+- A temporary `[DBGPACE]` print measuring real wall-clock elapsed
+  time each outer-loop iteration, right before the loop's
+  `SDL_Delay(kTickMs)` call, throttled to every 20th iteration.
+  Showed elapsed consistently ~0-1ms once past the noisy first-10-
+  ticks trace-logging startup window -- ruling out slow ARM
+  interpretation as the remaining bottleneck; the optimized
+  interpreter itself is fast.
+- A temporary `[DBGTIMER]` print in `IShellHle::ScheduleTimer`
+  (reverted after use) logging every real `ms` argument the game
+  itself passes to `ISHELL_SetTimer`. Real, live output: **239 calls
+  requesting `ms=32`** (one initial `ms=33`) -- i.e. Double Dragon's
+  own real, compiled code is self-rearming its main-loop timer at a
+  real 32ms period (~31.25fps) every single tick. This *is* the real
+  "locked 30fps" the user found documented, confirmed directly from
+  the game's own real requested value rather than inferred.
+
+Read `IShellHle::Tick()`'s real matching logic
+(`elapsed_ms >= remaining_ms` fires, else subtracts) against this
+loop's fixed `kTickMs=16`: a clean 32ms request quantizes to exactly
+2 outer-loop iterations with zero loss (16+16=32). So the simulated-
+time math alone can't explain a 37ms-real-per-frame (27fps) result
+against a 32ms-simulated (~31fps) target -- the gap had to be in real
+wall-clock overhead the simulated-time model doesn't see.
+
+Found it in the loop's tail: `SDL_Delay(kTickMs)` was **unconditional
+and flat**, added on top of whatever real wall-clock time that
+iteration's own work already took -- including, on the iteration
+where the real 32ms timer fires, a real `eglSwapBuffers` call that
+itself really blocks on the host's vsync (`SDL_GL_SetSwapInterval(1)`,
+`Sdl2UnifiedBackend`'s own real, deliberate choice -- see its class
+doc comment). A real vsync wait plus a second, redundant flat 16ms
+wait right after it silently ate real throughput the simulated-time
+accounting had no way to detect.
+
+**Fixed** by making the wait elapsed-aware instead of flat:
+
+```cpp
+uint32_t elapsed_this_iter = SDL_GetTicks() - loop_start_ms;
+if (elapsed_this_iter < kTickMs) SDL_Delay(kTickMs - elapsed_this_iter);
+```
+
+(`loop_start_ms` captured via `SDL_GetTicks()` at the very top of the
+`while (running)` loop, before event handling.) This targets a real
+~16ms *per outer iteration*, rather than *"whatever this iteration's
+own real work took" + 16ms* -- a real host-loop pacing bug, not an
+emulation-accuracy change; the simulated `kTickMs` fed into
+`Tick()`/`mod_runtime.Tick()` is untouched.
+
+**Verified live**, rebuilt (303/303 tests still pass), same real
+Double Dragon run, same FPS overlay: steady **`FPS:31`**, matching
+the real requested ~31.25fps cadence almost exactly, confirmed stable
+across two screen captures a few seconds apart. Also surfaced a real,
+previously-invisible-at-the-wrong-speed detail as corroborating
+evidence this wasn't just the counter changing: a real "APERTE O
+BOTÃO HOME" ("press the HOME button") prompt now visibly blinks on
+and off between captures -- a real timed UI element that was rendering
+too infrequently to ever be human-visible at 12-27fps.
+
+All temporary instrumentation (`[DBGPACE]`, `[DBGTIMER]`, the
+`#include <cstdio>` it needed in `core/brew/ishell.cpp`) fully
+reverted; `git diff --stat` clean except the two real, permanent
+fixes (`CMakeLists.txt`, `tools/game_probe.cpp`).

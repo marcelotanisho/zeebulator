@@ -4,6 +4,21 @@ project(zeebulator LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# No build type was ever being set (single-config generators default to
+# an unoptimized, non-NDEBUG build when CMAKE_BUILD_TYPE is empty --
+# confirmed via this project's own build/core/CMakeFiles/*/flags.make,
+# which had no -O flag at all). That's the real, measured bottleneck
+# behind a software ARM interpreter running Double Dragon's title
+# screen at ~12fps against its own ~60Hz internal tick budget (TASKS.md
+# Phase 8, PHASE8_LOG.md "Real controller input" section's FPS
+# overlay work): an unoptimized per-instruction dispatch loop is
+# routinely 5-10x slower than an optimized one. Defaulted (not forced)
+# to Release so `cmake --build . --config Debug`/`-DCMAKE_BUILD_TYPE=
+# Debug` still works for anyone who explicitly wants it.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+endif()
+
 option(ZEEBULATOR_BUILD_LIBRETRO "Build the libretro core" ON)
 option(ZEEBULATOR_BUILD_STANDALONE "Build the standalone dev frontend" ON)
 option(ZEEBULATOR_BUILD_TESTS "Build the test suite" ON)

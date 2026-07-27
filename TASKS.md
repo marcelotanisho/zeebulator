@@ -2498,8 +2498,35 @@ playable start-to-finish at full speed, standalone build.
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
       (ARCHITECTURE.md §8)
-- [ ] Performance pass: if the interpreter can't hold full speed, this is
-      the point to seriously commit to the JIT integration deferred in Phase 1
+- [x] Performance pass: investigated why the real title screen ran at
+      only ~12fps against Double Dragon's own real, documented "locked
+      30fps". **Not an interpreter-speed ceiling requiring the JIT
+      deferred in Phase 1** -- two real, evidence-grounded host-side
+      bugs, both fixed:
+      1. **This whole project had never been building with any
+      optimization at all.** `CMakeCache.txt`/`flags.make` showed
+      `CMAKE_BUILD_TYPE` empty and no `-O` flag anywhere -- CMake's
+      real default for an unset build type. Added a standard
+      `if(NOT CMAKE_BUILD_TYPE ...) set(... "Release" ...)` default
+      to `CMakeLists.txt` (confirmed zero `assert()` usage under
+      `core/` first, so `-DNDEBUG` is safe). Alone: **12fps -> 27fps**.
+      2. `tools/game_probe.cpp`'s main loop unconditionally
+      `SDL_Delay(kTickMs)`'d every iteration regardless of how long
+      that iteration's own real work took -- double-waiting on top of
+      a real vsync-blocked `eglSwapBuffers` on the iteration Double
+      Dragon's own real, live-confirmed `ISHELL_SetTimer(ms=32, ...)`
+      main-loop timer fires. Made the wait elapsed-aware instead of
+      flat. Combined with fix 1: **31fps**, matching the real
+      requested ~31.25fps cadence almost exactly -- confirmed stable,
+      and corroborated by a real "press HOME" prompt now visibly
+      blinking on screen for the first time (too infrequent to be
+      human-visible at the old framerate). 303/303 tests pass. See
+      PHASE8_LOG.md's "Real 12fps -> 31fps" section for the full
+      derivation, including the temporary `[DBGPACE]`/`[DBGTIMER]`
+      instrumentation (reverted) that found both root causes from live
+      evidence rather than guesswork. JIT integration stays deferred:
+      nothing here showed the *interpreter itself* as the bottleneck
+      once actually compiled with optimizations on.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

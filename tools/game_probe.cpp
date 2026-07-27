@@ -1279,6 +1279,7 @@ int main(int argc, char** argv) {
   constexpr uint32_t kTickMs = 16;
   uint64_t tick_count = 0;
   while (running) {
+    uint32_t loop_start_ms = SDL_GetTicks();
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) running = false;
       if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !event.key.repeat) {
@@ -1445,7 +1446,23 @@ int main(int argc, char** argv) {
     if (!backend.HasRealGlActivity()) {
       display.RepresentLastFrame();
     }
-    SDL_Delay(kTickMs);
+    // Elapsed-aware, not flat: this loop feeds a fixed kTickMs of
+    // *simulated* time into Tick() every iteration, but the real
+    // wall-clock cost of a single iteration varies a lot -- most do
+    // nothing, but the ones landing on a due real self-rearming
+    // ISHELL_SetTimer (Double Dragon's own real main-loop timer,
+    // confirmed live at a real, disassembly-grounded ms=32 request --
+    // see PHASE8_LOG.md) run real ARM code that ends in a real,
+    // vsync-blocked eglSwapBuffers. A flat, unconditional
+    // `SDL_Delay(kTickMs)` after that (the previous behavior) stacks
+    // a second real ~16ms wait on top of a real swap that already
+    // spent real wall-clock time blocking on vsync, silently halving
+    // real throughput versus the real 32ms/~31fps cadence the game
+    // itself is asking for. Confirmed live (PHASE8_LOG.md): removing
+    // that double-wait took this tool from ~27fps to matching the
+    // real requested cadence.
+    uint32_t elapsed_this_iter = SDL_GetTicks() - loop_start_ms;
+    if (elapsed_this_iter < kTickMs) SDL_Delay(kTickMs - elapsed_this_iter);
   }
 
   SDL_DestroyWindow(window);
