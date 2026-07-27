@@ -1,7 +1,10 @@
 #include "core/brew/gl_hle.h"
 
+#include <stdexcept>
+
 #include "core/brew/interface_object.h"
 #include "core/loader/atitc.h"
+#include "core/loader/obm1.h"
 
 namespace zeebulator {
 
@@ -432,6 +435,47 @@ void GlHle::GlCompressedTexImage2D(IArmCore& core) {
   // border (stack arg 1) unused, same as GlTexImage2D.
   uint32_t image_size = HleRuntime::ReadStackArg(core, 2);
   uint32_t data_ptr = HleRuntime::ReadStackArg(core, 3);
+  Memory& memory = core.GetMemory();
+
+  // Real disassembly (TASKS.md/PHASE8_LOG.md Phase 8) found Double
+  // Dragon's own `data.ggz` contains *only* real OBM1 images (this
+  // project's own already-working core/loader/obm1.h format), never
+  // real ATITC -- and that real code reuses this same real GL vtable
+  // slot to upload them, passing a real OBM1 header's own width/height
+  // (extracted after decompression -- see the `unknown_0xdc_fn` fix in
+  // mod_runtime.cpp) as this call's width/height, `internalformat` as
+  // an internal engine tag (not a real GL enum), and `data` pointing 8
+  // bytes past a real OBM1 header ("OI" magic, flag, bpp) that
+  // precedes it. Checking those real magic bytes directly (rather than
+  // trusting `internalformat`, which is real-but-not-standard here) is
+  // how this project's own bundled evidence says to identify a real
+  // OBM1 upload -- confirmed byte-for-byte against every real field
+  // (magic, flag, bpp, width, height, and even the declared
+  // `imageSize` matching the real palette+pixel-data size exactly) in
+  // every real call observed this round.
+  if (data_ptr >= 8 && memory.Read8(data_ptr - 8) == 'O' && memory.Read8(data_ptr - 7) == 'I') {
+    uint32_t total_size = 8 + image_size;
+    std::vector<uint8_t> obm1_bytes(total_size);
+    for (uint32_t i = 0; i < total_size; ++i) {
+      obm1_bytes[i] = memory.Read8(data_ptr - 8 + i);
+    }
+    DecodedImage decoded_obm1;
+    try {
+      decoded_obm1 = Obm1Image::Decode(obm1_bytes);
+    } catch (const std::exception&) {
+      return;  // malformed -- leave the texture object as-is, not a guess
+    }
+    GlTextureImage image;
+    image.level = level;
+    image.internal_format = kGlRgb;
+    image.width = static_cast<int>(decoded_obm1.width);
+    image.height = static_cast<int>(decoded_obm1.height);
+    image.format = kGlRgb;
+    image.type = kGlUnsignedByte;
+    image.pixels = decoded_obm1.rgb.data();
+    backend_.TexImage2D(target, image);
+    return;
+  }
 
   AtitcFormat format;
   if (internal_format == kGlCompressedRgbAtiTc) {
@@ -446,24 +490,16 @@ void GlHle::GlCompressedTexImage2D(IArmCore& core) {
     return;
   }
 
-  // Real disassembly this round (TASKS.md/PHASE8_LOG.md Phase 8) found at
-  // least one real call site reaching this slot with a real, non-texture
-  // resource (a real embedded "Font.obm1" -- this project's own already-
-  // implemented core/loader/obm1.h format -- misrouted through this same
-  // real generic per-resource upload path) rather than a real ATITC
-  // texture, producing nonsensical width/height (tens of thousands of
-  // pixels -- far beyond any real 2009-era mobile GPU's actual max
-  // texture size). The real root cause (why that resource takes this
-  // branch instead of the real OBM1 path) isn't found yet -- this is a
-  // defensive bound against ever attempting a many-hundred-MB decode/
-  // allocation for a call that was never a real texture upload to begin
-  // with, not a fix for the real misrouting itself.
+  // Defensive bound: without a real OBM1 magic match above, this
+  // project has no confirmed-real example of this call site ever
+  // carrying genuine ATITC data (see this function's own doc comment
+  // above) -- reject implausible dimensions rather than risk a many-
+  // hundred-MB decode/allocation on a still-misidentified resource.
   constexpr int kMaxPlausibleTextureDimension = 4096;
   if (data_ptr == 0 || width <= 0 || height <= 0 || width > kMaxPlausibleTextureDimension ||
       height > kMaxPlausibleTextureDimension) {
     return;
   }
-  Memory& memory = core.GetMemory();
   std::vector<uint8_t> compressed(image_size);
   for (uint32_t i = 0; i < image_size; ++i) {
     compressed[i] = memory.Read8(data_ptr + i);

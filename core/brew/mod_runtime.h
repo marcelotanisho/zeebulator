@@ -288,10 +288,31 @@ namespace zeebulator {
 // already-initialized context field at +8 (-1), then calls this slot
 // with that one pointer argument, treating a 0 return as success --
 // sits in the same tightly-packed real cluster as GetAppContext (0xc0)
-// and the seventeenth slot (0xd0), one word after a 4-byte gap. Too
-// thin a shape (one call site, one pointer argument, no distinguishing
-// data) to identify -- registered as a safe no-op, same rationale as
-// every other unidentified slot above.
+// and the seventeenth slot (0xd0), one word after a 4-byte gap.
+//
+// **Identified for real** (TASKS.md/PHASE8_LOG.md Phase 8, a later
+// round): real **decompress this real gzip-compressed resource stream
+// in place**. Confirmed two ways, not guessed: (1) with this slot
+// stubbed to "always succeed, do nothing," the caller's own subsequent
+// `memcpy`-based struct reads (byte offsets +2/+3/+4/+6 off the same
+// pointer) pull real, live gzip header bytes -- e.g. the compression-
+// method byte at +2 (always 8 for deflate) feeding directly into a
+// real `internalformat` argument downstream, provably an arithmetic
+// artifact (`0x8b95 + 8 = 0x8b9d`, the exact, always-identical
+// "unknown format" this project kept rejecting), not real image data;
+// (2) those exact same byte offsets (+2 flag, +3 bpp, +4 width, +6
+// height, both uint16 LE) match this project's own independently
+// reverse-engineered real OBM1 header layout
+// (`core/loader/obm1.h`) byte-for-byte -- real code is provably
+// already-correct OBM1 header parsing, just fed the wrong (compressed)
+// input. Implemented as `DecompressGzipInPlaceImpl`: real zlib
+// inflate (matching this project's own already-established real gzip
+// handling in `core/loader/ggz.cpp`), streamed from/to emulated
+// memory, overwriting the same address with the decompressed result
+// (the real caller's own buffer is already sized for the decompressed
+// content -- confirmed by matching real `IFILE_Read` "want" sizes
+// against the real compressed stream's own true length in an earlier
+// round of this same investigation).
 //
 // A twentieth slot, offset 0x1b4, was found in Double Dragon once the
 // app-context fix (TASKS.md Phase 8, this same investigation --
@@ -408,6 +429,7 @@ class ModRuntime {
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);
   void ReallocImpl(IArmCore& core);
+  void DecompressGzipInPlaceImpl(IArmCore& core);
 
   // Shared bump-allocation core used by both MallocImpl and
   // ReallocImpl. Returns 0 (NULL) if `size` doesn't fit in the

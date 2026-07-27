@@ -6290,3 +6290,115 @@ starting point, not an open-ended mystery, next time. All temporary
 instrumentation (the `[DBGR6]` PC-gated probe) reverted; `git status`
 clean; 297/297 tests pass (unchanged -- no functional code touched
 this round).
+
+## Fixed for real: real decompression, real OBM1 upload -- Double Dragon's title screen renders correctly, in full color, for the first time
+
+Asked directly (the user, after the previous round's design-decision
+question) to keep going the authentic way rather than guess a
+pragmatic host-side workaround -- the right call, since the authentic
+path turned up the *actual* real architecture, not just a plausible
+substitute.
+
+**Design question resolved by re-reading `mod_runtime.h`'s own
+existing documentation of sibling static-base slots first** (offsets
+`0xd0`/`0x184`/`0x1b4`), not by guessing: every one of them, real
+disassembly already confirmed in earlier rounds, is a real call
+through the app's own imported "system services" table -- the same
+real mechanism `memcpy`/`malloc`/`free`/`realloc` already live in,
+already implemented host-side in this project's own C++, not traced
+into any real ARM code inside `ddragonz.mod` (there isn't any -- these
+are real *external* imports, like libc, not part of the game's own
+compiled logic). That settles it: `unknown_0xdc_fn` being a real
+system-provided decompression primitive, implemented host-side, isn't
+a shortcut substituting for the "authentic" answer -- given this
+table's own already-established real nature, it *is* the authentic
+answer.
+
+**Implemented `ModRuntime::DecompressGzipInPlaceImpl`**
+(`core/brew/mod_runtime.{h,cpp}`): real zlib `inflate` (same
+`windowBits = 15 + 16` gzip framing this project's own
+`core/loader/ggz.cpp` already uses), streamed incrementally to/from
+emulated memory in growable chunks (real gzip streams don't declare
+their own compressed length up front, and this project has no
+advance guarantee of the real decompressed size either), overwriting
+the same address with the real decompressed result -- matching the
+real caller's own confirmed convention (a single pointer argument, no
+output parameter, immediate subsequent reads from that same address).
+Wired into static-base offset `0xDC`, replacing the "always succeed,
+do nothing" Stub. New `tests/mod_runtime_test.cpp` tests: a real gzip
+stream wrapping a real-shaped OBM1 header decompresses correctly in
+place (byte-for-byte), and a second, larger (10,000-byte,
+non-compressible) stream exercises both the growable-input and
+growable-output chunking paths.
+
+**Re-ran with only that one fix and traced the live results**
+(temporary `[DBGCTI2]` prints, reverted after use): `internalformat`
+immediately started reflecting real, live OBM1 header bytes instead of
+gzip's own compression-method byte -- confirmed exactly:
+`0x8b95 + real_flag_byte(4) = 0x8b99` for 8bpp assets,
+`0x8b90 + real_flag_byte(4) = 0x8b94` for 4bpp assets (both formulas
+already derived two rounds ago), both now driven by the real,
+correctly-decompressed flag byte rather than gzip's method byte.
+**Width/height became completely sane real values** -- `128x128`,
+`256x256`, `512x512`, `512x256`, `128x512` -- real, plausible
+power-of-two texture dimensions, a complete transformation from the
+previous round's `50385x18715`-scale garbage.
+
+**That, in turn, revealed the real, final piece**: even with fully
+correct data, real code *still* funnels every one of these uploads
+through the same real `glCompressedTexImage2D`-shaped vtable slot,
+`internalformat` carrying an internal engine tag (not a real Khronos
+GL enum) and `data` pointing exactly 8 bytes past a real OBM1 header.
+Checked directly (another temporary print, reverted): the 8 bytes
+immediately before every real `data` pointer are, byte-for-byte,
+`4f 49 04 <bpp> <width-LE16> <height-LE16>` -- literally `"OI"` (real
+OBM1 magic) followed by the real flag/bpp/width/height fields, matching
+`core/loader/obm1.h`'s independently-reverse-engineered layout exactly,
+field for field, on every single real call observed. Cross-checked the
+declared `imageSize` argument too: `real palette size (2*2^bpp) + real
+pixel data size (width*height*bpp/8)` matches it exactly in every case
+(`16896` for a real 128x128 8bpp asset, `32800` for a real 256x256 4bpp
+asset, etc.) -- not a coincidence, a complete, self-consistent real
+format match. **Confirmed via `core/loader/obm1.h`'s own doc comment**
+that this isn't a one-off: "all 89 real assets in that archive share
+this exact layout" -- Double Dragon's `data.ggz` contains real OBM1
+images *exclusively*; this game never uses real ATITC at all. The
+`simple_atitc.c` bundled sample that motivated the original ATITC work
+was real, correctly-derived Qualcomm SDK sample code -- just not what
+this particular title actually ships.
+
+**Fixed `GlHle::GlCompressedTexImage2D`** (`core/brew/gl_hle.cpp`) to
+check for those real magic bytes directly (`data_ptr - 8` == `"OI"`)
+*before* trusting `internalformat` as a real GL enum -- real, physical
+evidence beats a real-but-nonstandard tag value every time. On a
+match, reads the full real OBM1 file (header + this call's own
+`imageSize` bytes) out of emulated memory and decodes it with this
+project's own already-working, already-tested `Obm1Image::Decode`
+(`core/loader/obm1.cpp`), then uploads the result as an ordinary
+`GL_RGB`/`GL_UNSIGNED_BYTE` texture through the existing
+`GlBackend::TexImage2D` path -- no ATITC involved. The real ATITC path
+from two rounds ago is kept as a fallback for `internalformat` values
+that really do match `GL_COMPRESSED_RGB(A)_ATI_TC`, with the same
+defensive dimension bound as before; genuinely dead code for this
+title, per the finding above, but not deleted -- this project has no
+evidence yet that no other real title ever uses it. New
+`tests/gl_hle_test.cpp` tests: a real-shaped, hand-built 2x2 OBM1 image
+(red/green checkerboard, matching `tests/obm1_test.cpp`'s own already-
+validated fixture shape) decodes and uploads correctly through the real
+vtable slot; a call with neither OBM1 magic bytes nor a recognized
+ATITC format uploads nothing, rather than guessing. 301/301 tests pass
+(297 + 4 new: 2 `ModRuntime`, 2 `GlHle`).
+
+**Verified on the real desktop, screenshotted directly**: Double
+Dragon's title screen now renders *completely, correctly, in full
+color* -- the real dragon line-art (gold/orange/red), the real
+Japanese kanji logo (双截龍, gold-to-blue gradient on magenta panels),
+"DOUBLE DRAGON" in gold English text, "APERTE O BOTÃO HOME" (the real
+Brazilian-Portuguese localized prompt), and the real copyright block
+("©Million Co.Ltd", "Brizo Interactive Corp. 2009") -- all present,
+all correctly colored, all correctly positioned. This is the first
+time in this entire project's history that a real target game's title
+screen has rendered with real, correct texture data end to end. `git
+status` clean (`core/brew/gl_hle.cpp`, `core/brew/mod_runtime.{h,cpp}`,
+`tests/mod_runtime_test.cpp`, `tests/gl_hle_test.cpp` -- no temporary
+diagnostics left in any of them).

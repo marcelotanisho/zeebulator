@@ -1,5 +1,9 @@
 #include "core/brew/mod_runtime.h"
 
+#include <zlib.h>
+
+#include <vector>
+
 #include <gtest/gtest.h>
 
 #include "core/brew/hle_runtime.h"
@@ -25,6 +29,7 @@ constexpr uint32_t kDbgPrintfSlotOffset = 0x9c;
 constexpr uint32_t kMemcpyAliasSlotOffset = 0x44;
 constexpr uint32_t kReallocSlotOffset = 0x74;
 constexpr uint32_t kUnknownSlotOffset0x1b4 = 0x1b4;
+constexpr uint32_t kUnknownSlotOffset0xdc = 0xdc;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
@@ -589,4 +594,80 @@ TEST(ModRuntime, SprintfWithNoDirectivesCopiesTheLiteralTextUnchanged) {
 
   hle.CallArmFunction(sprintf_fn, kDest, kFmt, kArgsCursor);
   EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "LOAD ERROR");
+}
+
+TEST(ModRuntime, DecompressGzipInPlaceSlotDecompressesARealGzipStreamAtTheSameAddress) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t decompress_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0xdc);
+
+  // A real-shaped OBM1 header (core/loader/obm1.h): magic "OI", flag
+  // 0x04, bpp 8, width 16, height 8 (both uint16 LE) -- exactly what
+  // real code reads via memcpy immediately after this slot returns.
+  std::vector<uint8_t> original = {'O', 'I', 0x04, 0x08, 16, 0, 8, 0, 0xAA, 0xBB, 0xCC, 0xDD};
+  std::vector<uint8_t> compressed(256);
+  z_stream strm{};
+  ASSERT_EQ(deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8,
+                          Z_DEFAULT_STRATEGY),
+            Z_OK);
+  strm.next_in = original.data();
+  strm.avail_in = static_cast<uInt>(original.size());
+  strm.next_out = compressed.data();
+  strm.avail_out = static_cast<uInt>(compressed.size());
+  ASSERT_EQ(deflate(&strm, Z_FINISH), Z_STREAM_END);
+  size_t compressed_size = compressed.size() - strm.avail_out;
+  deflateEnd(&strm);
+
+  constexpr uint32_t kBufAddr = 0x80300100;
+  for (size_t i = 0; i < compressed_size; ++i) {
+    cpu.GetMemory().Write8(kBufAddr + static_cast<uint32_t>(i), compressed[i]);
+  }
+
+  EXPECT_EQ(hle.CallArmFunction(decompress_fn, kBufAddr), 0u);
+  for (size_t i = 0; i < original.size(); ++i) {
+    EXPECT_EQ(cpu.GetMemory().Read8(kBufAddr + static_cast<uint32_t>(i)), original[i])
+        << "byte " << i;
+  }
+}
+
+TEST(ModRuntime, DecompressGzipInPlaceSlotHandlesInputLargerThanOneChunk) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t decompress_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0xdc);
+
+  // Larger than the implementation's internal 4096-byte streaming
+  // chunk size, and incompressible (random-ish, not all-zero) so the
+  // real compressed stream is also larger than one chunk -- exercises
+  // both the growable-input and growable-output loop paths.
+  std::vector<uint8_t> original(10000);
+  for (size_t i = 0; i < original.size(); ++i) {
+    original[i] = static_cast<uint8_t>((i * 2654435761u) >> 24);
+  }
+  std::vector<uint8_t> compressed(original.size() + 1024);
+  z_stream strm{};
+  ASSERT_EQ(deflateInit2(&strm, Z_NO_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY),
+            Z_OK);
+  strm.next_in = original.data();
+  strm.avail_in = static_cast<uInt>(original.size());
+  strm.next_out = compressed.data();
+  strm.avail_out = static_cast<uInt>(compressed.size());
+  ASSERT_EQ(deflate(&strm, Z_FINISH), Z_STREAM_END);
+  size_t compressed_size = compressed.size() - strm.avail_out;
+  deflateEnd(&strm);
+  ASSERT_GT(compressed_size, 4096u) << "test fixture didn't actually exceed one chunk";
+
+  constexpr uint32_t kBufAddr = 0x80300100;
+  for (size_t i = 0; i < compressed_size; ++i) {
+    cpu.GetMemory().Write8(kBufAddr + static_cast<uint32_t>(i), compressed[i]);
+  }
+
+  EXPECT_EQ(hle.CallArmFunction(decompress_fn, kBufAddr), 0u);
+  for (size_t i = 0; i < original.size(); ++i) {
+    ASSERT_EQ(cpu.GetMemory().Read8(kBufAddr + static_cast<uint32_t>(i)), original[i])
+        << "byte " << i;
+  }
 }

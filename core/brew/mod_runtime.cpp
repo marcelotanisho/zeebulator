@@ -1,8 +1,11 @@
 #include "core/brew/mod_runtime.h"
 
+#include <zlib.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace zeebulator {
 
@@ -132,6 +135,75 @@ void ModRuntime::ReallocImpl(IArmCore& core) {
     }
   }
   core.SetRegister(kR0, new_ptr);
+}
+
+void ModRuntime::DecompressGzipInPlaceImpl(IArmCore& core) {
+  // Real job identified via disassembly (see this slot's own doc
+  // comment in mod_runtime.h for the full derivation): decompress the
+  // real gzip stream at r0 in place. Real gzip streams don't declare
+  // their own compressed length up front, so this reads incrementally
+  // from emulated memory and lets zlib signal Z_STREAM_END, rather
+  // than assuming a fixed input size; the output buffer grows the same
+  // way. Matches this project's own already-established real gzip
+  // handling (core/loader/ggz.cpp): windowBits = 15 + 16 decodes gzip
+  // framing specifically.
+  uint32_t ptr = core.GetRegister(kR0);
+
+  constexpr uint32_t kChunk = 4096;
+  constexpr uint32_t kMaxCompressed = 4 * 1024 * 1024;  // defensive cap
+
+  z_stream strm{};
+  if (inflateInit2(&strm, 15 + 16) != Z_OK) {
+    core.SetRegister(kR0, 1);
+    return;
+  }
+
+  std::vector<uint8_t> compressed;
+  std::vector<uint8_t> decompressed(kChunk);
+  strm.next_out = decompressed.data();
+  strm.avail_out = static_cast<uInt>(decompressed.size());
+
+  uint32_t read_offset = 0;
+  int ret = Z_OK;
+  bool failed = false;
+  while (ret != Z_STREAM_END) {
+    if (strm.avail_in == 0) {
+      if (read_offset >= kMaxCompressed) {
+        failed = true;
+        break;
+      }
+      uint32_t n = std::min(kChunk, kMaxCompressed - read_offset);
+      compressed.resize(n);
+      for (uint32_t i = 0; i < n; ++i) {
+        compressed[i] = memory_.Read8(ptr + read_offset + i);
+      }
+      read_offset += n;
+      strm.next_in = compressed.data();
+      strm.avail_in = static_cast<uInt>(n);
+    }
+    if (strm.avail_out == 0) {
+      size_t old_size = decompressed.size();
+      decompressed.resize(old_size + kChunk);
+      strm.next_out = decompressed.data() + old_size;
+      strm.avail_out = static_cast<uInt>(kChunk);
+    }
+    ret = inflate(&strm, Z_NO_FLUSH);
+    if (ret != Z_OK && ret != Z_STREAM_END) {
+      failed = true;
+      break;
+    }
+  }
+  size_t produced = decompressed.size() - strm.avail_out;
+  inflateEnd(&strm);
+
+  if (failed) {
+    core.SetRegister(kR0, 1);
+    return;
+  }
+  for (size_t i = 0; i < produced; ++i) {
+    memory_.Write8(ptr + static_cast<uint32_t>(i), decompressed[i]);
+  }
+  core.SetRegister(kR0, 0);
 }
 
 void ModRuntime::MemcpyImpl(IArmCore& core) {
@@ -376,7 +448,8 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t unknown_0x40_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0xc_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0xd0_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
-  uint32_t unknown_0xdc_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  uint32_t unknown_0xdc_fn =
+      hle_.Register([this](IArmCore& core) { DecompressGzipInPlaceImpl(core); });
   uint32_t unknown_0x184_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0x1b4_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);

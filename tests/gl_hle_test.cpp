@@ -582,3 +582,77 @@ TEST(GlHle, TexImage2DHandlesPackedRgb565PixelSize) {
   EXPECT_EQ(f.backend.last_teximage_pixels[0], 0x00);
   EXPECT_EQ(f.backend.last_teximage_pixels[1], 0xF8);
 }
+
+// Real disassembly (TASKS.md/PHASE8_LOG.md Phase 8) found Double
+// Dragon's own data.ggz archive holds real OBM1 images exclusively,
+// never real ATITC -- and that real code reuses this same real
+// glCompressedTexImage2D vtable slot to upload them, passing a
+// pointer 8 bytes past a real OBM1 header ("OI" magic, flag, bpp)
+// that the app itself already parsed to get this call's width/height.
+TEST(GlHle, CompressedTexImage2DDecodesARealObm1ImageWhenMagicBytesPrecedeTheData) {
+  Fixture f;
+  // A real-shaped 2x2, 4bpp OBM1 image: palette[0]=red, palette[1]=
+  // green, pixels (row-major) red/green/green/red.
+  uint32_t header_addr = kScratch + 0x1200;
+  zeebulator::Memory& mem = f.cpu.GetMemory();
+  mem.Write8(header_addr + 0, 'O');
+  mem.Write8(header_addr + 1, 'I');
+  mem.Write8(header_addr + 2, 0x04);  // flag
+  mem.Write8(header_addr + 3, 4);     // bpp
+  mem.Write16(header_addr + 4, 2);    // width
+  mem.Write16(header_addr + 6, 2);    // height
+  uint32_t data_addr = header_addr + 8;
+  mem.Write16(data_addr + 0 * 2, 0xF800);  // palette[0] = pure red
+  mem.Write16(data_addr + 1 * 2, 0x07E0);  // palette[1] = pure green
+  for (uint32_t i = 2; i < 16; ++i) mem.Write16(data_addr + i * 2, 0);
+  uint32_t pixel_addr = data_addr + 16 * 2;
+  mem.Write8(pixel_addr + 0, 0x01);  // pixels (0,0)=0=red, (1,0)=1=green
+  mem.Write8(pixel_addr + 1, 0x10);  // pixels (0,1)=1=green, (1,1)=0=red
+  uint32_t image_size = 16 * 2 + 2;  // palette + packed pixel bytes
+
+  uint32_t stack = kScratch + 0x1300;
+  f.cpu.SetRegister(zeebulator::kSP, stack);
+  mem.Write32(stack, 2);            // height
+  mem.Write32(stack + 4, 0);        // border
+  mem.Write32(stack + 8, image_size);
+  mem.Write32(stack + 12, data_addr);
+
+  // glCompressedTexImage2D(target, level=0, internalformat=<engine
+  // tag, not a real GL enum -- irrelevant, magic bytes take priority>,
+  // width=2, ...)
+  f.hle.CallArmFunction(f.GlSlot(15), 0x0DE1, 0, 0x8b99, 2);
+
+  ASSERT_EQ(f.backend.teximage_count, 1);
+  EXPECT_EQ(f.backend.last_teximage_target, 0x0DE1u);
+  EXPECT_EQ(f.backend.last_teximage.width, 2);
+  EXPECT_EQ(f.backend.last_teximage.height, 2);
+  EXPECT_EQ(f.backend.last_teximage.format, zeebulator::kGlRgb);
+  EXPECT_EQ(f.backend.last_teximage.type, zeebulator::kGlUnsignedByte);
+  ASSERT_EQ(f.backend.last_teximage_pixels.size(), 2u * 2u * 3u);
+  auto PixelAt = [&](int x, int y) {
+    size_t base = (static_cast<size_t>(y) * 2 + x) * 3;
+    return std::vector<uint8_t>(f.backend.last_teximage_pixels.begin() + base,
+                                 f.backend.last_teximage_pixels.begin() + base + 3);
+  };
+  EXPECT_EQ(PixelAt(0, 0), (std::vector<uint8_t>{255, 0, 0}));
+  EXPECT_EQ(PixelAt(1, 0), (std::vector<uint8_t>{0, 255, 0}));
+  EXPECT_EQ(PixelAt(0, 1), (std::vector<uint8_t>{0, 255, 0}));
+  EXPECT_EQ(PixelAt(1, 1), (std::vector<uint8_t>{255, 0, 0}));
+}
+
+TEST(GlHle, CompressedTexImage2DWithNoObm1MagicAndAnUnrecognizedFormatUploadsNothing) {
+  Fixture f;
+  uint32_t data_addr = kScratch + 0x1400;
+  f.cpu.GetMemory().Write32(data_addr, 0x11223344);  // not "OI", not real ATITC data
+
+  uint32_t stack = kScratch + 0x1500;
+  f.cpu.SetRegister(zeebulator::kSP, stack);
+  f.cpu.GetMemory().Write32(stack, 4);      // height
+  f.cpu.GetMemory().Write32(stack + 4, 0);  // border
+  f.cpu.GetMemory().Write32(stack + 8, 32); // imageSize
+  f.cpu.GetMemory().Write32(stack + 12, data_addr);
+
+  f.hle.CallArmFunction(f.GlSlot(15), 0x0DE1, 0, /*internalformat=*/0x1234, 4);
+
+  EXPECT_EQ(f.backend.teximage_count, 0);
+}

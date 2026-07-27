@@ -2413,13 +2413,44 @@ playable start-to-finish at full speed, standalone build.
       This finally fully explains the project's original Double Dragon
       finding: `glGenTextures`/`glBindTexture` many times, never once
       `glTexImage2D` with valid data — the real pipeline dead-ends at
-      this gate for every title-screen graphic. **Not fixed yet** —
-      implementing `unknown_0xdc_fn` correctly needs a real design
-      decision (does decompression belong host-side in this HLE slot,
-      or does real ARM code inflate elsewhere and this slot's real job
-      is a narrower format-sniff/redirect) rather than a guess. 297/297
-      tests pass (unchanged). See PHASE8_LOG.md's "Root cause found for
-      real" section for the full derivation.
+      this gate for every title-screen graphic.
+      **Fixed for real, and confirmed working end to end.** The design
+      question resolved itself on inspection: `mod_runtime.h` already
+      documents every sibling static-base slot (`0xd0`/`0x184`/`0x1b4`)
+      as a real *external* system-services import (same real mechanism
+      `memcpy`/`malloc`/`free` already live in, implemented host-side,
+      not traced ARM code inside the `.mod`) — so a host-side real
+      `zlib` inflate for `unknown_0xdc_fn`, wired into static-base
+      offset `0xDC`, *is* the authentic answer, not a pragmatic
+      substitute for it. Implemented as `ModRuntime::
+      DecompressGzipInPlaceImpl` (`core/brew/mod_runtime.{h,cpp}`),
+      matching `core/loader/ggz.cpp`'s already-established real gzip
+      handling. Re-running immediately revealed the real, final piece:
+      even with correct data, real code funnels every OBM1 upload
+      through the real `glCompressedTexImage2D` vtable slot with an
+      internal engine tag (not a real GL enum) as `internalformat` —
+      confirmed by checking 8 bytes before every real `data` pointer:
+      literally `"OI"` (real OBM1 magic) plus flag/bpp/width/height,
+      matching `core/loader/obm1.h`'s independently-reverse-engineered
+      layout field-for-field, on every real call, with the declared
+      `imageSize` also matching the real palette+pixel-data size
+      exactly every time. `core/loader/obm1.h`'s own doc comment
+      confirms this isn't a one-off: **all 89 real assets in Double
+      Dragon's `data.ggz` are OBM1 — this game never uses real ATITC**.
+      `GlHle::GlCompressedTexImage2D` now checks for those real magic
+      bytes first and decodes via this project's own already-working
+      `Obm1Image::Decode` before ever trusting `internalformat` as a
+      GL enum; the ATITC path from the previous round is kept as a
+      fallback (dead code for this title, not deleted — no evidence
+      yet no other title needs it). 301/301 tests pass (297 + 4 new).
+      **Verified on the real desktop, screenshotted**: Double Dragon's
+      title screen now renders completely, correctly, in full color —
+      real dragon line-art, the real Japanese kanji logo, "DOUBLE
+      DRAGON" in gold text, the real Brazilian-Portuguese prompt, and
+      the real copyright block. First real target-game title screen
+      this project has ever rendered end to end with real texture data.
+      See PHASE8_LOG.md's "Fixed for real" section for the full
+      derivation.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
