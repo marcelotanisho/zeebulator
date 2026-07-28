@@ -2611,6 +2611,24 @@ playable start-to-finish at full speed, standalone build.
       GL-state probing. Tracked as open follow-up. 304/304 tests pass
       (303 + 1 new). See PHASE8_LOG.md's "'J1 %7d' fixed for real"
       section.
+- [ ] Sprite z-ordering, real investigation continued (no fix yet):
+      mapped the real tick entry (`0x1239dc` tail-jumps to the real
+      master per-tick function `0x104ab0`) and confirmed the "draw
+      one sprite" leaf function (`0x11d2d0`) is genuinely
+      entity-agnostic -- a live PC breakpoint on real gameplay showed
+      its `r0` is always the constant `0x32` or `0`, never a real
+      entity pointer, so per-entity position/order is established by
+      each of its 17 real callers before invoking it, not inside it.
+      One real render path (`0x11daf4`) is a trampoline into an
+      indirect call through a still-unidentified real interface's
+      vtable slot 26; the other real branch (`0x124528`) wasn't
+      reached at all this round. No single simple "for each entity,
+      draw" loop found yet -- real order likely comes from a real
+      actor-table/linked-list walk this project hasn't mapped, the
+      same depth of work already done for IShell/IDisplay/IGL/HID.
+      Flagged as a real, substantial reverse-engineering task, not a
+      quick fix. See PHASE8_LOG.md's "Sprite z-ordering, continued"
+      section for the full real call-chain map so far.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

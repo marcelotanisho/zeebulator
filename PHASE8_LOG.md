@@ -6994,3 +6994,75 @@ All temporary instrumentation this round (`core/memory/memory.
 reverted; `git diff --stat` clean except the one real, permanent
 `SprintfImpl` fix (`core/brew/mod_runtime.cpp`) and its new test
 (`tests/mod_runtime_test.cpp`). 304/304 tests pass (303 + 1 new).
+
+## Sprite z-ordering, continued: mapped the real tick/render call chain, no fix yet -- this needs real entity-system reverse engineering
+
+The user asked to keep going on sprite ordering specifically. Went
+deeper into real static/live disassembly (no code changes reached
+this round; every temporary probe below was reverted, `git diff
+--stat` clean at the end).
+
+**Traced the real per-tick entry point.** The real `ISHELL_SetTimer`
+callback address this project already captured live
+(`ddragonz.mod` `0x1239dc`) is itself just a 1-instruction tail-jump
+(`b 0x104ab0`) -- the *real* master per-tick function is
+`0x104ab0`. Statically disassembled its body: it calls a real HID
+tick helper (`bl 0x123798`, `r0 = applet+0xa20` -- the exact real
+per-device struct this project already fully mapped during the
+controller-input investigation), conditionally one of two real
+per-frame update paths (`bl 0x10493c` if `[applet+0x24] != 0`), then
+branches on a real flag bit (`[applet+0x1000+0x5ac] & 1`) between two
+further real functions: `0x11daf4` or `0x124528`.
+
+**`0x11daf4` is a 3-instruction trampoline, not a render loop.** It
+loads two words from `[r0+8]`/`[r0+0xc]` and tail-jumps to
+`0x123f00`, which itself does a real indirect call through a
+PC-relative global's own vtable slot 26 (byte offset `0x68`) --
+i.e. a real `ISomething::Method26(...)` call through an
+as-yet-unidentified real interface object, not an inline loop over
+game entities. Didn't chase that interface's identity further this
+round (would need the same kind of live vtable-object tracing this
+project has used for `IShell`/`IDisplay`/`IGL` elsewhere, but for a
+still-unknown, possibly game-internal, interface).
+
+**Confirmed the "draw one sprite" leaf function (`0x11d2d0`, from the
+previous round) is genuinely entity-agnostic.** Set a real, direct
+PC breakpoint in `ArmInterpreter::Step()` (temporary, reverted) and
+captured every real entry to it live during actual gameplay with
+visibly-overlapping sprites: **`r0` was always exactly `0x32` (50) or
+`0x0`, never a real memory address.** This rules out the natural
+assumption that `r0` is "which entity is being drawn" -- it isn't a
+self-pointer at all, more likely a quad-type/mode selector constant.
+Whatever real per-entity state (position, which texture, and
+critically *draw order*) exists must be established by each of the
+17 real call sites *before* they call into this shared utility (matching
+the earlier finding that real per-vertex Z/position data is fully
+baked in by the caller, not computed inside this leaf function).
+
+**Where this leaves the investigation**: there is no single, simple
+"for each active entity, draw" loop visible in the code traced so
+far. Real order comes from whatever decides, each real tick, which of
+this title's many real per-object-type update/draw functions actually
+runs and in what sequence -- likely a real linked-list-of-active-actors
+or fixed-size-actor-table walk, each entry carrying its own real
+"think" function pointer (a common structure for this era/genre of
+game), reached through the still-unidentified vtable slot 26 call
+inside `0x123f00`, or through the *other* real branch (`0x124528`)
+this round didn't reach at all. Finding the real root cause (does
+this project's own entity/actor iteration order actually match real
+hardware's, or does something in this project's own emulation --
+e.g. this bump allocator's addresses differing from a real heap
+allocator's, if iteration or insertion order is address-dependent --
+produce a genuinely different order) requires identifying and tracing
+that real actor system directly, the same depth of real work this
+project has already done for `IShell`/`IDisplay`/`IGL`/HID, not
+another round of GL-state or leaf-function probing. **Explicitly not
+attempted this round**: identifying vtable slot 26's real interface,
+disassembling `0x124528` (the other real branch), or finding the real
+actor/entity table itself. Tracked as a real, substantial follow-up
+investigation, not a quick fix -- flagged clearly rather than guessed
+at further.
+
+No permanent code changes this round; every temporary probe (the
+`ArmInterpreter::Step()` PC breakpoint) fully reverted. 304/304 tests
+still pass (unchanged from the previous commit).
