@@ -7184,3 +7184,130 @@ disassembly cannot crack -- it needs the same live-memory-watch
 technique that worked for the "J1" string, starting from a real
 runtime address this round didn't find. Left as a clearly-scoped,
 real follow-up rather than continued guessing.
+
+## Sprite z-ordering, the real fix round: cracked the ROPI wall live, found the real cause -- there's no missing sort to restore
+
+Picked back up after the time-boxed round above, this time going
+straight for a live-tracing technique instead of more static search.
+
+**The instrumentation bug that caused the earlier "wall"**: the prior
+round's live PC-watch checked `fetch_addr == 0x00100000 + 0x104dec`.
+That's wrong -- `arm-none-eabi-objdump --adjust-vma=0x00100000`'s
+printed addresses (e.g. `104dec:`) already have `kBase` baked in, so
+runtime PCs match the listing directly with no further offset needed.
+The check was silently comparing against `0x0021f804`-style addresses
+that never occur, guaranteeing zero hits regardless of whether the
+target code actually ran. Confirmed by fixing the same mistake this
+round (see below) and immediately getting real hits.
+
+**Real technique that replaced blind static searching**: instead of
+grepping for references to a candidate address, temporarily log
+`core.GetRegister(kLR)` inside `GlHle::GlDrawArrays` for every real
+sprite-sized draw call. `LR` is the real return address the ARM `bl`
+that invoked the trap left behind -- it names the exact real calling
+function directly, with no static cross-reference search at all. A
+deterministic frozen-frame testbed (see below) made every capture
+reproducible and comparable.
+
+**New tool support (added, used, then fully reverted)**: `SIGUSR1` +
+an env-var-gated `DBGFREEZE=1` in `tools/game_probe.cpp` made
+`mod_runtime.Tick`/`shell_hle.Tick` stop advancing sim time exactly
+1200ms of simulated time after the second real `Return` keydown --
+giving a perfectly reproducible, byte-identical frozen frame on every
+run (confirmed via two `xwd` captures 1s apart being byte-identical)
+of Double Dragon's own intro "gang lineup" cutscene, which has 7-8
+real overlapping character sprites. This removed all the real-time
+round-trip guessing that made earlier correlation attempts unreliable.
+
+**Real call chain found, live, this round** (all addresses real
+`ddragonz.mod` ARM code, confirmed via disassembly + live LR capture):
+
+- `0x107360` (`bl 0x11f804`, inside a larger real per-tick render
+  function starting near `0x1071xx`): the real, single per-frame call
+  site. Immediately preceded by three real calls to `0x10b678` with
+  distinct constant args (`0xa0`, `0x1a0`, `0x1b8`) -- almost
+  certainly the three real HUD text draws (`TEMPO`, `J1` score,
+  lives) -- and immediately followed by `bl 0x122520`.
+- `0x11f804`: the real "draw every registered entity" function.
+  `push {r4,r5,r6,lr}; r6=r0+0x4600; r4=r0` (`r0` = real applet
+  pointer, `0x80300024` every observed call). Contains two real
+  loops, walking two parallel lists (`category 0` at `r4+0x5434`,
+  `category 1` at `r4+0x4834`, real per-slot stride 4 bytes, real
+  bound read from `[r6+52]`/`[r6+54]`). Each iteration: `r1 =
+  list[i]` (an entity pointer), `r0 = r4` (constant), `bl 0x10b034`.
+  Confirmed live: **every one of the 7-8 real character draws in the
+  frozen cutscene frame shares the exact same `LR=0x0011f8b0`** --
+  the return address right after this one real `bl 0x10b034` --
+  proving there is exactly one real call site, a flat sweep, no
+  branching per entity.
+- `0x10b034`: the real per-entity draw function (leads to the
+  already-known `0x11d2d0` leaf and the real `glDrawArrays` trap).
+- `0x11f6c4`: the real "register entity into category list" function
+  (previously misidentified as starting at `0x11f764`, which is
+  mid-function). Real signature `(r0=applet, r1=entity_ptr)`. Real
+  logic, fully disassembled: bail out if a real state/flag check on
+  the entity fails; otherwise `r2 = (entity->field_0x50 >= 0) ? 1 :
+  0` (a real two-way category selector); read the category's real
+  running count from `[applet + r2*2 + 0x4600 + 0x34]`; bail if
+  `>=256`; otherwise **append** `entity_ptr` at
+  `applet + r2*1024 + count*4 + 0x3e34` and increment the count.
+  Confirmed live (write-watch on the real category-1 table address,
+  `applet+0x4234`): **100% of the real writes into this table came
+  from this exact one PC (`0x11f74c`, the `str` inside this
+  function)** -- confirming it's the *only* real writer, and that
+  it's a pure append, with **no sort, no insertion-position logic,
+  no Y/depth comparison anywhere in it**.
+- Real callers of `0x11f6c4`, live-captured via `LR` at its entry,
+  for one real frame of the frozen cutscene: `0x1165c0` (a small,
+  real single-entity function -- registers exactly one fixed entity
+  every frame, most likely the player) and `0x116190` (same shape,
+  a different fixed single entity) each fire once; `0x11666c` (the
+  return address inside a real per-enemy update function starting
+  near `0x1165d4`, itself called from a still-untraced real caller)
+  fires **five times per frame, always in the same fixed order**
+  (entity pointers `0x803204b8, 0x80320634, 0x803207b0, 0x8032092c,
+  0x80320aa8`, byte-identical order every single frame observed).
+
+**The real conclusion**: character sprite draw order is controlled
+entirely by (1) fixed real code order between the three caller groups
+(single-entity callers before/after the 5-enemy-slot loop, whichever
+the real per-tick function's own instruction order dictates) and (2)
+within the 5-enemy-slot group, plain array slot index (0..4) -- a
+real, disassembled, dead-end for depth: **there is no Y-sort, no
+Z-sort, and no depth-buffer participation anywhere in this real call
+chain for character sprites.** This round independently re-confirmed
+(live LR + bbox capture) what the depth-buffer round already
+suspected: real `glTranslatef` Z is always `0` and real character
+vertex data carries no Z of its own -- only unrelated real background
+decoration (the door, the wanted poster) carries its own baked,
+nonzero real Z, confirmed via a live frozen-frame capture showing
+those exact quads' dimensions (e.g. the door, `80x96`) coincide with
+the earlier-suspected "static overlay" group.
+
+**What this means for "the real fix"**: there is no missing sort to
+restore -- the traced real code genuinely never sorts by depth for
+character entities. Two honest paths remain, neither of them "restore
+a broken real mechanism":
+1. Trace one level deeper: find what assigns an enemy to a slot
+   (0..4) in the first place (spawn-time allocation, not yet traced).
+   If slot assignment happens to be Y-order-dependent on real hardware
+   in a way this emulation's spawn timing/order doesn't reproduce
+   exactly, *that* would be a real, fixable emulation bug. Not
+   confirmed either way this round.
+2. Accept this is authentic original-game behavior and, if visually
+   correct layering is wanted regardless, add a real per-draw
+   synthetic depth derived from each sprite's own real screen
+   position (a compositing correction, not a ROM-fidelity fix) --
+   attempted and reverted this round (see below) after it
+   false-positived on the door's background quad; fixable by gating
+   on "no real Z of its own" but was reverted anyway once the user
+   asked to pursue the real fix instead. Real GL depth-test
+   infrastructure needed for this (`GL_LEQUAL`, real depth buffer) is
+   already in place from the earlier depth-buffer fix.
+
+All live instrumentation from this round (`gl_hle.cpp`'s `LR` log,
+`arm_interpreter.cpp`/`memory.cpp`/`memory.h`'s PC tracker and write-
+watch, `game_probe.cpp`'s `SIGUSR1`/`DBGFREEZE` frame-freeze) has been
+fully reverted -- `git diff --stat` clean, 304/304 tests pass. No
+code change landed this round; this is a pure, real, disassembly-and
+live-evidence-grounded finding.

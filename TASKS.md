@@ -2629,6 +2629,37 @@ playable start-to-finish at full speed, standalone build.
       Flagged as a real, substantial reverse-engineering task, not a
       quick fix. See PHASE8_LOG.md's "Sprite z-ordering, continued"
       section for the full real call-chain map so far.
+- [ ] Sprite z-ordering, real root cause found (still no fix): a live
+      `LR`-capture technique (log `core.GetRegister(kLR)` at the real
+      `glDrawArrays` trap -- names the real calling function directly,
+      no static searching) plus a deterministic frozen-frame testbed
+      cracked the ROPI wall the two rounds above hit. Full real chain
+      now mapped: `0x107360` (real per-tick render fn) calls
+      `0x11f804` (real "draw every registered entity" fn, confirmed
+      live: all 7-8 real character draws in one frame share the same
+      `LR`, i.e. one real call site) exactly once/frame; entities
+      reach its list via `0x11f6c4` (real "append entity to category
+      list" fn -- confirmed live, by write-watching the real list
+      address, to be the *only* real writer, and a pure append with no
+      sort); real callers are two fixed single-entity functions
+      (`0x1165c0`, `0x116190`) plus a real 5-enemy-slot loop
+      (`0x11666c`, always the same fixed slot order 0..4 every frame).
+      **Conclusion: there is no missing sort to restore.** The real
+      ROM code never sorts character sprites by depth or Y anywhere in
+      this chain -- draw order is just fixed real code order plus
+      fixed enemy-slot-array order. Two honest paths remain: (1) trace
+      one level deeper into the still-unfound real enemy-slot spawner
+      to check whether *slot assignment itself* might differ from real
+      hardware (a real, potentially-fixable bug, not confirmed), or
+      (2) accept this is authentic original-game behavior and add a
+      non-ROM-faithful compositing correction if visually-correct
+      layering is wanted regardless (real depth-test infra already in
+      place from the earlier depth-buffer fix; a first attempt at this
+      was built, tested, and reverted this round after a real
+      false-positive on the door's own background quad). All live
+      instrumentation reverted; no code change this round, purely a
+      real evidence-gathering round. See PHASE8_LOG.md's "Sprite
+      z-ordering, the real fix round" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
