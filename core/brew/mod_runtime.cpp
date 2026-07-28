@@ -309,9 +309,21 @@ void ModRuntime::SprintfImpl(IArmCore& core) {
   // double indirection at the call site (R2 points at a stack slot that
   // itself holds the args block's address). Supports the directives
   // real game code has been observed needing so far: %d, %u, %x/%X,
-  // %s, %c, %% -- no width/precision/flag support (no evidence any real
-  // call needs it yet; extend if one does). Returns the number of
-  // characters written, matching the real sprintf() contract.
+  // %s, %c, %%, plus an optional `0`-flag and a decimal minimum-field-
+  // width between `%` and the conversion character (e.g. `%7d`, real
+  // Double Dragon HUD text, `ddragonz.mod` file offset 0x6c0b0's real
+  // "J1 %7d" literal -- confirmed live via a memory read-watch on that
+  // exact string that every read came from this function, then a
+  // trap-index count confirmed which registered function trap 0x2c
+  // is: PHASE8_LOG.md). Before this fix, an unrecognized single
+  // character right after `%` (here, the width digit `7`) fell
+  // through to the "unknown directive" fallback, which emitted `%7`
+  // literally and left `d` to be copied as an ordinary character right
+  // after -- passing the whole literal "%7d" straight through
+  // unsubstituted, real integer argument never consumed. No
+  // precision (`.N`) support (no evidence any real call needs it
+  // yet; extend if one does). Returns the number of characters
+  // written, matching the real sprintf() contract.
   uint32_t dest = core.GetRegister(kR0);
   uint32_t fmt = core.GetRegister(kR1);
   uint32_t args_cursor_addr = core.GetRegister(kR2);
@@ -325,10 +337,22 @@ void ModRuntime::SprintfImpl(IArmCore& core) {
       memory_.Write8(out++, c);
       continue;
     }
-    uint8_t spec = memory_.Read8(fmt + i + 1);
-    if (spec == 0) break;  // trailing '%' with nothing after: stop
+    uint32_t spec_start = i;  // '%' itself, for the unknown-directive fallback
     ++i;
-    if (spec == '%') {
+    bool zero_pad = memory_.Read8(fmt + i) == '0';
+    if (zero_pad) ++i;
+    uint32_t width = 0;
+    bool has_width = false;
+    for (;;) {
+      uint8_t d = memory_.Read8(fmt + i);
+      if (d < '0' || d > '9') break;
+      has_width = true;
+      width = width * 10 + (d - '0');
+      ++i;
+    }
+    uint8_t spec = memory_.Read8(fmt + i);
+    if (spec == 0) break;  // trailing '%...' with nothing after: stop
+    if (spec == '%' && !zero_pad && !has_width) {
       memory_.Write8(out++, '%');
       continue;
     }
@@ -364,10 +388,16 @@ void ModRuntime::SprintfImpl(IArmCore& core) {
       }
       default:
         // Unknown directive: emit literally rather than silently
-        // dropping it (both the '%' and the spec character).
-        formatted.push_back('%');
-        formatted.push_back(static_cast<char>(spec));
+        // dropping it -- the whole real `%...` sequence (any `0`-flag
+        // and width digits included) through the unrecognized
+        // character itself.
+        for (uint32_t k = spec_start; k <= i; ++k) {
+          formatted.push_back(static_cast<char>(memory_.Read8(fmt + k)));
+        }
         break;
+    }
+    if (has_width && formatted.size() < width) {
+      formatted = std::string(width - formatted.size(), zero_pad ? '0' : ' ') + formatted;
     }
     for (char ch : formatted) memory_.Write8(out++, static_cast<uint8_t>(ch));
   }

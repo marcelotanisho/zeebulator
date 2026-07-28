@@ -579,6 +579,46 @@ TEST(ModRuntime, SprintfSupportsStringHexCharAndLiteralPercent) {
   EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "hp=ff% [!]");
 }
 
+TEST(ModRuntime, SprintfSupportsARealMinimumFieldWidthAndZeroPadding) {
+  // Real Double Dragon HUD text (ddragonz.mod file offset 0x6c0b0,
+  // confirmed live via a memory read-watch plus a trap-index count --
+  // see PHASE8_LOG.md): "J1 %7d" was rendering completely unsubstituted
+  // on screen because this function only ever looked at a single
+  // character right after '%' -- the width digit '7' wasn't a
+  // recognized directive, so the whole "%7d" fell through to the
+  // "unknown directive" fallback and got copied through literally.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sprintf_fn = cpu.GetMemory().Read32(kTableAddress + kSprintfSlotOffset);
+
+  constexpr uint32_t kDest = 0x80300100;
+  constexpr uint32_t kFmt = 0x80300200;
+  constexpr uint32_t kArgs = 0x80300300;
+  constexpr uint32_t kArgsCursor = 0x80300400;
+  WriteCString(cpu.GetMemory(), kFmt, "J1 %7d");
+  cpu.GetMemory().Write32(kArgs, 3);
+  cpu.GetMemory().Write32(kArgsCursor, kArgs);
+
+  hle.CallArmFunction(sprintf_fn, kDest, kFmt, kArgsCursor);
+  EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "J1       3");
+
+  // Zero-padding, confirmed distinct from space-padding.
+  WriteCString(cpu.GetMemory(), kFmt, "%05d");
+  cpu.GetMemory().Write32(kArgs, 3);
+  cpu.GetMemory().Write32(kArgsCursor, kArgs);
+  hle.CallArmFunction(sprintf_fn, kDest, kFmt, kArgsCursor);
+  EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "00003");
+
+  // A value already at or past the width is never truncated.
+  WriteCString(cpu.GetMemory(), kFmt, "%2d");
+  cpu.GetMemory().Write32(kArgs, 12345);
+  cpu.GetMemory().Write32(kArgsCursor, kArgs);
+  hle.CallArmFunction(sprintf_fn, kDest, kFmt, kArgsCursor);
+  EXPECT_EQ(ReadCString(cpu.GetMemory(), kDest), "12345");
+}
+
 TEST(ModRuntime, SprintfWithNoDirectivesCopiesTheLiteralTextUnchanged) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);

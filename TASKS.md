@@ -2578,6 +2578,39 @@ playable start-to-finish at full speed, standalone build.
       build that string. Both are tracked as open follow-up. 303/303
       tests pass. See PHASE8_LOG.md's "Real depth-buffer
       infrastructure was completely missing" section.
+- [x] "J1 %7d" fixed for real. Found the real, complete literal string
+      in `ddragonz.mod`'s own bytes (file offset `0x6c0b0`): a genuine
+      printf-style format string, not corrupted data (the on-screen
+      "%" glyph just resembles an "x"). A live memory read-watch on
+      its real runtime address plus a real HLE-trap-index count
+      (confirmed via `HleRuntime::Register`'s own arithmetic) traced
+      every read to `ModRuntime::SprintfImpl`. Root cause:
+      `SprintfImpl` only ever read a single character right after `%`
+      as the whole directive, so `"%7d"`'s width digit `7` fell
+      through to the "unknown directive" fallback and got copied
+      through literally, leaving `d` to follow as an ordinary
+      character -- the real integer argument was never consumed.
+      Fixed: real support for an optional `0`-flag and decimal
+      minimum-field-width between `%` and the conversion character,
+      matching standard printf semantics. New test locks in the exact
+      real string. Verified live: "J1" now shows a real substituted
+      value, zero format-string garbage. **Sprite z-ordering
+      investigated further, not yet fixed**: live-traced the real
+      "draw one sprite" leaf function (`ddragonz.mod` `0x11d2d0`,
+      called from 17 separate real static call sites, not one
+      central loop) and real `glDepthFunc`/`glDepthMask` calls --
+      real code already explicitly sets `GL_LEQUAL` (correct,
+      standard technique for same-layer depth ties) and never touches
+      `glDepthMask` (real GL default: writes enabled), both already
+      forwarded correctly by this project's own fixes. Since the real
+      GL configuration is confirmed correct and the bug still
+      reproduces, the real remaining cause must be in the actual
+      *submission order* real ARM code produces per frame -- needs
+      real reverse engineering of the entity-update loop itself
+      (scattered across many real per-object functions), not more
+      GL-state probing. Tracked as open follow-up. 304/304 tests pass
+      (303 + 1 new). See PHASE8_LOG.md's "'J1 %7d' fixed for real"
+      section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

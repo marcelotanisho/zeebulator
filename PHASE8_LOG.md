@@ -6902,3 +6902,95 @@ in `core/brew/mod_runtime.cpp`, the PPM texture dumper in
 `GlVertexPointer`/`glLoadMatrixx`/`glMultMatrixx` traces in
 `core/brew/gl_hle.cpp`) fully reverted; `git diff --stat` clean except
 the five real, permanent depth-related fixes. 303/303 tests pass.
+
+## "J1 %7d" fixed for real: a missing printf width-field parser. Sprite ordering: real GL state confirmed correct, real bug is deeper
+
+The user asked to proceed fixing both open issues. Drove the game
+directly this time (real XTest-simulated input, no physical keyboard
+needed) since both required targeted ARM disassembly work rather than
+more live GL-call tracing.
+
+**"J1 %7d": found and fixed for real.** Searched `ddragonz.mod`'s raw
+bytes directly for the literal "J1" (this project's established
+technique) and found the real, complete string at file offset
+`0x6c0b0`: `"J1 %7d\0"` -- a genuine, real printf-style format
+string (the on-screen "%" glyph just resembles an "x" at this
+resolution). Confirmed the value is never substituted: neither the
+classic `DrawText`/`Update` path nor `ModRuntime::SprintfImpl` ever
+fires for it (both traced live, temporary, reverted). Tried to find
+the real reference statically first (a literal-pool `ldr`/`add
+pc-relative` load of `0x0016c0b0`) and found none anywhere in the
+file -- consistent with this module's already-documented ROPI
+compilation, where string addresses aren't stored as raw absolute
+pointers. Fell back to a live memory read-watch (temporary, reverted,
+`core/memory/memory.{h,cpp}`) on the string's real runtime address:
+every read traced back to real trap `0xf000002c`. Confirmed via
+`HleRuntime::Register`'s own real index arithmetic (`index =
+functions_.size()` at call time, sentinel slot 0 already occupied) --
+temporarily logged every registration (reverted) -- that trap index 11
+is the 11th real `hle_.Register()` call, which is exactly
+`ModRuntime::SprintfImpl`'s own registration in `Install()`'s real,
+literal call order. **Root cause**: `SprintfImpl` only ever read a
+single character right after `%` as the entire directive. For
+`"%7d"`, that character is `'7'` -- not a recognized conversion --
+so it fell through to the "unknown directive: emit literally"
+fallback, which output the raw `"%7"` and left `'d'` to be copied as
+an ordinary character right after, passing the whole `"%7d"` straight
+through unsubstituted with the real integer argument never consumed.
+**Fixed**: `SprintfImpl` now parses an optional `0`-flag and a real
+decimal minimum-field-width between `%` and the conversion character,
+padding the formatted result (space, or zero if the `0`-flag was
+given) up to that width -- standard printf semantics, previously
+entirely unimplemented. New test locks in the exact real string
+(`"J1 %7d"` with argument 3 -> `"J1       3"`) plus zero-padding and
+a too-small width (never truncates). **Verified live**: "J1" now
+shows a real, correctly-substituted decimal value (space-padded, "0"
+observed) with zero leftover format-string garbage.
+
+**Sprite z-ordering: real GL depth state confirmed already correct,
+remaining bug is deeper than GL configuration.** Traced the real
+"draw one sprite" leaf function live (a character-layer-filtered
+`GlDrawArrays` call, keyed on the already-known real Z `-80.0`,
+capturing its caller's `LR` -- temporary, reverted) to real ARM
+address `0x11d2d0` (confirmed via disassembly: a large
+register-saving prologue, `push {r0-r9, sl, fp, lr}`, matching the
+call site's own return address falling inside its body). Searched the
+full disassembly for every real caller of `0x11d2d0` and found 17
+distinct static call sites spread across a huge address range
+(`0x104e98`-`0x122558`) -- this is a shared, general-purpose "draw a
+textured quad" utility invoked from many different, separate places
+in the game's own code, not one single central sprite-list loop.
+Before going further into full entity-system reverse engineering,
+checked the cheaper hypothesis first: is this actually a GL
+depth-state configuration gap, now that a real depth buffer exists?
+Live-traced real `glDepthFunc`/`glDepthMask` calls (temporary,
+reverted): real code calls `glDepthFunc(GL_LEQUAL)` exactly once
+(`0x203`, confirmed via the standard Khronos enum value) -- meaning
+real code explicitly wants *equal* depth values to pass, so a
+later-submitted same-layer sprite correctly overwrites an
+earlier-submitted one at the same depth (the standard, correct real
+technique for real depth-tested same-layer 2D sprites). `glDepthMask`
+is never called at all -- real code relies on the real GL default
+(writes enabled). **This is exactly what this project's own
+`GlHle`/`GlBackend` already forward correctly** (both real fixes from
+the previous round). Since the configuration itself is confirmed
+correct and the visual bug still reproduces on top of it, the real
+remaining discrepancy must be in the *actual submission order* real
+ARM code produces for a given frame's active entities -- i.e.
+whether this project's own emulation of whatever real code decides
+which entity's own "think/draw" logic to run when (entity-list
+iteration, real per-object state machines scattered across many real
+functions, not a single loop) faithfully reproduces real hardware's
+own order. That's a real, substantially larger reverse-engineering
+task -- tracing the actual entity-update loop, not more GL-state
+probing -- and is left as open follow-up, not guessed at further
+here.
+
+All temporary instrumentation this round (`core/memory/memory.
+{h,cpp}`'s read-watch, `core/cpu/arm_interpreter.cpp`'s PC tracker,
+`core/brew/hle_runtime.cpp`'s registration-index logger, the
+`DBGWHO` tags across `ModRuntime`'s string-handling functions, and
+`core/brew/gl_hle.cpp`'s `DBGLR`/`DBGDEPTHFUNC` traces) fully
+reverted; `git diff --stat` clean except the one real, permanent
+`SprintfImpl` fix (`core/brew/mod_runtime.cpp`) and its new test
+(`tests/mod_runtime_test.cpp`). 304/304 tests pass (303 + 1 new).
