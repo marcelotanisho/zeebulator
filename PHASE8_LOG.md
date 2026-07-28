@@ -7311,3 +7311,82 @@ watch, `game_probe.cpp`'s `SIGUSR1`/`DBGFREEZE` frame-freeze) has been
 fully reverted -- `git diff --stat` clean, 304/304 tests pass. No
 code change landed this round; this is a pure, real, disassembly-and
 live-evidence-grounded finding.
+
+## Sprite z-ordering, traced to the cutscene's own script: it's hardcoded ROM data, not computed
+
+Picked back up per explicit user direction ("go for the real fix...
+path 1" -- trace the enemy-slot spawner to check whether slot
+assignment itself might differ from real hardware). Kept using the
+same live `LR`-capture + deterministic frozen-frame technique from the
+round above, walking one real caller further up each time.
+
+**`0x109620`** (real per-frame "update all N entities in this slot
+array" loop, called via the tail-chain traced last round): confirmed
+its real structure fully -- `container = r0` (constant real runtime
+value `0x80300ad4` every call), `array = *(container+4)` (constant
+real runtime value `0x80337c44`, `bound = *(container+0x10) = 8`).
+Real per-slot body: `entity = array[slot]`; if null, skip; if a real
+flags-bit is set, take an alternate path (`bl 0x10af08`) instead of
+the normal one; otherwise real call through the entity's own real
+vtable slot 0 (a genuine `add lr,pc,#28` / `bx r1` call, not a tail
+call -- confirmed by finding that exact `add lr,pc,#28` sets
+`lr=0x109680`, matching the earlier round's captured return address
+exactly) -- this vtable call is what reaches `0x1165d4`, the real
+per-enemy "Update" method for this entity type, which itself real-
+calls the registration function traced last round.
+
+**`0x10c4e4`** (found by live-write-watching the real 8-slot array
+`0x80337c44` directly): a real free-list-backed object-pool allocator.
+Pops an entity struct off a real free list at `container+12`, unlinks
+it, then does an unconditional `array[index] = entity` at whatever
+real `index` its caller passed in (no scan-for-a-free-slot, no
+displaced-entity check beyond bookkeeping the old occupant for later
+cleanup). The index is not computed inside this function at all.
+
+**`0x10eccc`** (real generic "spawn an entity of type/resource
+`(r1,r2)` at slot `r3`" function, found via live `LR` capture at
+`0x10c4e4`'s entry): confirmed live that `r3` (the index eventually
+handed to the allocator) is just this function's own third argument,
+passed straight through -- still not computed here either.
+
+**The real caller of `0x10eccc`, live-captured for one full pass of
+the frozen cutscene**: **seven distinct, real call sites**
+(`0x120f08`, `0x120f48`, `0x120f8c`, `0x120fc8`, `0x121004`,
+`0x121040`, `0x12107c`), each passing its own **literal constant**
+`(type, resource, index)` triple straight out of the ROM's own
+instruction stream (`mov`/`add` immediates, not loads from any
+computed table) -- e.g. `(0x14, 0x15, 6)`, `(0xa, 0xb, 1)`, `(0x2,
+0x3, 6)`, `(0x3, 0x4, 6)`, `(0x8, 0x9, 6)` twice, `(0x13, 0x14, 6)`.
+This is the intro cutscene's own authored script: a straight-line
+sequence of hardcoded "spawn this character at this slot" calls
+written directly by the original developers, not a loop, not a
+formula, not anything this project's emulation computes or could get
+wrong independently of correctly executing the ROM's own real
+instructions.
+
+**Also fully accounted for**: re-examined the one piece of real
+conditional logic inside the registration function (`0x11f6c4`,
+traced last round) that hadn't been explained yet -- confirmed it's a
+real flicker/invincibility-flash skip (cycles a real 2-bit counter at
+`entity+0x165`, gated on a real flag bit at `entity+0x40`) plus a
+real category/bounds check. Not a sort mechanism either.
+
+**Conclusion, now with every real instruction between spawn and draw
+accounted for**: there is no computed, dynamic, or hidden sort
+anywhere in this chain, at any of the four real levels traced (spawn
+script -> generic spawner -> pool allocator -> per-frame update loop
+-> registration -> draw). The intro cutscene's character layering is
+determined entirely by literal constants baked into the ROM's own
+code. If another emulator (Infuse, per user report) renders this
+scene with different, visually-correct layering, the discrepancy is
+not explained by anything found in this trace -- it would have to
+come from something outside this exact call chain (a different real
+subsystem this project hasn't located, or a difference in how some
+earlier real state this chain depends on gets set up). Not yet
+identified; flagged as the next real question rather than guessed at.
+
+All live instrumentation from this round (`arm_interpreter.cpp`'s two
+successive entry-point probes, `memory.cpp`/`memory.h`'s write-watch,
+`game_probe.cpp`'s `SIGUSR1`/`DBGFREEZE` frame-freeze) fully reverted
+again -- `git diff --stat` clean, 304/304 tests pass. No code change
+this round either; another pure real evidence-gathering round.

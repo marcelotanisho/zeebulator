@@ -2660,6 +2660,27 @@ playable start-to-finish at full speed, standalone build.
       instrumentation reverted; no code change this round, purely a
       real evidence-gathering round. See PHASE8_LOG.md's "Sprite
       z-ordering, the real fix round" section.
+- [ ] Sprite z-ordering, traced the spawner (path 1 above) -- it's
+      hardcoded ROM script, not a bug at this layer: walked real `LR`
+      captures up four more levels (the per-frame slot-array update
+      loop `0x109620`; the real pool allocator `0x10c4e4`, found by
+      live write-watching the real 8-slot array `0x80337c44` directly;
+      the generic "spawn type/resource at slot" function `0x10eccc`)
+      and found the real slot **index is never computed anywhere** --
+      it's threaded straight through as a plain argument at every
+      level. Its true origin: **seven distinct real call sites**
+      (`0x120f08`..`0x12107c`), each a literal `(type, resource,
+      index)` constant triple straight out of the ROM's own
+      instructions -- the intro cutscene's own authored script. Also
+      fully explained the one remaining unexamined conditional in
+      `0x11f6c4` (a real flicker/invincibility-flash frame-skip, not a
+      sort). Every real instruction between spawn and draw is now
+      accounted for, and none of it sorts by depth or Y. If another
+      emulator renders this scene correctly, the cause isn't in this
+      exact chain -- open question, not yet identified. All live
+      instrumentation reverted again; 304/304 tests pass; no code
+      change. See PHASE8_LOG.md's "traced to the cutscene's own
+      script" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
