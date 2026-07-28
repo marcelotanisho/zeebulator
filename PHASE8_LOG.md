@@ -7066,3 +7066,69 @@ at further.
 No permanent code changes this round; every temporary probe (the
 `ArmInterpreter::Step()` PC breakpoint) fully reverted. 304/304 tests
 still pass (unchanged from the previous commit).
+
+## Sprite z-ordering, continued again: found the real entity system's backbone, still haven't reached the actual draw-order code
+
+Pure static disassembly this round (no live process, no code changes
+-- `git diff --stat` clean throughout).
+
+**Found the real master per-tick game-logic function: `0x1220f8`.**
+Confirmed via its very first real call, `bl 0x11a2ec` -- the *exact*
+real "combine both real gamepad slots" function this project already
+fully identified and verified during the HID controller investigation
+(`PHASE8_LOG.md`, "Real controller input, live from the keyboard").
+This function calls, in order: the real input-combine, twice into
+`0x11e644` (per-player input processing, args from `[applet+0x1000+
+0x5bc]`/`[+0x5c0]`), `0x11a1dc`, `0x11fa30`, `0x109620`, **`0x119ec4`**,
+`0x11cd5c`, `0x123630`, `0x122568` -- a real sequence of per-tick
+subsystem passes, only some of which were identified this round.
+
+**Traced `0x119ec4` (a real dispatcher) all the way down to a genuine
+linked-list walk.** It calls a real "get list head for category N"
+accessor (`0x11a5a8`, called with category constants `2`/`3`) then a
+real two-list walker (`0x104c54`) six times with different category
+pairs and a real mode flag. `0x104c54`'s own body contains two real,
+confirmed linked-list traversals -- `r4 = *(r4+12)` / `r5 = *(r5+12)`
+("next" pointers), each looping until null, calling one of six real
+per-pair handler functions (`0x11a934`, `0x10a46c`, `0x10a3bc`,
+`0x122420`, `0x11a76c`, `0x11aa68`) for each node reached. Given the
+category-pair-vs-mode-flag shape (six calls covering (2,3,mode=0),
+(2,2,mode=0), (3,2,mode=0), (3,3,mode=1), ...), this has the exact
+shape of real *pairwise collision detection* (e.g. "every enemy vs.
+every player hitbox") -- not rendering.
+
+**Also found a real per-entity state-machine dispatcher.** The last
+call in `0x1220f8` (`bl 0x122568`) leads to `0x122684`: a real
+`ldrsh r0,[r1,#4]` (entity state field) -> `cmp r1,#9` ->
+`addls pc,pc,r1,lsl#2` -- a genuine 10-entry real jump table
+dispatching on real per-entity state (handlers include two real tail
+calls to `0x10b95c`/`0x10bd7c` and several inline blocks). This is
+almost certainly the real "advance this entity's state machine one
+tick" mechanism every game-object type in this title shares --
+exactly the kind of structure that would ultimately decide what gets
+drawn and (via whatever real list these entities live on and in what
+order) in what sequence, but none of its 10 real branches were
+individually traced this round to confirm which ones -- if any --
+reach `0x11d2d0` or its 17 already-known callers.
+
+**Where this leaves it**: this project now has a real, confirmed,
+connected map of a meaningful slice of Double Dragon's own real
+entity system (input combine -> per-tick master function -> pairwise
+list-walk collision pass -> per-entity state-machine dispatch), which
+took several real rounds to build and should save real time for
+whoever continues -- but the specific function that decides *draw
+order* (walks entities and issues the `0x11d2d0` calls, in the
+17-call-site pattern already found) has still not been located inside
+this map. The most promising unexplored leads, in likely order of
+value: (1) the state machine's own 10 branches, especially the two
+tail calls (`0x10b95c`, `0x10bd7c`); (2) the still-unidentified
+`0x11e644`/`0x11a1dc`/`0x11fa30`/`0x109620`/`0x11cd5c`/`0x123630`
+calls from `0x1220f8` that this round didn't open at all; (3) the
+still-unidentified real interface behind vtable slot 26 (from the
+previous round's `0x11daf4`/`0x123f00` trace). This is a real,
+substantial, still-open reverse-engineering task -- flagged honestly
+rather than guessed at further, given how much real structure has
+been found without yet reaching the actual bug.
+
+No permanent code changes this round either. 304/304 tests still
+pass (unchanged).
