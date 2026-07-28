@@ -7132,3 +7132,55 @@ been found without yet reaching the actual bug.
 
 No permanent code changes this round either. 304/304 tests still
 pass (unchanged).
+
+## Sprite z-ordering, time-boxed final round: hit the real wall -- ROPI-computed function pointers, not statically greppable
+
+User asked to time-box one more focused round on the single most
+promising lead, with a firm report-back either way. Picked the most
+direct one: `0x104e98` (one of `0x11d2d0`'s 17 known real callers) is
+inside a function starting at `0x104dec` (a "draw a 3x3 grid of
+something, then one more sprite" real function, partially examined
+last round). If this function is itself one entry in a real
+per-entity-type "update+draw" table (matching the state-machine
+dispatcher's own shape found last round), finding what calls it would
+directly identify the real entity/type-table mechanism controlling
+draw order.
+
+**Result: no direct `bl 0x104dec` anywhere in the file** (confirmed by
+grep). **No raw 4-byte pointer to its address anywhere in the file
+either** (confirmed by a direct byte search, same technique used
+successfully for the "J1" string). **No PC-relative `ldr`/`add`
+instruction computes to its address either** (confirmed via objdump's
+own `@ 0xNNNNNN` annotations, same technique that successfully found
+zero hits for the "J1" string too, before that investigation had to
+fall back to a live memory read-watch).
+
+This is the same real obstacle the "J1" string investigation hit,
+generalized: this module is real ROPI-compiled code, so a function's
+real address, when it's needed as *data* (stored in a table, not
+called directly), gets computed via a real, non-trivial multi-
+instruction sequence at the point it's stored -- most plausibly
+inside a real one-time "build the entity type table" initialization
+routine this project hasn't located, executed once at real startup,
+not visible via any single-instruction static cross-reference. A
+live memory *write*-watch on wherever `0x104dec`'s real computed
+value first gets stored (the same class of technique that cracked the
+"J1" string) is the concrete next real step -- but that requires
+first knowing *where* to watch, which itself needs either (a) finding
+the real entity-type table's address some other way first, or (b) a
+broad live trace of the real one-time init sequence looking for any
+write whose value, once resolved, equals `0x00104dec`. Neither was
+attempted this round -- genuinely a new investigation, not a
+continuation of this round's static approach, which has reached its
+real limit.
+
+**Firm stop, as committed.** Two full-depth static rounds plus this
+time-boxed one converge on the same conclusion: this project now has
+a real, evidenced, connected map of Double Dragon's own entity
+system's *backbone* (input combine, master tick, pairwise collision
+walk, per-entity state-machine dispatch), but the specific draw-order
+mechanism sits behind real ROPI pointer indirection that pure static
+disassembly cannot crack -- it needs the same live-memory-watch
+technique that worked for the "J1" string, starting from a real
+runtime address this round didn't find. Left as a clearly-scoped,
+real follow-up rather than continued guessing.
