@@ -46,6 +46,8 @@ void Sdl2GlBackend::Enable(GLenum cap) { glEnable(cap); }
 void Sdl2GlBackend::Disable(GLenum cap) { glDisable(cap); }
 void Sdl2GlBackend::MatrixMode(GLenum mode) { glMatrixMode(mode); }
 void Sdl2GlBackend::LoadIdentity() { glLoadIdentity(); }
+void Sdl2GlBackend::PushMatrix() { glPushMatrix(); }
+void Sdl2GlBackend::PopMatrix() { glPopMatrix(); }
 void Sdl2GlBackend::Ortho(float left, float right, float bottom, float top, float near_plane,
                            float far_plane) {
   glOrtho(left, right, bottom, top, near_plane, far_plane);
@@ -62,6 +64,9 @@ void Sdl2GlBackend::Scale(float x, float y, float z) { glScalef(x, y, z); }
 void Sdl2GlBackend::Color4(float r, float g, float b, float a) { glColor4f(r, g, b, a); }
 void Sdl2GlBackend::AlphaFunc(GLenum func, float ref) { glAlphaFunc(func, ref); }
 void Sdl2GlBackend::BlendFunc(GLenum sfactor, GLenum dfactor) { glBlendFunc(sfactor, dfactor); }
+void Sdl2GlBackend::DepthFunc(GLenum func) { glDepthFunc(func); }
+void Sdl2GlBackend::ClearDepth(float depth) { glClearDepth(static_cast<GLdouble>(depth)); }
+void Sdl2GlBackend::DepthMask(bool flag) { glDepthMask(flag ? GL_TRUE : GL_FALSE); }
 
 void Sdl2GlBackend::DrawArrays(GLenum mode, const GlVertexArrays& arrays) {
   if (arrays.has_position) {

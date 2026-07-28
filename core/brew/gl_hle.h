@@ -113,8 +113,13 @@ class GlHle {
   void GlDisable(IArmCore& core);
   void GlAlphaFuncx(IArmCore& core);
   void GlBlendFunc(IArmCore& core);
+  void GlDepthFunc(IArmCore& core);
+  void GlClearDepthx(IArmCore& core);
+  void GlDepthMask(IArmCore& core);
   void GlMatrixMode(IArmCore& core);
   void GlLoadIdentity(IArmCore& core);
+  void GlPushMatrix(IArmCore& core);
+  void GlPopMatrix(IArmCore& core);
   void GlOrthox(IArmCore& core);
   void GlFrustumx(IArmCore& core);
   void GlTranslatex(IArmCore& core);

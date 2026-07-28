@@ -47,6 +47,8 @@ class RecordingGlBackend : public GlBackend {
   void Disable(zeebulator::GLenum) override {}
   void MatrixMode(zeebulator::GLenum mode) override { matrix_modes.push_back(mode); }
   void LoadIdentity() override { ++load_identity_count; }
+  void PushMatrix() override {}
+  void PopMatrix() override {}
   void Ortho(float left, float right, float bottom, float top, float near_plane,
              float far_plane) override {
     ortho = {left, right, bottom, top, near_plane, far_plane};
@@ -58,6 +60,9 @@ class RecordingGlBackend : public GlBackend {
   void Color4(float, float, float, float) override {}
   void AlphaFunc(zeebulator::GLenum, float) override {}
   void BlendFunc(zeebulator::GLenum, zeebulator::GLenum) override {}
+  void DepthFunc(zeebulator::GLenum) override {}
+  void ClearDepth(float) override {}
+  void DepthMask(bool) override {}
   void DrawArrays(zeebulator::GLenum mode, const GlVertexArrays& arrays) override {
     ++draw_count;
     last_mode = mode;

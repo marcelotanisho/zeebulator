@@ -187,8 +187,22 @@ void GlHle::GlBlendFunc(IArmCore& core) {
   backend_.BlendFunc(core.GetRegister(kR0), core.GetRegister(kR1));
 }
 
+void GlHle::GlDepthFunc(IArmCore& core) { backend_.DepthFunc(core.GetRegister(kR0)); }
+
+void GlHle::GlClearDepthx(IArmCore& core) {
+  // void glClearDepthx(GLclampx depth)
+  backend_.ClearDepth(FixedToFloat(static_cast<GLfixed>(core.GetRegister(kR0))));
+}
+
+void GlHle::GlDepthMask(IArmCore& core) {
+  // void glDepthMask(GLboolean flag)
+  backend_.DepthMask(core.GetRegister(kR0) != 0);
+}
+
 void GlHle::GlMatrixMode(IArmCore& core) { backend_.MatrixMode(core.GetRegister(kR0)); }
 void GlHle::GlLoadIdentity(IArmCore&) { backend_.LoadIdentity(); }
+void GlHle::GlPushMatrix(IArmCore&) { backend_.PushMatrix(); }
+void GlHle::GlPopMatrix(IArmCore&) { backend_.PopMatrix(); }
 
 void GlHle::GlOrthox(IArmCore& core) {
   backend_.Ortho(FixedToFloat(static_cast<GLfixed>(core.GetRegister(kR0))),
@@ -569,7 +583,7 @@ uint32_t GlHle::BuildGl(Memory& memory, HleRuntime& hle, uint32_t vtable_address
       [this](IArmCore& c) { GlBlendFunc(c); },      // 6  glBlendFunc
       [this](IArmCore& c) { GlClear(c); },        // 7  glClear
       [this](IArmCore& c) { GlClearColorx(c); },  // 8  glClearColorx
-      Stub,                                       // 9  glClearDepthx
+      [this](IArmCore& c) { GlClearDepthx(c); },  // 9  glClearDepthx
       Stub,                                       // 10 glClearStencil
       Stub,                                       // 11 glClientActiveTexture
       [this](IArmCore& c) { GlColor4x(c); },      // 12 glColor4x
@@ -581,8 +595,8 @@ uint32_t GlHle::BuildGl(Memory& memory, HleRuntime& hle, uint32_t vtable_address
       Stub,                                       // 18 glCopyTexSubImage2D
       Stub,                                       // 19 glCullFace
       [this](IArmCore& c) { GlDeleteTextures(c); }, // 20 glDeleteTextures
-      Stub,                                       // 21 glDepthFunc
-      Stub,                                       // 22 glDepthMask
+      [this](IArmCore& c) { GlDepthFunc(c); },    // 21 glDepthFunc
+      [this](IArmCore& c) { GlDepthMask(c); },    // 22 glDepthMask
       Stub,                                       // 23 glDepthRangex
       [this](IArmCore& c) { GlDisable(c); },      // 24 glDisable
       [this](IArmCore& c) { GlDisableClientState(c); },  // 25 glDisableClientState
@@ -620,8 +634,8 @@ uint32_t GlHle::BuildGl(Memory& memory, HleRuntime& hle, uint32_t vtable_address
       Stub,                                       // 57 glPixelStorei
       Stub,                                       // 58 glPointSizex
       Stub,                                       // 59 glPolygonOffsetx
-      Stub,                                       // 60 glPopMatrix
-      Stub,                                       // 61 glPushMatrix
+      [this](IArmCore& c) { GlPopMatrix(c); },    // 60 glPopMatrix
+      [this](IArmCore& c) { GlPushMatrix(c); },   // 61 glPushMatrix
       Stub,                                       // 62 glReadPixels
       [this](IArmCore& c) { GlRotatex(c); },      // 63 glRotatex
       Stub,                                       // 64 glSampleCoveragex

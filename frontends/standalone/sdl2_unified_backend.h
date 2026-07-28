@@ -78,6 +78,8 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
   void Disable(GLenum cap) override;
   void MatrixMode(GLenum mode) override;
   void LoadIdentity() override;
+  void PushMatrix() override;
+  void PopMatrix() override;
   void Ortho(float left, float right, float bottom, float top, float near_plane,
              float far_plane) override;
   void Frustum(float left, float right, float bottom, float top, float near_plane,
@@ -88,6 +90,9 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
   void Color4(float r, float g, float b, float a) override;
   void AlphaFunc(GLenum func, float ref) override;
   void BlendFunc(GLenum sfactor, GLenum dfactor) override;
+  void DepthFunc(GLenum func) override;
+  void ClearDepth(float depth) override;
+  void DepthMask(bool flag) override;
   void DrawArrays(GLenum mode, const GlVertexArrays& arrays) override;
 
   void GenTextures(GLsizei n, GLuint* textures) override;

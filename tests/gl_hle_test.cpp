@@ -43,6 +43,8 @@ class FakeGlBackend : public zeebulator::GlBackend {
   void Disable(zeebulator::GLenum cap) override { last_disabled = cap; }
   void MatrixMode(zeebulator::GLenum mode) override { last_matrix_mode = mode; }
   void LoadIdentity() override { ++load_identity_count; }
+  void PushMatrix() override { ++push_matrix_count; }
+  void PopMatrix() override { ++pop_matrix_count; }
   void Ortho(float left, float right, float bottom, float top, float near_plane,
              float far_plane) override {
     ortho = {left, right, bottom, top, near_plane, far_plane};
@@ -65,6 +67,9 @@ class FakeGlBackend : public zeebulator::GlBackend {
     last_blend_sfactor = sfactor;
     last_blend_dfactor = dfactor;
   }
+  void DepthFunc(zeebulator::GLenum func) override { last_depth_func = func; }
+  void ClearDepth(float depth) override { last_clear_depth = depth; }
+  void DepthMask(bool flag) override { last_depth_mask = flag; }
   void DrawArrays(zeebulator::GLenum mode, const zeebulator::GlVertexArrays& arrays) override {
     ++draw_count;
     last_mode = mode;
@@ -121,6 +126,8 @@ class FakeGlBackend : public zeebulator::GlBackend {
   int destroy_context_count = 0;
   int swap_buffers_count = 0;
   int load_identity_count = 0;
+  int push_matrix_count = 0;
+  int pop_matrix_count = 0;
   zeebulator::GLbitfield last_clear_mask = 0;
   zeebulator::GLenum last_enabled = 0;
   zeebulator::GLenum last_disabled = 0;
@@ -137,6 +144,9 @@ class FakeGlBackend : public zeebulator::GlBackend {
   float last_alpha_ref = 0.0f;
   zeebulator::GLenum last_blend_sfactor = 0;
   zeebulator::GLenum last_blend_dfactor = 0;
+  zeebulator::GLenum last_depth_func = 0;
+  float last_clear_depth = 0.0f;
+  bool last_depth_mask = true;
 };
 
 struct Fixture {

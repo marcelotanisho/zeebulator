@@ -6813,3 +6813,92 @@ AVK-gating change), both in `tools/game_probe.cpp`.
 Explicitly out of scope, called out by the user directly and left for
 next: "There are some other issues though" -- not yet described in
 detail, tracked as open follow-up work rather than guessed at here.
+
+## Real depth-buffer infrastructure was completely missing: five real GL gaps found and fixed, one real bug still open
+
+The user described two "other issues": a garbled "J1 %7D"-style HUD
+string top-left during gameplay, and (raised mid-message, unprompted)
+sprites layering in the wrong front/back order -- "characters that
+should be appearing farther to the back are showing up in front."
+Investigated both live.
+
+**"J1 x7d" ruled out as a rendering bug, real root cause not yet
+found.** Traced the real classic-2D `IDISPLAY_Update`/`DrawText` path
+(temporary prints, reverted) and the real `sprintf`-family HLE helper
+(`ModRuntime::SprintfImpl`, temporary trace, reverted): neither one
+ever fires for this string -- `DrawText` only ever draws real
+"CARREGANDO..." loading-screen text (bottom-left, a real, different,
+correctly-rendering element), and `SprintfImpl` is never called at
+all during this window. Dumped every real uploaded GL texture to PPM
+(temporary hook in `Sdl2UnifiedBackend::TexImage2D`, reverted) and
+found `texture 2`: a complete, correctly-rendered real ASCII bitmap
+font atlas (digits, A-Z, a-z, accented characters, all legible) --
+proving the font/glyph pipeline itself is correct. "J1 x7d" is a real,
+correctly-rendered string; the bug (not found this round) must be in
+whatever real game-state value gets sampled from that atlas to build
+it -- a new, separate investigation thread, not a rendering defect.
+
+**Sprite z-ordering: five real, confirmed HLE gaps found and fixed
+this round, root cause of the remaining specific symptom still open.**
+Live-traced `GlEnable`/`GlDisable` calls (temporary, reverted) and
+found real Double Dragon code enables `GL_DEPTH_TEST` exactly once at
+startup and never touches it again -- real code fully expects working
+depth-based layering. Checked what this project actually gives it:
+
+1. **No real depth buffer was ever requested.** `SDL_GL_SetAttribute`
+   was never called with `SDL_GL_DEPTH_SIZE` before creating the one
+   real GL context (`tools/game_probe.cpp`), so the real enabled
+   `GL_DEPTH_TEST` had nothing real to test against. **Fixed**:
+   request a real 24-bit depth buffer before context creation.
+   **Confirmed live**: the door that previously rendered as a flat
+   black rectangle now shows its real closed-door texture, and the
+   health bar's real fill (previously invisible, hidden behind its
+   own container) now renders correctly, blue, on top.
+2. **`glDepthFunc`/`glClearDepthx`/`glDepthMask` were all silent
+   Stubs** -- real per-draw depth comparison/clear-value/write-mask
+   configuration was being dropped on the floor. **Fixed**: real
+   implementations, forwarding to genuine host `glDepthFunc`/
+   `glClearDepth`/`glDepthMask`, added to `GlBackend` (both real
+   backends: `Sdl2UnifiedBackend`, the legacy `Sdl2GlBackend`) and
+   wired into `GlHle`'s vtable (slots 9/21/22, previously `Stub`).
+3. **`glPushMatrix`/`glPopMatrix` (vtable slots 60/61) were also
+   silent Stubs.** Real GLES1.x code's standard per-sprite pattern is
+   `glPushMatrix(); glTranslatef(...); <draw one sprite>;
+   glPopMatrix();` -- with both calls silently dropped, any use of
+   that pattern would leave every sprite's transform permanently
+   accumulated onto the modelview stack instead of properly scoped
+   per sprite. **Fixed**: real implementations added the same way.
+
+**The remaining specific symptom (individual overlapping character
+sprites still drawn in the wrong order) needed real evidence, not
+more guessing, and didn't fully resolve from the fixes above.** Traced
+real vertex data directly (temporary: `GlVertexPointer`'s real `size`/
+`type` args, and each real `GlDrawArrays`' actual extracted Y/Z range,
+both reverted) and found: real vertex position arrays *do* carry a
+real per-vertex Z component (`size=3`, `type=GL_FIXED`, correctly
+decoded via this project's existing `ReadGlComponent`), confirming the
+extraction pipeline itself isn't the bug. But multiple, visually
+distinct, simultaneously-overlapping character sprites all shared the
+*exact same* real Z value (`-80.0`) in the same frame -- real code
+never calls `glTranslatef`/`glLoadMatrixx`/`glMultMatrixx` at all
+(confirmed zero calls to any of them, live), so per-sprite Z isn't
+coming from a transform either. This means real hardware likely
+doesn't separate *individual* same-layer character sprites by Z at
+all -- only broad layers (background `-640`, static decoration
+`-505`-ish, characters `-80`, foreground overlay `-2`) -- and relies
+on real, correct *submission order* within the character layer for
+final visual stacking. Whether this project's own submission order
+for same-layer sprites actually matches what real game code intends
+is a real, different, deeper question this round didn't answer --
+needs real ARM disassembly of the sprite-list iteration/ordering
+logic itself, not another round of GL-call tracing. Tracked as open
+follow-up, not guessed at further here.
+
+All temporary instrumentation across this investigation (`DrawText`/
+`Update` prints in `core/brew/idisplay.cpp`, the `SprintfImpl` trace
+in `core/brew/mod_runtime.cpp`, the PPM texture dumper in
+`frontends/standalone/sdl2_unified_backend.cpp`, and the `GlEnable`/
+`GlDisable`/`GlBindTexture`/`GlDrawArrays`/`GlTranslatex`/
+`GlVertexPointer`/`glLoadMatrixx`/`glMultMatrixx` traces in
+`core/brew/gl_hle.cpp`) fully reverted; `git diff --stat` clean except
+the five real, permanent depth-related fixes. 303/303 tests pass.

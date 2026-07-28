@@ -395,6 +395,15 @@ int main(int argc, char** argv) {
   constexpr int kHeight = 480;
   constexpr int kAudioSampleRate = 22050;
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+  // Real Double Dragon enables GL_DEPTH_TEST once at startup and never
+  // touches it again (confirmed live -- PHASE8_LOG.md), i.e. it relies
+  // on a real depth buffer for real sprite/HUD layering. Never
+  // requested one here before, so depending on the driver's default
+  // this could silently negotiate zero depth bits, making that real
+  // GL_DEPTH_TEST a no-op and leaving every draw ordered by submission
+  // order alone -- exactly the real, confirmed symptom (enemies and a
+  // health-bar fill drawn in the wrong front/back order).
+  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_Window* window =
       SDL_CreateWindow("Zeebulator - game probe", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                         kWidth, kHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);

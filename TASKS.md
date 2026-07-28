@@ -2546,6 +2546,38 @@ playable start-to-finish at full speed, standalone build.
       section. Other, not-yet-detailed issues remain (user's own
       words: "There are some other issues though") -- tracked as open
       follow-up, not guessed at here.
+- [ ] Investigated the two "other issues": a garbled "J1 %7D"-style
+      HUD string, and wrong front/back sprite layering. **Sprite
+      layering: five real, confirmed GL gaps found and fixed.** Real
+      code enables `GL_DEPTH_TEST` once at startup and never touches
+      it again, but (1) no real depth buffer was ever requested for
+      the one real GL context -- fixed, and directly confirmed live:
+      the door (previously a flat black rectangle) and the health bar
+      fill (previously invisible behind its own container) both now
+      render correctly; (2) `glDepthFunc`/`glClearDepthx`/
+      `glDepthMask` were silent Stubs -- now real, forwarding to
+      genuine host GL calls; (3) `glPushMatrix`/`glPopMatrix` were
+      *also* silent Stubs, meaning real per-sprite
+      "push/translate/draw/pop" scoping was silently broken -- now
+      real. **The specific remaining symptom** (individual same-layer
+      character sprites still stacking in the wrong order) did not
+      fully resolve: live vertex tracing found real per-vertex Z
+      *is* correctly extracted, but multiple overlapping character
+      sprites all legitimately share the exact same real Z (`-80.0`)
+      in the same frame, and real code never calls
+      `glTranslatef`/`glLoadMatrixx`/`glMultMatrixx` at all -- meaning
+      real hardware likely relies on correct *submission order*
+      within that shared layer, not per-sprite Z, and whether this
+      project's own submission order matches real intent needs real
+      ARM disassembly of the sprite-list ordering logic, not more GL
+      tracing. **"J1 x7d" HUD text**: ruled out as a rendering bug --
+      traced `DrawText`/`Update`/`SprintfImpl` (none of them fire for
+      it) and dumped every real GL texture to confirm the real font
+      atlas itself renders correctly; the real bug (not found this
+      round) must be in whatever game-state value gets sampled to
+      build that string. Both are tracked as open follow-up. 303/303
+      tests pass. See PHASE8_LOG.md's "Real depth-buffer
+      infrastructure was completely missing" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

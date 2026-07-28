@@ -82,6 +82,17 @@ class GlBackend {
   virtual void Disable(GLenum cap) = 0;
   virtual void MatrixMode(GLenum mode) = 0;
   virtual void LoadIdentity() = 0;
+  // Real, confirmed-needed for real per-sprite transform scoping
+  // (TASKS.md/PHASE8_LOG.md Phase 8): both were silent no-op Stubs
+  // until real front/back sprite ordering was found live-broken --
+  // real code's standard "glPushMatrix(); glTranslatef(...); <draw
+  // one sprite>; glPopMatrix();" per-sprite pattern needs a real
+  // matrix stack, or every sprite's translate keeps accumulating onto
+  // the previous one instead of being independently scoped from a
+  // shared base, corrupting every subsequent sprite's real position
+  // (Z included) for the rest of that frame.
+  virtual void PushMatrix() = 0;
+  virtual void PopMatrix() = 0;
   virtual void Ortho(float left, float right, float bottom, float top,
                       float near_plane, float far_plane) = 0;
   virtual void Frustum(float left, float right, float bottom, float top,
@@ -100,6 +111,17 @@ class GlBackend {
   // pass through as raw Khronos enums, same rationale as Enable/Disable.
   virtual void AlphaFunc(GLenum func, float ref) = 0;
   virtual void BlendFunc(GLenum sfactor, GLenum dfactor) = 0;
+  // Real, confirmed-needed for real sprite/HUD layering (TASKS.md/
+  // PHASE8_LOG.md Phase 8): Double Dragon enables GL_DEPTH_TEST once at
+  // startup and never touches it again, relying on a real depth buffer
+  // for correct front/back ordering -- confirmed live via the actual,
+  // visible symptom of not having one wired up (enemies and a
+  // health-bar fill rendered in the wrong order, i.e. submission order
+  // instead of real depth order). `func` passes through as a raw
+  // Khronos enum, same rationale as Enable/Disable.
+  virtual void DepthFunc(GLenum func) = 0;
+  virtual void ClearDepth(float depth) = 0;
+  virtual void DepthMask(bool flag) = 0;
 
   // A single draw call covers both glDrawArrays and glDrawElements --
   // GlHle resolves either into the same already-host-native
