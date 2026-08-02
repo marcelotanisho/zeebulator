@@ -2748,6 +2748,42 @@ playable start-to-finish at full speed, standalone build.
       layer over layer. All instrumentation reverted; 304/304 tests
       pass; no code change. See PHASE8_LOG.md's "continued down the
       entity-system layer" section.
+- [ ] Sprite z-ordering, rigorous correlated re-verification: per
+      explicit direction to verify slowly rather than keep building
+      new theories, re-checked everything with directly-observed,
+      time-correlated live data instead of inference. Confirmed the
+      real render-list write address (`0x80304258`..`0x80304274`) by
+      watching the actual `str` instruction execute, not computing it
+      from arithmetic. Confirmed, via a deterministic frozen-frame
+      dump taken at both the entry *and* exit of a single real
+      `0x109620` call, that the shared 8-slot array it iterates
+      (`0x80337c44`, previously suspected to feed all 8 rendered
+      characters) is **unchanged** across that call and only ever
+      holds 2 of the 8 real entities -- yet all 8 real render-list
+      writes happen within that same call's window regardless. The
+      other 6 entities (5 "followers" + 1 more) are reached via a
+      direct, nested call chain from inside the array's own slot-1
+      entity's (the real "leader") own `Update()` -- consistent with
+      the real leader/follower backreference found two rounds ago,
+      most likely a real linked-list walk built once at spawn time.
+      **This means follower order is driven by fixed real ROM code
+      and a deterministic linked-list build, not by anything this
+      project's own HLE/timing could plausibly compute differently
+      from real hardware** -- no RNG, no wall-clock branch, no
+      HLE-stubbed value anywhere in the traced path. That argues
+      *against* the "our slot assignment differs from real hardware"
+      theory this thread has been chasing for three rounds, and
+      raises a different, harder question instead: if entity order
+      really is ROM-fixed and this project's own depth-test pipeline
+      was already verified correct against real OpenGL driver state,
+      the gap versus Infuse's rendering may not be a Zeebulator bug
+      at all -- Infuse is an independent, explicitly-labeled "A1
+      development preview," not verified-against-real-hardware ground
+      truth, and could plausibly be applying its own non-authentic
+      approximation. Not confirmed either way; flagged honestly, not
+      assumed. All instrumentation reverted; 304/304 tests pass; no
+      code change. See PHASE8_LOG.md's "rigorous, correlated
+      re-verification" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

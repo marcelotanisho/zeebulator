@@ -7563,3 +7563,72 @@ All live instrumentation from this round (`arm_interpreter.cpp`'s
 fresh entry-point/pool-dump probes, `memory.cpp`/`memory.h`'s dual
 write-watch) reverted -- `git diff --stat` clean, 304/304 tests pass.
 No code change landed.
+
+## Sprite z-ordering: rigorous, correlated re-verification -- follower order is genuinely ROM-deterministic
+
+Explicit instruction this round: verify slowly and rigorously rather
+than keep building new theories on unverified ground, after the
+previous round caught itself in a real self-contradiction.
+
+**Step 1, verified directly (not inferred from arithmetic): the real
+render-list write target.** Logged the exact address at the real
+`str` instruction itself (`0x11f74c`) across many hits: `0x80304258`
+through `0x80304274` (8 slots, stride 4), with `r0=0x80300024`
+(applet) confirmed live at `0x11f6c4`'s own entry every single time.
+This matches `applet + 0x4234 + index*4` exactly -- the real render
+list, independently re-derived and cross-checked against the actual
+observed store address, not assumed. The `0x80337c44` array from
+prior rounds is a **separate, unrelated structure** (confirmed
+next) -- dropped as a false lead for *this* list.
+
+**Step 2: what `0x109620` really iterates.** Live-dumped the real
+8-slot array at `0x80337c44` (the one two rounds of prior theory
+called an "entity pool") at both the entry *and* the exit of a single
+`0x109620` call, deterministically correlated to a frozen frame via a
+temporarily re-added `SIGUSR1`/timed freeze (same technique as
+before). Both dumps, for the *same* call, are byte-identical: only
+slots `[1]=0x80320044` and `[6]=0x803201c0` are populated; the other
+six slots are `0`. Yet all 8 real render-list writes (all 8 real
+characters) happen within that exact same call's window, interleaved
+in append order right alongside those two entities' own registration.
+
+**Conclusion, now solidly evidenced rather than guessed: the five
+"follower" entities (and one more, `0x8032033c`) are not reached by
+iterating this shared 8-slot array at all.** Since the array is
+unchanged before and after, and their registrations still happen
+nested inside this same call, they must be reached via a direct,
+nested call chain originating from processing the array's own slot
+1 entity (`0x80320044`, the real "leader") -- consistent with the
+real leader/follower backreference already found two rounds ago
+(each follower's own `+0xac` field stores a pointer back to this
+same leader). Most likely mechanism (not yet directly proven): the
+leader's own `Update()` walks a real linked list of its followers
+(entity `+0xc`, the same "next" field this project found genuinely
+used for list-walking elsewhere) built once at spawn time, directly
+calling each follower's registration in turn -- entirely within
+normal, deterministic ARM execution, no separate scheduling or
+indexed-array lookup involved.
+
+**Why this matters**: this follower order is driven by fixed real ROM
+code and a real, deterministically-built linked list -- there is no
+step in this chain that depends on anything this project's own
+HLE/timing could plausibly compute differently from real hardware
+(no RNG, no wall-clock-dependent branch, no HLE-stubbed return value
+observed anywhere in this path). Taken at face value, that argues
+*against* the "our slot assignment differs from real hardware" theory
+this round set out to check, and re-opens a different, harder
+question: if entity order really is ROM-fixed and this project's own
+depth-test pipeline was already exhaustively verified correct (two
+rounds ago, directly against real OpenGL driver state), the
+remaining gap between this project's rendering and Infuse's may not
+be a Zeebulator bug at all -- Infuse is itself an independent,
+explicitly-labeled "A1 development preview" reimplementation, not
+verified-against-real-hardware ground truth, and could plausibly be
+applying its own approximation (e.g. a manual Y-sort) that isn't
+authentic Zeebo behavior either. Not confirmed either way; flagged
+honestly as the real open question rather than assumed.
+
+All live instrumentation from this round (`arm_interpreter.cpp`'s
+correlated entry/exit/write probes, `tools/game_probe.cpp`'s
+temporarily re-added deterministic freeze) fully reverted -- `git
+diff --stat` clean, 304/304 tests pass. No code change landed.
