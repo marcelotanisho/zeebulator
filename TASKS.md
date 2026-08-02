@@ -2720,6 +2720,34 @@ playable start-to-finish at full speed, standalone build.
       (`~/.Tuxality/Infuse`, outside the repo) for further comparison.
       See PHASE8_LOG.md's "installed the real reference emulator"
       section.
+- [ ] Sprite z-ordering, entity-system structure model corrected
+      (still open): continuing the slot-assignment lead surfaced a
+      real internal error from two rounds ago -- that round claimed
+      the real registration function `0x11f6c4` "never fires," which
+      directly contradicted its own other finding that an instruction
+      *inside* it was confirmed as the render-list's writer. Redone
+      fresh, cleanly: `0x11f6c4` does fire (552 real hits); the
+      earlier "0 hits" was a stale/mistimed capture, not a ROM fact.
+      More significantly, live-dumped the real contents of what the
+      last two rounds treated as an "8-entity pool array"
+      (`0x80300ad8`..`0x80300af4`) and found it isn't one -- it's a
+      small mixed-purpose real struct (the render-list's own base
+      pointer, a second adjacent list's base, real bounds/caps like
+      `8` and `256`, at least one tracked entity pointer), not 8
+      entity slots. This explains why "six of seven hardcoded spawn
+      calls share literal index=6" looked contradictory against
+      "6-8 characters render simultaneously" -- that index was never
+      a render-list slot. The real render list itself (`0x80337c44`,
+      confirmed real bound 8, `0x11f6c4` its one live append-only
+      writer, real Z = `f(append order)`) still stands from two
+      rounds ago. What's still genuinely open: the full real shape of
+      this `applet+0xab0` struct and what actually determines each
+      character's real append order -- the original slot-assignment
+      question remains unanswered, not resolved. Stopped deliberately
+      rather than keep building on a model that kept revising itself
+      layer over layer. All instrumentation reverted; 304/304 tests
+      pass; no code change. See PHASE8_LOG.md's "continued down the
+      entity-system layer" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

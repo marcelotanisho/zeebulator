@@ -7483,3 +7483,83 @@ reverted -- `git diff --stat` clean, 304/304 tests pass. No code
 change landed. Real Infuse installation left in place locally
 (`~/.Tuxality/Infuse`, outside the repo) for further comparison in a
 future round.
+
+## Sprite z-ordering: continued down the entity-system layer, found the previous round's structure model was wrong
+
+Continued directly from the "installed the real reference emulator"
+round's conclusion (real character Z is genuinely tied to real
+registration/slot index; best lead was checking whether this
+project's own execution assigns entities to different real slots than
+real hardware would).
+
+**First: resolved an apparent internal contradiction from two rounds
+ago.** That round's own notes claimed the real registration function
+`0x11f6c4` "never fires" for the frozen cutscene (0 live hits) --
+directly contradicting that same round's own separate finding that
+`0x11f74c` (an instruction *inside* `0x11f6c4`, unreachable without
+first entering at its top) was confirmed, via live write-watch, to be
+the real render-list's only writer. Redid the check fresh, cleanly,
+this round: **`0x11f6c4` does fire** (552 real hits in one capture
+window). The earlier "0 hits" report was itself wrong -- most likely
+a stale or mistimed capture in that round, not a real fact about the
+ROM. The append-only, no-sort logic inside it (confirmed two rounds
+ago) still stands; only the "never fires" framing was incorrect.
+
+**Second, and more significant: the "8-slot pool array" model built
+up over the last two rounds was wrong.** Live-dumped the real
+contents of what was believed to be an 8-entity-pointer array at
+`0x80300ad8`..`0x80300af4` (derived from `[applet+0xab0]+4`, the
+"container" the real per-tick update loop `0x109620` and the real
+pool allocator `0x10c4e4` both operate on) at the frozen cutscene
+frame:
+
+```
+slot[0] = 0x80337c44  <- the real render-list base address itself
+slot[1] = 0x80337c64  <- render-list base + 0x20 (likely an adjacent,
+                          second real list -- category 0's list,
+                          contiguous with category 1's)
+slot[2] = 0x80320c24  <- looks like a real entity pointer
+slot[3] = 0x00000008  <- a real small integer (matches the render
+                          list's own real bound of 8, confirmed
+                          two rounds ago)
+slot[4] = 0x00000100  <- 256, matches the real registration
+                          function's own "count >= 256, reject" cap
+slot[5] = 0x80337c84  <- another 0x8033xxxx-range real pointer
+slot[6] = 0x00000008
+slot[7] = 0x80008000
+```
+
+This is **not** an array of 8 entity pointers -- it's a small,
+mixed-purpose real struct (list-base pointers, bounds/caps, at least
+one tracked entity pointer) that this project's last two rounds
+misread as a uniform slot array. That misreading is *why* "six of
+seven hardcoded spawn calls pass literal index=6" looked
+contradictory against "6-8 simultaneous characters render" -- the
+"index" argument those calls pass was never a render-list slot at
+all; it indexes into this differently-shaped struct for an as-yet-
+ungeneralized purpose, and the real render-list's own actual index
+(the one that determines Z) is assigned separately, at registration
+time, by `0x11f6c4`'s own real running-count field -- exactly as
+found two rounds ago, just previously described using the wrong
+mental model of *why* six spawn calls could share one literal index
+argument without visibly colliding.
+
+**Stopping here deliberately.** Each layer opened this round revised
+or contradicted something believed settled from the layer before --
+a sign of reconstructing this real struct's layout faster than it's
+being verified, not a sign of converging on an answer. Rather than
+keep building on possibly-shaky ground, this is flagged honestly as
+still open. What's now solid, re-confirmed fresh this round: the
+render list (`0x80337c44`, 8 real slots, bound 8) is real and is what
+`0x10b034` draws from; `0x11f6c4` really is its one live writer, a
+pure append with no sort; real Z is genuinely `f(append-order-index)`
+for characters. What's not yet solid: the full real shape of the
+`applet+0xab0`-based struct, how its fields relate to the seven
+hardcoded spawn calls' literal index arguments, and therefore what
+actually determines each character's real append order into the
+render list -- the original "path 1" question, still open.
+
+All live instrumentation from this round (`arm_interpreter.cpp`'s
+fresh entry-point/pool-dump probes, `memory.cpp`/`memory.h`'s dual
+write-watch) reverted -- `git diff --stat` clean, 304/304 tests pass.
+No code change landed.
