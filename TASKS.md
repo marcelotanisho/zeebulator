@@ -2681,6 +2681,45 @@ playable start-to-finish at full speed, standalone build.
       instrumentation reverted again; 304/304 tests pass; no code
       change. See PHASE8_LOG.md's "traced to the cutscene's own
       script" section.
+- [ ] Sprite z-ordering, real reference emulator installed and
+      compared -- corrects the previous round's conclusion: installed
+      real Infuse (Tuxality's open-source Zeebo/BREW emulator,
+      github.com/Tuxality/Infuse, official Linux build) per user
+      request, loaded this repo's own Double Dragon ROM, and directly
+      compared the same intro cutscene. Infuse shows real, correct
+      partial occlusion (the blond enemy genuinely hidden behind the
+      brute); this project's own render shows every character's full
+      silhouette with none of them occluding each other. This
+      contradicts the prior round's "no sort anywhere" conclusion, so
+      it was re-checked: **real character quads do carry distinct
+      per-vertex Z** (`-512`..`-504`, one per real entity slot index)
+      -- the earlier round's "no Z for characters" claim was a real
+      mistake (conflated the door/poster's own Z-tagged quads with an
+      assumption that the whole Z range was background-only).
+      With that corrected, every other piece of the real depth-test
+      pipeline was verified this round directly against the *real*
+      OpenGL driver state (not this project's own bookkeeping) at the
+      exact character draws: `GL_DEPTH_TEST` enabled, `GL_LEQUAL`,
+      writemask enabled, depth range `[0,1]`, a real 24-bit depth
+      buffer, and a byte-correct real projection matrix with ample
+      real Z precision (~32,000 distinct 24-bit steps between adjacent
+      real Z values) -- no FBO/offscreen target in play either (no FBO
+      support exists in this project's GL HLE at all, and nothing
+      crashes reaching for one). **Every individual piece checks out
+      correct, yet the final image is still wrong** -- this round
+      corrected a real error and exhaustively ruled out the rendering
+      pipeline, but did not find the remaining defect. Best-supported
+      next lead: since real Z is genuinely derived from real
+      registration/slot index, this project's own execution may be
+      assigning entities to different real slots (hence different
+      real Z) than real hardware for the same hardcoded ROM script --
+      i.e. the "does our spawn-call execution order/timing match real
+      hardware" question from two rounds ago is the live lead again,
+      not a closed one. All instrumentation reverted; 304/304 tests
+      pass; no code change. Real Infuse install kept locally
+      (`~/.Tuxality/Infuse`, outside the repo) for further comparison.
+      See PHASE8_LOG.md's "installed the real reference emulator"
+      section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

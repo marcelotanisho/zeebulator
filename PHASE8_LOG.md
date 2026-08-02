@@ -7390,3 +7390,96 @@ successive entry-point probes, `memory.cpp`/`memory.h`'s write-watch,
 `game_probe.cpp`'s `SIGUSR1`/`DBGFREEZE` frame-freeze) fully reverted
 again -- `git diff --stat` clean, 304/304 tests pass. No code change
 this round either; another pure real evidence-gathering round.
+
+## Sprite z-ordering: installed the real reference emulator, found a real correction to last round's conclusion
+
+User pointed out Double Dragon renders this exact cutscene correctly
+on Infuse (Tuxality's real, open-source Zeebo/BREW emulator,
+https://github.com/Tuxality/Infuse -- explicitly lists Double Dragon
+as one of three fully-playable titles) and asked to install and check
+it directly rather than keep guessing from this project's own trace
+alone.
+
+**Installed real Infuse** (official Linux build from
+`tuxality.net/projects/infuse_zeebo_emulator`, run locally). Loaded
+the same real Double Dragon ROM already in this repo's own
+`research/games/`. Got it to the exact same intro "gang lineup"
+cutscene this project has been analyzing. Real, direct visual
+comparison against this project's own rendering of the identical
+scene: in Infuse, the blond enemy is genuinely partially hidden behind
+the brute (only his upper torso/arm visible), and the rear purple-suit
+enemy is genuinely partially hidden behind the front one -- real,
+correct depth occlusion. In this project's own render, every
+character's full silhouette is visible with no occlusion at all.
+
+**This directly contradicted the previous round's "no sort anywhere,
+authentic ROM behavior" conclusion -- so it was re-checked, and found
+wrong.** Re-instrumented `GlHle::GlDrawArrays` (temporarily) to log
+the real vertex Z alongside bbox for draws returning to the real
+character-draw call site (`LR=0x0011f8b0`, confirmed last round).
+**Real character quads do carry distinct per-vertex Z** (`-512` down
+to `-504`, one integer apart per real entity, matching each entity's
+real registration/slot index) -- contradicting last round's claim that
+character sprites carry no Z. The earlier mistake: the `z=-512..-504`
+group found several rounds ago really did include the door and the
+wanted-poster (confirmed then by bbox size, e.g. the door's `80x96`),
+but those aren't a *separate* "background decoration" draw path as
+concluded then -- they're just two more entities (early registration-
+index slots) in the exact same real entity system as the characters,
+sharing the same Z-from-slot-index convention. Conflating "this
+specific quad is the door" with "therefore this whole Z range is
+background-only, unrelated to characters" was the error.
+
+**With that corrected, every other real piece of the depth-test
+pipeline was directly verified, this round, against the *real* OpenGL
+driver state (not this project's own bookkeeping)**, right at each of
+these character `glDrawArrays` calls:
+- `glIsEnabled(GL_DEPTH_TEST)` → real `1`.
+- `glGetBooleanv(GL_DEPTH_WRITEMASK)` → real `1` (real code never
+  calls `glDepthMask` at all; confirmed the real backend's default is
+  correctly the enabled-writes default GLES itself specifies).
+- `glGetIntegerv(GL_DEPTH_FUNC)` → real `0x203` (`GL_LEQUAL`).
+- `glGetFloatv(GL_DEPTH_RANGE)` → real `[0,1]` (default; real code
+  never calls the still-stubbed `glDepthRangex` either -- confirmed
+  live, zero real calls this round).
+- `glGetFloatv(GL_PROJECTION_MATRIX)` at the exact character draws:
+  byte-matches the expected real `glOrtho(0,320,-240,0,1,4096)`
+  matrix (`proj[10]=-0.000488`, `proj[14]=-1.000488`, etc.) -- and the
+  modelview matrix is real identity, so no hidden transform is
+  corrupting Z.
+  Precision check: two real, adjacent Z values (e.g. `-511`/`-512`)
+  map to NDC-Z values ~0.0039 apart, ~32,000 distinct steps apart in a
+  real 24-bit depth buffer -- nowhere near a z-fighting risk.
+- `glGetIntegerv(GL_DEPTH_BITS)` on the real created context → `24`
+  (confirmed the earlier depth-buffer fix's `SDL_GL_DEPTH_SIZE`
+  request was actually honored, not silently negotiated down).
+- `glViewport` stays real, constant `(0,0,641,480)` throughout --
+  ruled out an offscreen/lower-res render target (no FBO functions
+  exist in this project's GL HLE at all, and the game never crashes
+  reaching for one, so real code isn't using one); the `320x240` real
+  `glOrtho` call found earlier is purely a logical coordinate-space
+  choice, not a separate smaller render surface.
+
+**Every individual piece verified correct, yet the final rendered
+image is still wrong.** This round did not find the remaining defect
+-- it corrected a real factual error from the prior round (character
+Z does vary, is not absent) and exhaustively ruled out the entire
+depth-test/framebuffer/matrix pipeline as the cause via direct real
+GL driver queries, not assumptions. The most likely remaining
+explanation, given Z-per-character is real and derived from real
+slot/registration index (not random): **this project's own real
+execution may be assigning entities to different real slots (and
+therefore different real Z) than real hardware would for the same
+ROM script** -- i.e. the previous round's "path 1" question (does our
+execution order/timing of the seven hardcoded spawn calls match real
+hardware's) is back open and is now the best-supported next lead, not
+the abandoned "accept it's authentic" conclusion from before.
+
+All temporary instrumentation from this round (`gl_hle.cpp`'s
+`DBGDEPTH`/`DBGCAP`/`DBGZCHECK`/`DBGVIEWPORT` prints and the
+`glDepthRangex` stub's temporary logging wrapper, `sdl2_unified_
+backend.cpp`'s `DBGREALGL`/`DBGMATRIX` real-driver-state dumps)
+reverted -- `git diff --stat` clean, 304/304 tests pass. No code
+change landed. Real Infuse installation left in place locally
+(`~/.Tuxality/Infuse`, outside the repo) for further comparison in a
+future round.
