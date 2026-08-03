@@ -206,6 +206,75 @@ void ModRuntime::DecompressGzipInPlaceImpl(IArmCore& core) {
   core.SetRegister(kR0, 0);
 }
 
+void ModRuntime::SortPointerArrayImpl(IArmCore& core) {
+  // Real job identified via disassembly (see this slot's own doc
+  // comment in mod_runtime.h for the full derivation): a real generic
+  // sort, `void SORT(void *base, int count, int size, int
+  // (*compar)(const void*, const void*))`. `size` is honored as the
+  // real stride even though every real call site seen so far uses 4
+  // (pointer-sized elements), since nothing here depends on the
+  // elements actually being pointers.
+  uint32_t base = core.GetRegister(kR0);
+  int32_t count = static_cast<int32_t>(core.GetRegister(kR1));
+  int32_t size = static_cast<int32_t>(core.GetRegister(kR2));
+  uint32_t compar = core.GetRegister(kR3);
+
+  // Defensive cap, not a game-logic decision: this is real ROM data
+  // crossing into host C++ control flow, and a corrupt/unexpected count
+  // should degrade to "did nothing" rather than let a runaway loop hang
+  // the tool.
+  constexpr int32_t kMaxCount = 4096;
+  if (count <= 1 || size <= 0 || count > kMaxCount || compar == 0) {
+    core.SetRegister(kR0, 0);
+    return;
+  }
+
+  // CallArmFunction repurposes LR as its own return sentinel, so it
+  // must be saved/restored around every nested call -- this HLE
+  // function is itself invoked from inside another real ARM call's own
+  // Dispatch(), and the real caller of *this* slot still needs its
+  // original LR intact once we return.
+  uint32_t saved_lr = core.GetRegister(kLR);
+
+  // Real in-place insertion sort (stable, and correct regardless of
+  // whether the real comparator forms a strict weak ordering -- unlike
+  // quicksort, insertion sort never depends on that).
+  //
+  // Arguments are deliberately passed to the real comparator as
+  // `compar(next, prev)` -- swapped from the naive `compar(prev, next)`
+  // -- which makes the final array order *descending* by the real
+  // comparator's own "before-or-equal" relation (elements it considers
+  // later end up first). This isn't derivable from the disassembly
+  // alone: both argument orders call the real comparator faithfully and
+  // are equally "correct" as a generic sort, but only this one produces
+  // the real, on-screen character layering confirmed live against real
+  // Double Dragon footage and Infuse (an independent real BREW/Zeebo
+  // reimplementation) -- see PHASE8_LOG.md's sprite z-ordering fix round.
+  // With the real comparator's primary key at entity+0x7c, this means
+  // entities with the *larger* +0x7c value get registered first each
+  // frame (and, per this project's own already-confirmed real per-
+  // vertex Z-stamping, the most-negative/farthest depth), and smaller
+  // +0x7c draws last/nearest.
+  for (int32_t i = 1; i < count; ++i) {
+    int32_t j = i;
+    while (j > 0) {
+      uint32_t a_addr = base + static_cast<uint32_t>(j - 1) * size;
+      uint32_t b_addr = base + static_cast<uint32_t>(j) * size;
+      int32_t result = static_cast<int32_t>(hle_.CallArmFunction(compar, b_addr, a_addr));
+      if (result >= 0) break;
+      for (int32_t k = 0; k < size; ++k) {
+        uint8_t tmp = memory_.Read8(a_addr + k);
+        memory_.Write8(a_addr + k, memory_.Read8(b_addr + k));
+        memory_.Write8(b_addr + k, tmp);
+      }
+      --j;
+    }
+  }
+
+  core.SetRegister(kLR, saved_lr);
+  core.SetRegister(kR0, 0);
+}
+
 void ModRuntime::MemcpyImpl(IArmCore& core) {
   // void *memcpy(void *dest, const void *src, size_t n)
   uint32_t dest = core.GetRegister(kR0);
@@ -481,7 +550,8 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t unknown_0xdc_fn =
       hle_.Register([this](IArmCore& core) { DecompressGzipInPlaceImpl(core); });
   uint32_t unknown_0x184_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
-  uint32_t unknown_0x1b4_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  uint32_t unknown_0x1b4_fn =
+      hle_.Register([this](IArmCore& core) { SortPointerArrayImpl(core); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemcpyAliasSlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);

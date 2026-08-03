@@ -7753,3 +7753,85 @@ handler, the second-Return-keydown counter, and the population-
 stabilization freeze logic) fully reverted from `tools/game_probe.cpp`
 via `git checkout --` -- confirmed `git diff --stat` clean and
 304/304 tests passing. No code change landed from this round.
+
+## Found and fixed the real root cause: an unimplemented real sort trap
+
+Went hunting for the actual mechanism controlling draw order, since the
+8-slot active-entity array (`0x109620`'s own iteration) was already
+confirmed unsorted (pure append, TASKS.md Phase 8 "crack the sprite
+z-ordering ROPI wall live"). Disassembled `0x11f804` in full (the real
+per-frame "draw every registered entity" function) rather than just its
+loop shape as before, and found it isn't two flat back-to-back loops:
+right before the category-1 (character) draw loop, there's a real
+one-time call through a function-pointer field at a fixed table offset
+-- `(base=applet+0x4234, count=8, size=4, compar=<a real ARM function
+pointer>)` -- with category 0 never getting an equivalent call.
+
+That table offset is `0x1b4`, one of this project's own runtime-helper
+table slots (`core/brew/mod_runtime.cpp`) -- already found and named in
+an earlier round, but registered as a **safe no-op stub**, guessed at
+the time to be an "array-of-N-constructor" RVCT/EABI helper that
+couldn't be safely implemented without a visible element-stride
+argument. Live capture of this exact call site proved that guess wrong:
+`size=4` (pointer-sized elements, not a real per-entity struct size)
+rules out "construct N objects," and the argument shape is exactly a
+generic `qsort`-style `SORT(base, count, size, compar)`.
+
+Disassembled the real comparator itself (`ddragonz.mod` 0x10b918):
+both arguments are pointers to array slots (each holding an `Entity*`,
+dereferenced once, matching real `qsort` semantics), comparing the
+pointed-to entities' real fields at `+0x7c` (primary key) then `+0x50`
+(tie-break -- the same field already known to gate which of the two
+render categories an entity lands in), returning +1 when the first
+entity sorts before-or-equal the second and -1 otherwise.
+
+**Implemented the real slot** (`ModRuntime::SortPointerArrayImpl`): a
+real in-place insertion sort over the `count` pointer-sized slots at
+`base`, calling back into the real ARM `compar` function via
+`HleRuntime::CallArmFunction` for every comparison -- deferring
+entirely to the real game's own comparison logic rather than
+reimplementing what `+0x7c`/`+0x50` mean. Insertion sort specifically
+because it doesn't depend on the real comparator forming a strict weak
+ordering, unlike quicksort. `HleRuntime::CallArmFunction` repurposes
+`LR` as its own return sentinel, and this HLE function is itself
+invoked from inside another real call's own `Dispatch()`, so `LR` is
+saved before the comparison loop and restored right before returning --
+confirmed necessary by a dedicated new test
+(`Slot0x1b4RestoresLrSoItsOwnCallerCanStillReturnCorrectly`) whose
+first, LR-unaware version of this test hung the whole process, a real
+demonstration of exactly the bug this save/restore prevents.
+
+**First attempt regressed live** -- caught directly by the user
+watching the running window, not by any automated check: with the
+naive `compar(prev, next)` argument order, the door started rendering
+in front of both heroes (previously correct). Flipping to
+`compar(next, prev)` fixed the door regression *and* produced the
+correct real character layering (tan-jacket character now correctly
+hidden behind the purple-suited character in front of him, matching
+both the real-hardware YouTube footage and Infuse) -- confirmed with
+fresh screenshots at the title cutscene, the transition into real
+gameplay (HUD/score/timer all appearing normally), and while walking
+during real gameplay with the two heroes overlapping. This argument-
+order choice isn't derivable from the disassembly alone -- both orders
+call the real comparator faithfully as a generic sort; only live
+verification against real ground truth showed which one is correct.
+Net effect: the real sort call produces the final array in *descending*
+order by the real comparator's own relation, not ascending -- entities
+with the larger `+0x7c` value draw first (farthest), smaller draws
+last (nearest).
+
+Added real unit tests (`tests/mod_runtime_test.cpp`, replacing the old
+`UnknownSlot0x1b4DoesNotCrash` no-op smoke test): a real ARM comparator
+written directly into emulated memory (several instruction words
+copied verbatim from the real, disassembly-confirmed comparator, not
+guessed), verifying the sort's descending output, idempotency on an
+already-sorted array, the count<=1 no-op guard, and the LR save/restore
+behavior via a synthetic real-calling-convention caller (`push {r4,lr}`
+/ `bx` / `pop {r4,lr}` / `bx lr`, matching this project's own real
+disassembly patterns elsewhere). 307/307 tests pass (added 4, replaced
+1). `tools/game_probe.cpp`'s temporary live-tracing instrumentation
+used to find this (PC watches at `0x11f868`/`0x11f884`/`0x11f888`/
+`0x11f89c` in `core/cpu/arm_interpreter.cpp`) fully reverted via `git
+checkout --`; the real fix itself (`core/brew/mod_runtime.cpp`,
+`core/brew/mod_runtime.h`, `tests/mod_runtime_test.cpp`) is a genuine,
+committed code change -- the first of this entire investigation.

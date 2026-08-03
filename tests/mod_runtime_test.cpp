@@ -152,21 +152,165 @@ TEST(ModRuntime, FreeSlotDoesNotCrash) {
   EXPECT_NO_FATAL_FAILURE(hle.CallArmFunction(free_fn, /*ptr=*/kHeapRegion));
 }
 
-TEST(ModRuntime, UnknownSlot0x1b4DoesNotCrash) {
-  // Real disassembly (Double Dragon, TASKS.md Phase 8) shows this slot
-  // called as `(dest, count, cap=4, ctor_fn)` -- a shape matching a
-  // compiler-generated "construct N array elements" RVCT/EABI helper,
-  // but without a visible element-stride argument there's no safe way
-  // to implement real construction without guessing (see mod_runtime.h's
-  // doc comment) -- registered as a safe no-op instead.
+namespace {
+// Writes a real-shaped comparator at `addr`: `int compar(Entity **a, Entity
+// **b)` where each `Entity` is just a single 4-byte field at offset 0.
+// Every instruction word here is copied directly from the real comparator
+// this slot's real call site actually uses (`ddragonz.mod` 0x10b918-
+// 0x10b94c, see mod_runtime.h's doc comment for the full derivation) --
+// `ldr r0,[r0]` / `ldr r1,[r1]` (deref the slot pointers), `cmp`, `movle
+// r0,#1` / `mvngt r0,#0` (the real comparator's own polarity: +1 when the
+// first argument sorts before-or-equal the second, -1 otherwise), `bx lr`
+// -- just with the real two-field (0x7c then 0x50 tie-break) comparison
+// collapsed to a single field at offset 0, since the sort implementation
+// itself doesn't know or care what the real comparator compares.
+void WriteRealStyleComparator(zeebulator::Memory& memory, uint32_t addr) {
+  memory.Write32(addr + 0x00, 0xE5900000);   // ldr r0, [r0]
+  memory.Write32(addr + 0x04, 0xE5911000);   // ldr r1, [r1]
+  memory.Write32(addr + 0x08, 0xE5902000);   // ldr r2, [r0]
+  memory.Write32(addr + 0x0C, 0xE5913000);   // ldr r3, [r1]
+  memory.Write32(addr + 0x10, 0xE1520003);   // cmp r2, r3
+  memory.Write32(addr + 0x14, 0xD3A00001);   // movle r0, #1
+  memory.Write32(addr + 0x18, 0xC3E00000);   // mvngt r0, #0
+  memory.Write32(addr + 0x1C, 0xE12FFF1E);   // bx lr
+}
+}  // namespace
+
+TEST(ModRuntime, Slot0x1b4SortsAPointerArrayDescendingUsingTheRealComparator) {
+  // Real disassembly (Double Dragon, TASKS.md Phase 8 -- the sprite
+  // z-ordering investigation) shows this slot called as `(base, count,
+  // size=4, compar)`, a real generic `SORT` -- not, as first guessed, an
+  // "array constructor" helper (see mod_runtime.h's doc comment for the
+  // full derivation, including why `size=4` rules that guess out).
+  //
+  // Final order is *descending* by the real comparator's own "before-
+  // or-equal" relation, not ascending -- confirmed live, not guessed
+  // (see SortPointerArrayImpl's own comment and PHASE8_LOG.md): the
+  // real comparator here (see `WriteRealStyleComparator`) returns +1
+  // when its first argument's field is <= its second's, so ascending
+  // integer order would be 10,20,30,40 -- the real fix instead produces
+  // 40,30,20,10.
   ArmInterpreter cpu;
   HleRuntime hle(cpu, 0xF0000000, 0x1000);
   ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
   mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sort_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x1b4);
 
-  uint32_t fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x1b4);
-  EXPECT_NO_FATAL_FAILURE(
-      hle.CallArmFunction(fn, /*dest=*/kHeapRegion, /*count=*/4, /*cap=*/4));
+  constexpr uint32_t kComparAddr = 0x1000;
+  WriteRealStyleComparator(cpu.GetMemory(), kComparAddr);
+
+  // Four "entities" (a single int field each), and an array of four
+  // pointers to them in an unsorted order.
+  constexpr uint32_t kEntitiesAddr = 0x80300100;  // 4 entities x 4 bytes
+  constexpr uint32_t kArrayAddr = 0x80300200;      // 4 pointers x 4 bytes
+  const std::vector<int32_t> fields = {30, 10, 40, 20};
+  for (size_t i = 0; i < fields.size(); ++i) {
+    uint32_t entity_addr = kEntitiesAddr + static_cast<uint32_t>(i) * 4;
+    cpu.GetMemory().Write32(entity_addr, static_cast<uint32_t>(fields[i]));
+    cpu.GetMemory().Write32(kArrayAddr + static_cast<uint32_t>(i) * 4, entity_addr);
+  }
+
+  hle.CallArmFunction(sort_fn, kArrayAddr, /*count=*/4, /*size=*/4, kComparAddr);
+
+  std::vector<int32_t> sorted_fields;
+  for (int i = 0; i < 4; ++i) {
+    uint32_t entity_addr = cpu.GetMemory().Read32(kArrayAddr + i * 4);
+    sorted_fields.push_back(static_cast<int32_t>(cpu.GetMemory().Read32(entity_addr)));
+  }
+  EXPECT_EQ(sorted_fields, (std::vector<int32_t>{40, 30, 20, 10}));
+}
+
+TEST(ModRuntime, Slot0x1b4LeavesAnAlreadyDescendingArrayUnchanged) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sort_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x1b4);
+
+  constexpr uint32_t kComparAddr = 0x1000;
+  WriteRealStyleComparator(cpu.GetMemory(), kComparAddr);
+
+  constexpr uint32_t kEntitiesAddr = 0x80300100;
+  constexpr uint32_t kArrayAddr = 0x80300200;
+  const std::vector<int32_t> fields = {3, 2, 1};  // already in the real sort's own final order
+  std::vector<uint32_t> entity_addrs;
+  for (size_t i = 0; i < fields.size(); ++i) {
+    uint32_t entity_addr = kEntitiesAddr + static_cast<uint32_t>(i) * 4;
+    cpu.GetMemory().Write32(entity_addr, static_cast<uint32_t>(fields[i]));
+    cpu.GetMemory().Write32(kArrayAddr + static_cast<uint32_t>(i) * 4, entity_addr);
+    entity_addrs.push_back(entity_addr);
+  }
+
+  hle.CallArmFunction(sort_fn, kArrayAddr, /*count=*/3, /*size=*/4, kComparAddr);
+
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(cpu.GetMemory().Read32(kArrayAddr + i * 4), entity_addrs[i]);
+  }
+}
+
+TEST(ModRuntime, Slot0x1b4DoesNothingWhenCountIsZeroOrOne) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sort_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x1b4);
+
+  constexpr uint32_t kComparAddr = 0x1000;
+  WriteRealStyleComparator(cpu.GetMemory(), kComparAddr);
+
+  constexpr uint32_t kArrayAddr = 0x80300200;
+  cpu.GetMemory().Write32(kArrayAddr, 0xDEADBEEF);
+
+  EXPECT_NO_FATAL_FAILURE(hle.CallArmFunction(sort_fn, kArrayAddr, /*count=*/0, /*size=*/4, kComparAddr));
+  EXPECT_NO_FATAL_FAILURE(hle.CallArmFunction(sort_fn, kArrayAddr, /*count=*/1, /*size=*/4, kComparAddr));
+  EXPECT_EQ(cpu.GetMemory().Read32(kArrayAddr), 0xDEADBEEFu);
+}
+
+TEST(ModRuntime, Slot0x1b4RestoresLrSoItsOwnCallerCanStillReturnCorrectly) {
+  // SortPointerArrayImpl calls back into real ARM code (the comparator)
+  // via HleRuntime::CallArmFunction, which repurposes LR as its own
+  // return sentinel -- if the real slot's own caller's LR isn't
+  // restored before returning, whatever invoked this slot in the first
+  // place would resume at the wrong address. Simulate a real caller: a
+  // tiny ARM function that itself calls the sort slot via `bx`.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t sort_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x1b4);
+
+  constexpr uint32_t kComparAddr = 0x1000;
+  WriteRealStyleComparator(cpu.GetMemory(), kComparAddr);
+
+  constexpr uint32_t kEntitiesAddr = 0x80300100;
+  constexpr uint32_t kArrayAddr = 0x80300200;
+  const std::vector<int32_t> fields = {5, 1};
+  for (size_t i = 0; i < fields.size(); ++i) {
+    uint32_t entity_addr = kEntitiesAddr + static_cast<uint32_t>(i) * 4;
+    cpu.GetMemory().Write32(entity_addr, static_cast<uint32_t>(fields[i]));
+    cpu.GetMemory().Write32(kArrayAddr + static_cast<uint32_t>(i) * 4, entity_addr);
+  }
+
+  // Real non-leaf-function calling convention (matches this project's own
+  // real disassembly, e.g. `ddragonz.mod` 0x11f8d8's `push {r4, lr}` /
+  // 0x11f8c8's matching `pop`): save its own LR on the stack before
+  // making a nested call (`mov lr,pc ; bx r5`), restore it after --
+  // exactly what real compiled code has to do whenever it calls something
+  // that might itself clobber LR, which the real sort call does.
+  cpu.SetRegister(zeebulator::kSP, 0x80301000);
+  constexpr uint32_t kCallerAddr = 0x1100;
+  cpu.GetMemory().Write32(kCallerAddr + 0x00, 0xE92D4010);  // push {r4, lr}
+  cpu.GetMemory().Write32(kCallerAddr + 0x04, 0xE3A0402A);  // mov r4, #0x2A
+  cpu.GetMemory().Write32(kCallerAddr + 0x08, 0xE59F5010);  // ldr r5, [pc, #16] -> sort_fn
+  cpu.GetMemory().Write32(kCallerAddr + 0x0C, 0xE1A0E00F);  // mov lr, pc
+  cpu.GetMemory().Write32(kCallerAddr + 0x10, 0xE12FFF15);  // bx r5
+  cpu.GetMemory().Write32(kCallerAddr + 0x14, 0xE1A00004);  // mov r0, r4
+  cpu.GetMemory().Write32(kCallerAddr + 0x18, 0xE8BD4010);  // pop {r4, lr}
+  cpu.GetMemory().Write32(kCallerAddr + 0x1C, 0xE12FFF1E);  // bx lr
+  cpu.GetMemory().Write32(kCallerAddr + 0x20, sort_fn);     // literal pool
+
+  uint32_t result = hle.CallArmFunction(kCallerAddr, kArrayAddr, /*count=*/2, /*size=*/4, kComparAddr);
+  EXPECT_EQ(result, 0x2Au);
 }
 
 TEST(ModRuntime, DbgPrintfSlotDoesNotCrash) {

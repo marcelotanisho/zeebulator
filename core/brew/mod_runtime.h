@@ -322,17 +322,43 @@ namespace zeebulator {
 // mod` offset 0x11f870, reached from a real per-array-element
 // initialization loop: two sibling loops immediately before/after this
 // call process consecutive 4-byte-stride array entries at fixed offsets
-// `+0x3000`/`+0x4000` off the same base). Its one real call site passes
-// `(dest=this+0x4234, count=<a real int16 field read from data>, cap=4,
-// ctor_fn=<a real code pointer>)` in AAPCS r0-r3 -- a shape matching a
-// compiler-generated "construct N array elements via a given
-// constructor" RVCT/EABI runtime helper, but without a visible element-
-// stride argument there's no way to implement real construction without
-// guessing a stride and silently writing to the wrong offsets -- worse
-// than a no-op, per this project's standing rule against guessing
-// unconfirmed behavior. Registered as a safe no-op, same rationale as
-// every other unidentified slot above; revisit with a real element size
-// once `ctor_fn`'s own body is understood.
+// `+0x3000`/`+0x4000` off the same base).
+//
+// **Identified for real** (TASKS.md/PHASE8_LOG.md Phase 8, the sprite
+// z-ordering investigation's fix round): originally guessed as an
+// "array-of-N-constructor" RVCT/EABI helper and stubbed as a no-op,
+// since a raw element size wasn't visible. That guess was wrong --
+// tracing the one real call site directly (`ddragonz.mod` 0x11f870,
+// inside the real per-frame "draw every registered character" function)
+// shows this is a real, generic **sort**: called with `(base=this+0x4234,
+// count=<the real per-frame character count>, size=4, compar=<a real
+// ARM function pointer>)`, i.e. exactly `void SORT(void *base, int
+// count, int size, int (*compar)(const void*, const void*))` --
+// `size=4` (pointer-sized elements) is what rules the old "construct N
+// objects" guess out: a real constructor helper would need the real
+// per-object size (hundreds of bytes for an entity), not 4. Disassembled
+// the real comparator itself (`ddragonz.mod` 0x10b918): both arguments
+// are pointers to array slots (each slot holding an `Entity*`), and it
+// compares the pointed-to entities' real fields at `+0x7c` (primary
+// key) then `+0x50` (tie-break -- the same field this project already
+// found gates which of the two render categories an entity lands in),
+// returning +1 when the first entity sorts before-or-equal the second
+// and -1 otherwise (this real comparator's own polarity, not the
+// standard C `qsort` convention). This is very likely the real fix for
+// the sprite z-ordering bug this whole investigation chased: without a
+// real implementation here, the character render list stays in
+// whatever order entities were registered this frame (their real
+// per-entity `Update()` call order, itself governed by a fixed 8-slot
+// pool array with no ordering relationship to on-screen position), so
+// draw order -- and with it, the depth value each character's vertices
+// get stamped with -- never reflects real relative depth at all.
+// Implemented as `SortPointerArrayImpl`: a real in-place insertion sort
+// over the `count` pointer-sized slots at `base`, calling back into the
+// real ARM `compar` function (via `HleRuntime::CallArmFunction`, saving
+// and restoring `LR` around each nested call since `CallArmFunction`
+// repurposes it as its own return sentinel) for every comparison --
+// deferring entirely to the real game's own comparison logic rather
+// than reimplementing whatever `+0x7c`/`+0x50` actually mean.
 //
 // Only these twenty table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
@@ -430,6 +456,7 @@ class ModRuntime {
   void GetUpTimeMsImpl(IArmCore& core);
   void ReallocImpl(IArmCore& core);
   void DecompressGzipInPlaceImpl(IArmCore& core);
+  void SortPointerArrayImpl(IArmCore& core);
 
   // Shared bump-allocation core used by both MallocImpl and
   // ReallocImpl. Returns 0 (NULL) if `size` doesn't fit in the

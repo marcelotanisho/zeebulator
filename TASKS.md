@@ -2836,6 +2836,36 @@ playable start-to-finish at full speed, standalone build.
       All instrumentation reverted; 304/304 tests pass; no code
       change. See PHASE8_LOG.md's "Closed the timing-methodology
       caveat" section.
+- [x] Sprite z-ordering: **real root cause found and fixed.** Full
+      disassembly of `0x11f804` (the real per-frame character-draw
+      function, not just its loop shape) found a real one-time call,
+      right before the character draw loop, through the runtime-helper
+      table's offset-`0x1b4` slot -- previously found and registered as
+      a safe no-op, guessed to be an unsafe-to-implement "array
+      constructor" helper. Live capture of the real call site
+      (`base=applet+0x4234, count=8, size=4, compar=<real fn ptr>`)
+      proved that guess wrong: `size=4` is pointer-sized, not a real
+      entity struct size, and the shape is exactly a generic
+      `SORT(base,count,size,compar)`. Disassembled the real comparator
+      (`ddragonz.mod` 0x10b918): compares real entity fields `+0x7c`
+      (primary) then `+0x50` (tie-break, the same field gating render
+      category). Implemented the slot for real
+      (`ModRuntime::SortPointerArrayImpl`, `core/brew/mod_runtime.cpp`):
+      a real in-place insertion sort calling back into the real ARM
+      comparator via `HleRuntime::CallArmFunction`, saving/restoring
+      `LR` around each nested call. First attempt (naive argument order)
+      regressed live -- caught by the user watching the window, the
+      door started rendering in front of the heroes. Flipping the
+      comparator argument order (`compar(next,prev)`, producing a
+      *descending* final order) fixed the door regression and produced
+      correct real character layering, confirmed against real-hardware
+      YouTube footage and Infuse. Added 4 real unit tests in
+      `tests/mod_runtime_test.cpp` (replacing the old no-op smoke test),
+      including one proving the LR save/restore is load-bearing (its
+      first, LR-unaware version hung the process). 307/307 tests pass.
+      This is the first actual code change to land from this entire
+      investigation. See PHASE8_LOG.md's "Found and fixed the real root
+      cause" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
