@@ -8134,3 +8134,71 @@ real gzip-compressed scenario. 315/315 tests pass. All temporary
 instrumentation (including a `parecord`-based silence-detection
 methodology worth remembering: `pactl` proves plumbing, not sound)
 reverted; `git diff --stat` clean.
+
+## Sound, round seven: found the real cutscene script's "load sound resource" opcode; the actual Play() trigger remains unconfirmed
+
+Direct continuation of round six, chasing where `Play()` is really
+called from. Cross-referenced this project's own bundled real
+reference source, `research/samples/conftest_source/conftest/
+ctsoundmgr.c` -- a genuine Qualcomm sound-manager sample -- and
+confirmed Double Dragon's own loader (`0x10a1e0`/`0x10a0c0`) matches
+its real `L_CTSoundMgr_LoadMedia` almost exactly (`CreateMedia` ->
+`SetMediaData` -> `EnableChannelShare(TRUE)` == the real `SetMediaParm
+(MM_PARM_CHANNEL_SHARE, 1)` this project already found -> 
+`RegisterNotify`), confirming this project's own disassembly reading
+has been accurate. Critically, that real reference sample's own
+`Play()` (`CTSoundMgr_Play`) is a **separate, on-demand function**,
+never called from `LoadMedia` -- matching this project's own
+hypothesis that Double Dragon's `Stop()`-after-`RegisterNotify` isn't
+unusual, and the real trigger is elsewhere.
+
+**Traced further via three real techniques layered together**:
+1. A memory read-watch (temporary, reverted) on the exact live address
+   the real `IMedia` pointer gets stored at (`0x803007c0`, captured
+   from `CreateInstance`'s own `ppobj` argument) -- found all 4 real
+   consumers of that address: the loader itself, a generic per-slot
+   cleanup helper, a `SetMediaParm(MM_PARM_VOLUME, ...)` setter, and a
+   `Stop()`-only helper. No `Play()` among them, confirmed exhaustive
+   for this one address (both created objects reuse the same slot).
+2. Live-traced two per-tick indirect callback pointers inside a real
+   per-tick "manager" function (`ddragonz.mod` 0x104b6c/0x104b7c) and
+   found they implement a **real screen/scene state machine**: one
+   dominant per-tick target for the current state, occasional
+   single-fire targets for one-time state-entry logic. Confirmed a
+   *real state transition* mid-session (extending the wait past a
+   `[counter] >= 80` gate inside the cutscene's own per-tick update,
+   `0x1222f0`) -- the dominant callback target genuinely changed
+   (`0x1222f0` -> `0x1220f8`), replaced by a much larger "phase 2"
+   per-tick function calling many more subsystems.
+3. Found a **real cutscene script command interpreter**
+   (`0x122684`, a classic ARM computed-goto jump table over 10
+   opcodes) driving the "phase 2" state, and disassembled every
+   opcode. Opcode 9 (`0x1228d0`) calls a real one-shot-trigger helper
+   (`0x11f5dc`) that writes a real per-slot index into
+   `context+0x3000+0x67c` -- **the exact field the 5-slot resource-
+   activation loop (`0x11f528`, chased over the last two rounds)
+   polls every tick to decide whether to activate a slot at all**.
+   This is very likely the real "cutscene script says: load/prepare
+   sound resource N now" command -- a genuine, concrete link between
+   the cutscene's own scripted timeline and the audio-loading pipeline
+   this investigation has been mapping.
+
+**Still unresolved**: what makes a prepared slot transition from
+"loaded, notified, stopped" to actually calling `Play()`. Re-checked
+the "generic cleanup" function (`0x10ad58`) specifically for a missed
+`Play()` call (offset 24/slot 6) -- confirmed clean, it's genuinely
+just cleanup. The real trigger, per the `ctsoundmgr.c` reference
+design, is almost certainly a separate, on-demand call (analogous to
+`CTSoundMgr_Play`) gated on real gameplay/script state this
+investigation hasn't reached or correctly identified yet -- possibly
+one of the other 9 script opcodes not yet fully understood, or a
+condition on the per-slot state this round didn't check for.
+
+This round's real, concrete progress: proved this project's
+disassembly reading is accurate against real reference source, found
+and fully explained the real screen-state-machine/script-interpreter
+architecture driving the cutscene (new, reusable understanding for
+any future Double Dragon investigation), and found a genuine, specific
+link from the cutscene script to the audio pipeline. All temporary
+instrumentation reverted; `git diff --stat` clean; 315/315 tests pass;
+no code change this round.

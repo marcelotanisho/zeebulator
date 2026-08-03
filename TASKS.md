@@ -2968,6 +2968,32 @@ playable start-to-finish at full speed, standalone build.
       pass; all instrumentation reverted. See PHASE8_LOG.md's "Sound,
       round six" section for the full trace and the `parecord`
       silence-detection methodology worth reusing.
+- [ ] Sound: found the real cutscene script's "load sound resource"
+      opcode, but the actual `Play()` trigger is still unconfirmed.
+      Cross-referenced this project's own bundled real reference
+      source (`ctsoundmgr.c`, a genuine Qualcomm sound-manager sample)
+      and confirmed Double Dragon's loader matches its real
+      `LoadMedia` almost exactly -- and confirmed that reference's own
+      `Play()` is a separate, on-demand function, never called from
+      load, matching this project's working hypothesis. Exhaustively
+      read-watched the one live `IMedia` object's storage address:
+      found all 4 real consumers (load, cleanup, `SetVolume`, `Stop`),
+      no `Play()`. Live-traced a real per-tick screen/scene state
+      machine (`0x104b6c`/`0x104b7c`'s indirect callback targets) and
+      caught a real state transition past a `counter>=80` gate,
+      landing on a much larger "phase 2" per-tick function. Found and
+      fully disassembled a real 10-opcode cutscene script interpreter
+      (`0x122684`) inside it; opcode 9 writes a real per-slot resource
+      index into the exact field the resource-activation loop
+      (`0x11f528`) polls every tick -- a genuine, concrete link from
+      the cutscene's own scripted timeline to the audio pipeline. Real
+      new architectural understanding (screen state machine + script
+      interpreter), but the actual "now call `Play()`" trigger is
+      still not located -- likely a separate on-demand call (matching
+      `ctsoundmgr.c`'s own design) gated on script/game state not yet
+      identified. All instrumentation reverted; 315/315 tests pass; no
+      code change this round. See PHASE8_LOG.md's "Sound, round seven"
+      section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
