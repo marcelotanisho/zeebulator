@@ -7896,3 +7896,62 @@ concrete unexplored lead -- manually walking its real field layout,
 not another round of "play further and watch," is probably what
 resolves this. All instrumentation reverted; `git diff --stat` clean;
 307/307 tests pass; no code change this round.
+
+## Sound, round three: real loading pipeline mapped, real playback trigger still not found
+
+Pivoted from static byte-guessing at the resource table to live-tracing
+the real code that consumes `sound.ggz`, reusing the LR-capture
+technique that broke the sprite z-ordering wall. Temporary
+instrumentation in `FileHle::OpenFileImpl`/`ReadFromHandle` (capturing
+`LR` whenever the open/read is on `sound.ggz`) and in
+`ArmInterpreter::Step` (PC watches at specific real call sites),
+reverted after use.
+
+**Confirmed a real bulk preload pass, not per-play loading.** Every one
+of `sound.ggz`'s 74 real archive entries gets opened and fully read in
+one continuous burst right as the title screen loads, in descending
+index order -- not selectively when a sound is actually needed.
+Disassembled the two real functions responsible:
+- `0x10739c`: opens the currently-selected file, seeks to
+  `index * 8` into the real GGZ archive's own internal directory,
+  reads that entry's real 8-byte (offset, size) header, big-endian
+  decodes it, and mallocs a buffer sized `size + 0xc350`
+  (`bl 0x1096f0`).
+- `0x11bfd0`: the generic wrapper -- resolves a file-manager object,
+  calls `0x10739c` for the header, then loops calling `Read` with the
+  real remaining-byte count until the whole asset is pulled in, then
+  closes. Six real static call sites into this wrapper found via
+  `grep`; live PC-watching all six during the preload burst identified
+  exactly which ones fire and with what arguments (filename pointer,
+  index) -- `0x11c994` is the bulk "load every sound.ggz entry" loop
+  (index counting down); `0x1075a4` is a separate, one-shot load of
+  archive index 0 specifically, gated by a real state-machine flag
+  (byte `35` at a fixed context offset means "already done, skip").
+
+**Chased the one-shot index-0 load (`0x1075a4`) as the most audio-
+specific-looking lead, and it wasn't.** After the load, it branches
+on a stored pointer to one of two functions: live-captured the actual
+arguments at both branches. One (`0x109dfc`) turned out to be a real
+`ISignalCBFactory::CreateSignal(this, pfn, pUser, ...)` call --
+confirmed by the fact its "id" argument (live-captured as
+`0x0011bdf4`) is exactly this project's own already-known real HID
+joystick-button-callback address (`kRealButtonCallbackAddress` in
+`tools/game_probe.cpp`), i.e. this is HID/input signal setup, not
+audio. The other (`0x10ad58`) is a generic per-slot object-release/
+cleanup routine, also unrelated to audio specifically. Neither branch
+leads anywhere audio-shaped in the code reached so far.
+
+**Where this leaves things**: the real loading/caching pipeline for
+`sound.ggz` assets is now concretely mapped end to end, real function
+addresses and all -- genuine, reusable progress. But the actual
+"decode a cached asset and hand it to a playback path" trigger has not
+been found; every thread pulled on this round (the two dispatch
+branches at `0x1075a4`, the resource-table field layout from the
+previous round) turned out to be generic infrastructure or unrelated
+subsystems, not the answer. This is now a materially deeper
+investigation than the sprite z-ordering one was at a comparable
+stage -- that bug had a single, mechanically-findable call site right
+in the per-frame draw path; this one is buried in a much larger real
+resource-management subsystem with no single obvious next call to
+follow. All instrumentation reverted; `git diff --stat` clean;
+307/307 tests pass; no code change this round.

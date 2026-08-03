@@ -2882,6 +2882,20 @@ playable start-to-finish at full speed, standalone build.
       spans roughly 0x4dae0-0x4e460) rather than more "play further and
       watch" rounds. All instrumentation reverted; 307/307 tests pass;
       no code change. See PHASE8_LOG.md's "Sound, round two" section.
+- [ ] Sound: mapped the real `sound.ggz` loading pipeline via live
+      LR-capture (real functions `0x10739c`/`0x11bfd0`, 6 real call
+      sites into the bulk loader). Confirmed all 74 archive entries get
+      bulk-preloaded once at title-screen load, not per-play. Chased
+      the most audio-specific-looking lead (a one-shot single-resource
+      load at `0x1075a4`) all the way through its post-load dispatch;
+      both branches turned out unrelated to audio (real HID
+      button-callback registration and a generic cleanup routine,
+      confirmed via live-captured arguments, not guessed). No audio
+      playback trigger found yet -- this is a materially deeper
+      investigation than sprite z-ordering was at the same stage, with
+      no single obvious next call to follow. All instrumentation
+      reverted; 307/307 tests pass; no code change. See
+      PHASE8_LOG.md's "Sound, round three" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
