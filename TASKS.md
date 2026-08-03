@@ -2920,6 +2920,27 @@ playable start-to-finish at full speed, standalone build.
       real unit tests; 310/310 tests pass. Second real code change from
       this whole investigation. See PHASE8_LOG.md's "Sound, round four"
       section.
+- [x] Sound: fixed a real correctness gap in the round-four fix,
+      caught by re-reading its own disassembly evidence more carefully
+      rather than by a new bug report: the real `GetHandler`-
+      >`CreateInstance` call for `AEECLSID_MEDIA` runs once *per sound
+      activation* (it's inside the same function chased over two
+      earlier rounds for exactly this reason), not once overall --
+      so the previous round's single shared `IMedia` instance would
+      have every new sound silently stomp whatever was already
+      playing. Added `IShellHle::RegisterFactory` (checked before the
+      plain fixed-instance map in `CreateInstanceImpl`) and switched
+      `tools/game_probe.cpp` to register a factory closure over
+      `MediaHle::CreateMediaObject()` instead of one pre-created
+      object, so every real `CreateInstance` call gets its own fresh
+      `IMedia` instance. Re-verified with the same `pactl` proof as
+      the previous round, this time deliberately driving repeated
+      melee attacks to exercise many real sound activations in quick
+      succession -- stream stayed live and healthy throughout. Added
+      a unit test proving two factory-backed `CreateInstance` calls
+      return distinct objects. 311/311 tests pass. Third real code
+      change from this whole investigation. See PHASE8_LOG.md's
+      "Sound, round five" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

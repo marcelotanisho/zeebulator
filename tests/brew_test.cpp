@@ -202,6 +202,38 @@ TEST(IShellHle, GetHandlerResultChainsIntoCreateInstanceForTheRegisteredMediaObj
   EXPECT_EQ(cpu.GetMemory().Read32(kPpObjAddr), kMediaObj);
 }
 
+TEST(IShellHle, RegisterFactoryReturnsAFreshObjectFromEachCreateInstanceCall) {
+  // Real evidence this matters, not just defensive design (see
+  // RegisterFactory's own doc comment): the real GetHandler-
+  // >CreateInstance call pair for AEECLSID_MEDIA runs once per cached
+  // sound.ggz resource activated into a playback slot, i.e. once per
+  // sound -- tools/game_probe.cpp uses RegisterFactory rather than
+  // RegisterInstance for exactly this class so each sound gets its own
+  // IMedia instance instead of all of them sharing (and stomping) one.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  constexpr uint32_t kAudioMediaCls = 0x01005500;
+  uint32_t next_obj = 0x80003000;
+  shell_hle.RegisterFactory(kAudioMediaCls, [&next_obj]() {
+    uint32_t obj = next_obj;
+    next_obj += 4;
+    return obj;
+  });
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t create_instance_sentinel = cpu.GetMemory().Read32(kVtableAddr + 2 * 4);
+  constexpr uint32_t kPpObjAddr1 = 0x90000;
+  constexpr uint32_t kPpObjAddr2 = 0x90004;
+  EXPECT_EQ(hle.CallArmFunction(create_instance_sentinel, kObjectAddr, kAudioMediaCls, kPpObjAddr1),
+            0u);
+  EXPECT_EQ(hle.CallArmFunction(create_instance_sentinel, kObjectAddr, kAudioMediaCls, kPpObjAddr2),
+            0u);
+  uint32_t first = cpu.GetMemory().Read32(kPpObjAddr1);
+  uint32_t second = cpu.GetMemory().Read32(kPpObjAddr2);
+  EXPECT_NE(first, second);
+}
+
 TEST(IShellHle, GetDeviceInfoWritesRealScreenDimensions) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

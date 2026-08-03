@@ -31,6 +31,10 @@ void IShellHle::RegisterInstance(uint32_t cls_id, uint32_t object_ptr) {
   instances_[cls_id] = object_ptr;
 }
 
+void IShellHle::RegisterFactory(uint32_t cls_id, std::function<uint32_t()> factory) {
+  factories_[cls_id] = std::move(factory);
+}
+
 void IShellHle::RegisterResourceFile(const std::string& name, std::vector<uint8_t> data) {
   resource_files_.emplace(name, BarArchive::Parse(std::move(data)));
 }
@@ -39,6 +43,12 @@ void IShellHle::CreateInstanceImpl(IArmCore& core) {
   // int CreateInstance(IShell *po, AEECLSID cls, void **ppo)
   uint32_t cls_id = core.GetRegister(kR1);
   uint32_t ppobj = core.GetRegister(kR2);
+  auto factory_it = factories_.find(cls_id);
+  if (factory_it != factories_.end()) {
+    memory_.Write32(ppobj, factory_it->second());
+    core.SetRegister(kR0, 0);  // SUCCESS
+    return;
+  }
   auto it = instances_.find(cls_id);
   if (it == instances_.end()) {
     core.SetRegister(kR0, 1);  // EFAILED-ish: unknown/unimplemented class

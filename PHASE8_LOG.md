@@ -8027,3 +8027,46 @@ the real gap: not a missing codec, not a missing mixer, not a missing
 `IMedia` implementation (all of that was already real and correct from
 Phase 6) -- just one un-implemented vtable slot standing between a
 fully-working audio pipeline and real game code never finding it.
+
+## Sound, round five: one shared IMedia instance was already wrong -- fixed to a real per-call factory
+
+Immediate follow-up, prompted by re-reading the previous round's own
+disassembly more carefully: the real `GetHandler`->`CreateInstance`
+call pair for `AEECLSID_MEDIA` (`ddragonz.mod` 0x10a1e0) sits *inside*
+the same function that runs once per cached `sound.ggz` resource being
+activated into a playback slot (`0x11e964`-`0x11eabc`, chased over the
+last two rounds) -- i.e. real code creates a fresh `IMedia` instance
+**per sound**, not once overall. The previous round's fix registered a
+single shared instance (`shell_hle.RegisterInstance(0x01005500,
+media_hle.CreateMediaObject())`, called once at startup) -- functional
+enough to prove the pipeline worked end to end, but wrong for real
+concurrent use: every new sound would reuse the exact same underlying
+`Media` state as whatever was already playing, silently stomping it
+rather than layering (e.g. a hit sound cutting off background music,
+or two overlapping hits fighting over one playback slot).
+
+Fixed by adding a real factory mechanism to `IShellHle`
+(`RegisterFactory`, checked before the plain fixed-instance map in
+`CreateInstanceImpl`) and switching `tools/game_probe.cpp` to register
+`[&media_hle]() { return media_hle.CreateMediaObject(); }` instead of
+a single pre-created object -- now every real `CreateInstance` call
+for `AEECLSID_MEDIA` gets its own fresh `IMedia` object
+(`MediaHle::CreateMediaObject()` already bump-allocates a distinct
+object address per call, confirmed in `media_hle.cpp`; nothing else
+needed changing).
+
+Re-verified the same way as the previous round -- real, external,
+OS-level proof, not a screenshot: ran the fixed build through title ->
+menu -> cutscene -> walking -> repeated melee attacks (deliberately
+exercising many real sound activations in quick succession, the exact
+scenario the single-shared-instance version would have handled wrong)
+and checked `pactl list sink-inputs` before and after. Same live,
+unmuted `zeebulator_game_probe` stream at `s16le 2ch 22050Hz`
+throughout, process stayed healthy (no crash, no wandering) across the
+whole combat sequence.
+
+Added a real unit test (`RegisterFactoryReturnsAFreshObjectFromEach
+CreateInstanceCall`) proving two `CreateInstance` calls for the same
+class through a registered factory yield two distinct object
+addresses. 311/311 tests pass. Third real code change from this whole
+investigation.

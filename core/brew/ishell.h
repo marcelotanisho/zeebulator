@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -87,6 +88,20 @@ class IShellHle {
   // is expected to successfully create.
   void RegisterInstance(uint32_t cls_id, uint32_t object_ptr);
 
+  // Registers a factory ISHELL_CreateInstance should call fresh on
+  // every request for `cls_id`, instead of a single fixed object --
+  // for classes real code creates more than one live instance of.
+  // Real evidence this matters (TASKS.md/PHASE8_LOG.md Phase 8, the
+  // sound investigation): the real GetHandler->CreateInstance call
+  // pair for AEECLSID_MEDIA (`ddragonz.mod` 0x10a1e0) sits inside the
+  // same function that runs once per cached sound.ggz resource being
+  // activated into a playback slot -- i.e. once per sound, not once
+  // overall -- so a single shared IMedia instance would have each new
+  // sound silently stomp whatever the previous one was doing (same
+  // underlying playback state, reused). Takes priority over a plain
+  // RegisterInstance for the same `cls_id` if both are registered.
+  void RegisterFactory(uint32_t cls_id, std::function<uint32_t()> factory);
+
   // Registers a real `.bar` resource file's raw bytes under the real
   // filename `ISHELL_LoadResDataEx` requests it by (e.g.
   // `"resources.bar"`), so real slot 41 calls can serve real resource
@@ -142,6 +157,7 @@ class IShellHle {
   int screen_width_;
   int screen_height_;
   std::unordered_map<uint32_t, uint32_t> instances_;
+  std::unordered_map<uint32_t, std::function<uint32_t()>> factories_;
   std::vector<PendingTimer> timers_;
   std::unordered_map<std::string, BarArchive> resource_files_;
 };

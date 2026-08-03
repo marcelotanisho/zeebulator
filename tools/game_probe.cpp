@@ -1146,13 +1146,15 @@ int main(int argc, char** argv) {
   // Phase 8, the sound investigation): real code calls
   // `ISHELL_GetHandler(shell, 0x01005500, pszMIME)` -- see ishell.h's
   // own doc comment on GetHandlerImpl for the full derivation -- then
-  // immediately CreateInstance()s whatever that returns. A single
-  // shared IMedia instance (not a fresh one per CreateInstance call) is
-  // the simplest first step and matches the one real bundled sample
-  // (AEEMediaUtil.c) this project has seen, which stores one IMedia
-  // pointer on its app/doc object and reuses it -- revisit if real
-  // evidence ever shows this game wanting concurrent IMedia instances.
-  shell_hle.RegisterInstance(/*AEECLSID_MEDIA=*/0x01005500, media_hle.CreateMediaObject());
+  // immediately CreateInstance()s whatever that returns. A *factory*,
+  // not a single shared instance: further disassembly (`ddragonz.mod`
+  // 0x10a1e0, the real GetHandler+CreateInstance call site) sits inside
+  // the same function that runs once per cached sound.ggz resource
+  // activated into a playback slot -- i.e. real code expects a fresh
+  // IMedia per sound, not one shared instance every new sound would
+  // silently stomp.
+  shell_hle.RegisterFactory(/*AEECLSID_MEDIA=*/0x01005500,
+                             [&media_hle]() { return media_hle.CreateMediaObject(); });
 
   auto& mem = cpu.GetMemory();
   // A real stack, well past the loaded module -- ArmInterpreter::Reset()
