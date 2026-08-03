@@ -2941,6 +2941,33 @@ playable start-to-finish at full speed, standalone build.
       return distinct objects. 311/311 tests pass. Third real code
       change from this whole investigation. See PHASE8_LOG.md's
       "Sound, round five" section.
+- [ ] Sound: **still not actually audible -- but a real decode bug is
+      now fixed, and the remaining gap is narrower and understood.**
+      Prompted by the user asking "should I be hearing stuff?" --
+      exposed that this project's own `pactl`-only verification proves
+      a stream exists, not that it carries real audio. Recorded the
+      actual stream (`parecord --monitor-stream`) and confirmed via
+      Python analysis: complete digital silence, 0 non-zero samples.
+      Root cause found live: Double Dragon's real `AEEMediaData` uses
+      `clsData=1` (`MMD_BUFFER`, a raw malloc'd buffer), which
+      `SetMediaParmImpl` didn't support at all (only the filename
+      lookup shape); the real buffer is also gzip-compressed (live-
+      confirmed: real gzip magic + an embedded original filename in
+      the header). Fixed: `MMD_BUFFER` support + gunzip (reusing the
+      same zlib technique as `ModRuntime::DecompressGzipInPlaceImpl`)
+      + magic-byte-sniffed codec dispatch (no filename to use an
+      extension from). Live-reverified: the real buffer now decodes
+      as a correct ~47s MIDI track matching this project's own earlier
+      real `bgm_1_0.mid` measurement. **But `Play()` is still never
+      called** -- traced every `IMedia` vtable slot and found real code
+      always does `SetMediaParm` -> `RegisterNotify` -> `Stop()` and
+      nothing further, confirmed not stalled (the on-screen level
+      timer keeps ticking) across cutscene, 12s+ of passive waiting,
+      and real combat. Added 4 unit tests for the new `MMD_BUFFER`
+      path (including a real gzip-compressed scenario). 315/315 tests
+      pass; all instrumentation reverted. See PHASE8_LOG.md's "Sound,
+      round six" section for the full trace and the `parecord`
+      silence-detection methodology worth reusing.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

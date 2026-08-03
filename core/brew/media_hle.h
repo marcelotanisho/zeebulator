@@ -32,20 +32,37 @@ namespace zeebulator {
 // than one vtable slot per feature -- confirmed against real Qualcomm
 // sample source (ctsoundmgr.c, AEEMediaUtil.c, research-only). Only the
 // params real target-game usage actually needs are implemented:
-// MM_PARM_MEDIA_DATA (assign a virtual-filesystem-backed file -- decodes
-// it immediately, matching real IMedia's documented "SetMediaData puts
-// IMedia in Ready state" behavior), MM_PARM_PLAY_REPEAT (0 = loop
-// forever, matching Mixer's boolean loop, anything else = play once --
-// exact repeat counts > 1 aren't tracked), and MM_PARM_CHANNEL_SHARE/
-// MM_PARM_VOLUME (accepted and stored but not yet applied to playback --
-// a real, documented gap, not an oversight).
-// Codec is chosen by file extension (.wav -> ParseWav, .mid/.midi ->
-// ParseMidi + RenderMidiToPcm -- both produce the same WavAudio shape,
-// so everything downstream of decode is codec-agnostic) -- matches what
-// the real target game's assets actually are (see TASKS.md Phase 6).
-// IMA-ADPCM and MP3 are real BREW codecs but not needed by it, so
-// they're not implemented; ParseWav already rejects non-PCM `fmt ` tags
-// explicitly rather than mis-decoding them.
+// MM_PARM_MEDIA_DATA, MM_PARM_PLAY_REPEAT (0 = loop forever, matching
+// Mixer's boolean loop, anything else = play once -- exact repeat
+// counts > 1 aren't tracked), and MM_PARM_CHANNEL_SHARE/MM_PARM_VOLUME
+// (accepted and stored but not yet applied to playback -- a real,
+// documented gap, not an oversight).
+//
+// MM_PARM_MEDIA_DATA supports both real AEEMediaData shapes (TASKS.md/
+// PHASE8_LOG.md Phase 8, the sound investigation): MMD_FILE_NAME
+// (clsData=0, a virtual-filesystem-backed filename -- decodes
+// immediately, matching real IMedia's documented "SetMediaData puts
+// IMedia in Ready state" behavior; codec chosen by file extension) and
+// MMD_BUFFER (clsData=1, a raw in-memory buffer -- confirmed real and
+// necessary, not a guess: Double Dragon's own custom sound.ggz loader
+// reads raw bytes directly into a malloc'd buffer rather than through a
+// named file, and hands that buffer straight to SetMediaParm; codec
+// chosen by sniffing the decoded content's own magic bytes instead of
+// an extension, since a raw buffer has none). Real sound.ggz entries
+// are gzip-compressed (live-confirmed: a real buffer's first bytes are
+// the real gzip magic, with the original filename visible in the
+// header's FNAME field) -- gunzipped first when detected, same real
+// container convention `core/loader/ggz.cpp` and the runtime-helper
+// table's offset-0xdc slot already handle elsewhere in this project.
+// MMD_ISOURCE is not implemented (no real evidence this title needs
+// it).
+// Both MMD_FILE_NAME and MMD_BUFFER converge on the same WavAudio
+// decode shape (.wav -> ParseWav, .mid/.midi -> ParseMidi +
+// RenderMidiToPcm -- everything downstream of decode is codec-
+// agnostic) -- matches what the real target game's assets actually are
+// (see TASKS.md Phase 6). IMA-ADPCM and MP3 are real BREW codecs but
+// not needed by it, so they're not implemented; ParseWav already
+// rejects non-PCM `fmt ` tags explicitly rather than mis-decoding them.
 //
 // RegisterNotify stores the callback but does not fire it yet --
 // invoking it on real state transitions (MM_STATUS_START/DONE/ABORT)

@@ -8070,3 +8070,67 @@ CreateInstanceCall`) proving two `CreateInstance` calls for the same
 class through a registered factory yield two distinct object
 addresses. 311/311 tests pass. Third real code change from this whole
 investigation.
+
+## Sound, round six: real decode bug found and fixed (gzip'd MMD_BUFFER), but still not actually audible -- Play() is never called
+
+Directly prompted by the user asking "should I be hearing stuff?" after
+round five's `pactl`-only verification. That question exposed a real
+gap in this project's own verification: a live, unmuted, correctly-
+formatted PulseAudio/PipeWire sink input proves the *pipeline* exists,
+not that real audible samples are flowing through it. Recorded the
+actual stream with `parecord --monitor-stream=<id>` during a real
+title -> menu -> cutscene -> combat run and analyzed the WAV in
+Python: **376,832 frames, 0 non-zero samples -- complete digital
+silence**, confirming this is a real bug, not a routing/hardware/
+Bluetooth-headphone issue (the sink was correctly routed and unmuted).
+
+**Found a real, concrete decode bug.** Temporary instrumentation in
+`MediaHle::SetMediaParmImpl` (reverted after use) live-captured the
+real `AEEMediaData` Double Dragon actually passes:
+`clsData=0x00000001` (not `MMD_FILE_NAME`, which is the only shape
+`SetMediaParmImpl` handled -- confirmed real BREW `MMD_BUFFER`), with
+a real malloc'd buffer pointer and a real size. Dumped the buffer's
+first bytes live: `1f 8b 08 08 ...` -- a genuine gzip stream (magic +
+CM=deflate + FLG=FNAME set), with the *original filename* visible
+right in the header (`bgm_1_...`). Real sound.ggz entries are
+gzip-compressed, and `SetMediaParmImpl` was never gunzipping them --
+it only implemented the filename-lookup shape, explicitly rejecting
+`MMD_BUFFER` as "not supported yet" (a real, previously-documented,
+now-closed gap).
+
+**Fixed for real** (`core/brew/media_hle.cpp`/`.h`): added `MMD_BUFFER`
+support -- reads the raw bytes directly from emulated memory, gunzips
+them if they start with the real gzip magic (`Gunzip`, same real
+zlib/`inflateInit2(windowBits=15+16)` technique already used by
+`ModRuntime::DecompressGzipInPlaceImpl`), then dispatches to WAV or
+MIDI decode by sniffing the *decompressed* content's own magic bytes
+(`RIFF`/`MThd`) rather than a filename extension, since a raw buffer
+has none. Live-reverified after the fix: the same real buffer now
+decompresses cleanly and decodes as a real, correctly-shaped MIDI
+track (1,038,683 samples at 22050Hz mono, ~47s -- matching this
+project's own earlier real `bgm_1_0.mid` measurement from Phase 6
+almost exactly).
+
+**But it's still not actually audible, and this round found why --
+`Play()` is never called.** Extended the temporary instrumentation to
+every `IMedia` vtable slot and re-ran through cutscene, extended
+passive waiting (12s+), and combat. Real observed sequence on every
+prepared media object: `SetMediaParm` (now succeeding) ->
+`RegisterNotify` -> **`Stop()`** -- and nothing else, ever, for the
+rest of the run (confirmed the run wasn't stalled: the on-screen level
+timer visibly ticked down the whole time). Real code explicitly stops
+each prepared resource right after preparing it, and whatever later
+step is supposed to call `Play()` on it was never reached in any test
+window tried this round, including deep into real combat.
+
+**Honest status for the user**: the audio *decode* pipeline is now
+provably correct end to end for real, gzip-compressed Double Dragon
+assets (verified via live decode of real data, not synthetic
+fixtures) -- a genuine, real bug fix. But sound is still not audible,
+because the real trigger for `Play()` has not been found. This is a
+different, and now the *last remaining*, piece of the puzzle. Added 4
+real unit tests covering the new `MMD_BUFFER` path, including the
+real gzip-compressed scenario. 315/315 tests pass. All temporary
+instrumentation (including a `parecord`-based silence-detection
+methodology worth remembering: `pactl` proves plumbing, not sound)
+reverted; `git diff --stat` clean.

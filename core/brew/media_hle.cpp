@@ -1,5 +1,7 @@
 #include "core/brew/media_hle.h"
 
+#include <zlib.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -22,6 +24,67 @@ constexpr int kParmMediaData = 1;
 constexpr int kParmChannelShare = 16;
 
 constexpr uint32_t kMmdFileName = 0;
+// Real value confirmed live (TASKS.md/PHASE8_LOG.md Phase 8, the sound
+// investigation): Double Dragon's own custom sound.ggz loader reads raw
+// bytes directly into a malloc'd buffer (never through a named file the
+// VFS could resolve) and hands SetMediaParm a real AEEMediaData with
+// clsData=1, matching real BREW's MMD_BUFFER.
+constexpr uint32_t kMmdBuffer = 1;
+
+// Real evidence (same investigation): a live-captured MMD_BUFFER's first
+// bytes are `1f 8b 08 08 ...` -- a genuine gzip stream (magic + CM=
+// deflate + FLG=FNAME set), with the original filename (e.g.
+// "bgm_1_...") visible right in the header -- Double Dragon's own
+// sound.ggz entries are stored gzip-compressed, same real container
+// convention this project's own loader (core/loader/ggz.cpp) and the
+// runtime-helper table's offset-0xdc slot (ModRuntime::
+// DecompressGzipInPlaceImpl) already handle elsewhere. Real gzip
+// streams don't declare their own decompressed length up front, so
+// this grows the output buffer as needed rather than assuming a fixed
+// size, same approach as that other real gzip consumer.
+std::optional<std::vector<uint8_t>> Gunzip(const std::vector<uint8_t>& compressed) {
+  z_stream strm{};
+  if (inflateInit2(&strm, 15 + 16) != Z_OK) return std::nullopt;
+  std::vector<uint8_t> out(std::max<size_t>(compressed.size() * 4, 4096));
+  strm.next_in = const_cast<Bytef*>(compressed.data());
+  strm.avail_in = static_cast<uInt>(compressed.size());
+  strm.next_out = out.data();
+  strm.avail_out = static_cast<uInt>(out.size());
+  int ret;
+  do {
+    ret = inflate(&strm, Z_NO_FLUSH);
+    if (ret != Z_OK && ret != Z_STREAM_END) {
+      inflateEnd(&strm);
+      return std::nullopt;
+    }
+    if (strm.avail_out == 0 && ret != Z_STREAM_END) {
+      size_t old_size = out.size();
+      out.resize(old_size * 2);
+      strm.next_out = out.data() + old_size;
+      strm.avail_out = static_cast<uInt>(out.size() - old_size);
+    }
+  } while (ret != Z_STREAM_END);
+  size_t produced = out.size() - strm.avail_out;
+  inflateEnd(&strm);
+  out.resize(produced);
+  return out;
+}
+
+// Decodes an in-memory buffer that has no filename/extension to dispatch
+// on (unlike DecodeAudioFile) -- sniffs the real container magic bytes
+// instead: `RIFF` for WAV, `MThd` for Standard MIDI. Assumes the caller
+// has already gunzipped it if needed.
+std::optional<WavAudio> DecodeAudioBuffer(const std::vector<uint8_t>& data, int mix_sample_rate) {
+  if (data.size() >= 4 && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F') {
+    return ParseWav(data.data(), data.size());
+  }
+  if (data.size() >= 4 && data[0] == 'M' && data[1] == 'T' && data[2] == 'h' && data[3] == 'd') {
+    auto midi = ParseMidi(data.data(), data.size());
+    if (!midi) return std::nullopt;
+    return RenderMidiToPcm(*midi, mix_sample_rate);
+  }
+  return std::nullopt;
+}
 
 std::string ReadCString(Memory& memory, uint32_t addr) {
   std::string s;
@@ -96,17 +159,35 @@ void MediaHle::SetMediaParmImpl(IArmCore& core) {
     // p1 -> AEEMediaData { AEECLSID clsData; void *pData; uint32 dwSize; }
     uint32_t cls_data = memory_.Read32(p1 + 0);
     uint32_t data_ptr = memory_.Read32(p1 + 4);
-    if (cls_data != kMmdFileName) {
-      core.SetRegister(kR0, 1);  // MMD_BUFFER/MMD_ISOURCE not supported yet
+    uint32_t data_size = memory_.Read32(p1 + 8);
+
+    std::optional<WavAudio> decoded;
+    if (cls_data == kMmdFileName) {
+      std::string name = ReadCString(memory_, data_ptr);
+      const std::vector<uint8_t>* file_data = vfs_.Find(name);
+      if (!file_data) {
+        core.SetRegister(kR0, 1);
+        return;
+      }
+      decoded = DecodeAudioFile(name, *file_data, mixer_.OutputSampleRate());
+    } else if (cls_data == kMmdBuffer) {
+      std::vector<uint8_t> raw(data_size);
+      for (uint32_t i = 0; i < data_size; ++i) raw[i] = memory_.Read8(data_ptr + i);
+      // Real sound.ggz entries are gzip-compressed (see kMmdBuffer's own
+      // doc comment) -- gunzip first, matching the real magic bytes,
+      // then dispatch on the decompressed content's own container magic.
+      constexpr uint8_t kGzipMagic[2] = {0x1f, 0x8b};
+      if (raw.size() >= 2 && raw[0] == kGzipMagic[0] && raw[1] == kGzipMagic[1]) {
+        if (auto decompressed = Gunzip(raw)) {
+          decoded = DecodeAudioBuffer(*decompressed, mixer_.OutputSampleRate());
+        }
+      } else {
+        decoded = DecodeAudioBuffer(raw, mixer_.OutputSampleRate());
+      }
+    } else {
+      core.SetRegister(kR0, 1);  // MMD_ISOURCE not supported yet
       return;
     }
-    std::string name = ReadCString(memory_, data_ptr);
-    const std::vector<uint8_t>* file_data = vfs_.Find(name);
-    if (!file_data) {
-      core.SetRegister(kR0, 1);
-      return;
-    }
-    auto decoded = DecodeAudioFile(name, *file_data, mixer_.OutputSampleRate());
     if (!decoded) {
       core.SetRegister(kR0, 1);  // corrupt, or a codec we don't support yet (e.g. IMA-ADPCM/MP3)
       return;

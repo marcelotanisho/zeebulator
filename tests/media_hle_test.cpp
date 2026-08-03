@@ -1,5 +1,7 @@
 #include "core/brew/media_hle.h"
 
+#include <zlib.h>
+
 #include <gtest/gtest.h>
 
 #include "core/audio/mixer.h"
@@ -24,6 +26,7 @@ constexpr uint32_t kScratch = 0x00090000;
 constexpr uint32_t kParmMediaData = 1;
 constexpr uint32_t kParmPlayRepeat = 11;
 constexpr uint32_t kMmdFileName = 0;
+constexpr uint32_t kMmdBuffer = 1;
 
 void AppendU32LE(std::vector<uint8_t>& out, uint32_t v) {
   out.push_back(static_cast<uint8_t>(v));
@@ -107,6 +110,26 @@ std::vector<uint8_t> BuildOneNoteMidi() {
   return out;
 }
 
+// Real gzip compression -- see core/brew/media_hle.cpp's own Gunzip
+// (and ModRuntime::DecompressGzipInPlaceImpl, the other real gzip
+// consumer this project already has) for why real sound.ggz entries
+// need this: Double Dragon's own custom loader hands SetMediaParm raw,
+// still-gzip-compressed bytes, not a decoded container.
+std::vector<uint8_t> Gzip(const std::vector<uint8_t>& data) {
+  std::vector<uint8_t> out(data.size() + 128);
+  z_stream strm{};
+  EXPECT_EQ(deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY),
+            Z_OK);
+  strm.next_in = const_cast<Bytef*>(data.data());
+  strm.avail_in = static_cast<uInt>(data.size());
+  strm.next_out = out.data();
+  strm.avail_out = static_cast<uInt>(out.size());
+  EXPECT_EQ(deflate(&strm, Z_FINISH), Z_STREAM_END);
+  out.resize(out.size() - strm.avail_out);
+  deflateEnd(&strm);
+  return out;
+}
+
 void WriteCString(zeebulator::Memory& mem, uint32_t addr, const std::string& s) {
   for (size_t i = 0; i < s.size(); ++i) {
     mem.Write8(addr + static_cast<uint32_t>(i), static_cast<uint8_t>(s[i]));
@@ -138,6 +161,22 @@ struct Fixture {
     cpu.GetMemory().Write32(md_addr + 0, kMmdFileName);
     cpu.GetMemory().Write32(md_addr + 4, name_addr);
     cpu.GetMemory().Write32(md_addr + 8, 0);
+    return md_addr;
+  }
+
+  // Writes an AEEMediaData{clsData=MMD_BUFFER, pData=<raw bytes>,
+  // dwSize=data.size()} struct at kScratch and returns its address --
+  // the real shape Double Dragon's own custom sound.ggz loader uses
+  // (TASKS.md/PHASE8_LOG.md Phase 8, the sound investigation).
+  uint32_t WriteMediaDataBuffer(const std::vector<uint8_t>& data) {
+    uint32_t data_addr = kScratch + 0x100;
+    for (size_t i = 0; i < data.size(); ++i) {
+      cpu.GetMemory().Write8(data_addr + static_cast<uint32_t>(i), data[i]);
+    }
+    uint32_t md_addr = kScratch;
+    cpu.GetMemory().Write32(md_addr + 0, kMmdBuffer);
+    cpu.GetMemory().Write32(md_addr + 4, data_addr);
+    cpu.GetMemory().Write32(md_addr + 8, static_cast<uint32_t>(data.size()));
     return md_addr;
   }
 };
@@ -202,6 +241,65 @@ TEST(MediaHle, SetMediaDataDispatchesMidFilesToMidiSynthAndPlaysThem) {
 
   uint32_t ms = f.hle.CallArmFunction(f.Slot(kGetTotalTime), obj);
   EXPECT_NEAR(ms, 500u, 50u) << "one quarter note at the default 120 BPM tempo is ~500ms";
+}
+
+TEST(MediaHle, SetMediaDataWithMmdBufferDecodesAnUncompressedRawWavBuffer) {
+  // Real evidence (TASKS.md/PHASE8_LOG.md Phase 8, the sound
+  // investigation): Double Dragon's own custom sound.ggz loader hands
+  // SetMediaParm a raw in-memory buffer (clsData=1/MMD_BUFFER), not a
+  // filename -- confirmed live, not guessed.
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaDataBuffer(BuildMonoPcmWav(22050, {100, 200, 300, 400}));
+  uint32_t result = f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+  EXPECT_EQ(result, 0u);
+
+  uint32_t pb_addr = kScratch + 0x200;
+  uint32_t state = f.hle.CallArmFunction(f.Slot(kGetState), obj, pb_addr);
+  EXPECT_EQ(state, 2u) << "MM_STATE_READY";
+}
+
+TEST(MediaHle, SetMediaDataWithMmdBufferDecodesAnUncompressedRawMidiBuffer) {
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaDataBuffer(BuildOneNoteMidi());
+  uint32_t result = f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+  ASSERT_EQ(result, 0u) << "a raw MIDI buffer should be sniffed by its MThd magic, not rejected";
+
+  uint32_t ms = f.hle.CallArmFunction(f.Slot(kGetTotalTime), obj);
+  EXPECT_NEAR(ms, 500u, 50u);
+}
+
+TEST(MediaHle, SetMediaDataWithMmdBufferDecompressesARealGzipCompressedBuffer) {
+  // The real, live-confirmed shape: Double Dragon's own sound.ggz
+  // entries are gzip-compressed (a real buffer's first bytes are the
+  // real gzip magic, with the original filename visible in the
+  // header's FNAME field) -- this is the scenario that actually
+  // matters for the real game, not just a synthetic raw buffer.
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaDataBuffer(Gzip(BuildOneNoteMidi()));
+  uint32_t result = f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+  ASSERT_EQ(result, 0u) << "a gzip-compressed MIDI buffer should decompress then decode, not fail";
+
+  uint32_t play_result = f.hle.CallArmFunction(f.Slot(kPlay), obj);
+  EXPECT_EQ(play_result, 0u);
+  uint32_t ms = f.hle.CallArmFunction(f.Slot(kGetTotalTime), obj);
+  EXPECT_NEAR(ms, 500u, 50u);
+}
+
+TEST(MediaHle, SetMediaDataWithAnUnsupportedClsDataFails) {
+  // MMD_ISOURCE (2) -- no real evidence this title needs it, so it's
+  // correctly rejected rather than silently misinterpreted as a raw
+  // buffer or a filename.
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md_addr = kScratch;
+  f.cpu.GetMemory().Write32(md_addr + 0, 2);
+  f.cpu.GetMemory().Write32(md_addr + 4, 0);
+  f.cpu.GetMemory().Write32(md_addr + 8, 0);
+  uint32_t result = f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md_addr, 0);
+  EXPECT_NE(result, 0u);
 }
 
 TEST(MediaHle, PlayWithoutMediaDataFails) {
