@@ -8202,3 +8202,55 @@ any future Double Dragon investigation), and found a genuine, specific
 link from the cutscene script to the audio pipeline. All temporary
 instrumentation reverted; `git diff --stat` clean; 315/315 tests pass;
 no code change this round.
+
+## Sound, round eight: found a real event-triggered script dispatcher; a full real session cycle still never calls Play()
+
+Continued straight from round seven. Disassembled `0x123630` (called
+directly from the "phase 2" per-tick state, in the same numeric
+neighborhood as the already-identified audio helpers): a real
+**event-triggered script dispatcher** -- checks a per-context "pending
+event" slot (`context+0x3700+10`=event ID, `+12`=claimed flag,
+`+14`=priority gate), and if a valid pending event exists, claims it
+and searches a real script-record table (`*(context+0x36f8)`, a
+linked list terminated by `-1`) for a record matching that ID, then
+invokes the same 10-opcode script interpreter (`0x122684`) found last
+round on the matching record. This is a real "fire event N" mechanism
+-- something else (not yet found) posts an event ID into that pending
+slot to request a scripted sequence run.
+
+**Final live test this round**: a simple, low-noise watch on
+`MediaHle::PlayImpl` alone (reverted after use), run across a full,
+mostly-natural real session -- title screen, main menu, cutscene,
+sustained real combat (multiple full rounds of movement + attacks),
+then continued unscripted play. Mid-session, the game genuinely
+progressed into new, previously-unreached territory: a real loading
+screen (`"CARREGANDO"`, Portuguese for "loading"), then cycled back to
+the title screen (a different real title-screen prompt than the
+initial boot -- `"APERTE O BOTÃO HOME"` rather than the boot-time
+one), confirming this was a real, novel state transition, not a stall
+or a repeat. **`Play()` was never called, not once, across this
+entire real cycle.**
+
+**Where this leaves the investigation**: the audio *decode* pipeline
+(fixed in round six) is proven correct against real data. The real
+*trigger* mechanism has been mapped in extraordinary depth -- a real
+per-tick screen-state machine, a real 10-opcode cutscene script
+interpreter, a real event-queue dispatcher, a real concrete write into
+the resource-activation loop's own polled field -- all confirmed live,
+none of it guessed. But `Play()` itself was not observed firing across
+title, menu, cutscene, combat, a genuine level-load transition, and a
+full return to title. Two real possibilities remain, both unconfirmed:
+(a) this specific demo/build genuinely never reaches a state that
+calls `Play()` within what this project's automated `send_key.py`-
+driven input can trigger (real sustained/precisely-timed human input,
+or a menu path never tried -- e.g. "BATALHA 2 JOGADORES", "OPÇÕES" --
+might behave differently), or (b) `Play()` is gated behind still-
+unidentified per-slot state (the `context+0x3700+10/12/14` event
+fields, or another script opcode among the 10 not yet fully manually
+played back) that this round's testing didn't happen to satisfy.
+Recommend a real human driving real input interactively as the next
+concrete step, rather than another round of automated scripted input,
+since this round's evidence suggests the automated input pattern
+itself may not be exercising whatever real condition `Play()` needs.
+All instrumentation reverted; `git diff --stat` clean; 315/315 tests
+pass; no code change this round.

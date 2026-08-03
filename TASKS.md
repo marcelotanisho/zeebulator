@@ -2994,6 +2994,24 @@ playable start-to-finish at full speed, standalone build.
       identified. All instrumentation reverted; 315/315 tests pass; no
       code change this round. See PHASE8_LOG.md's "Sound, round seven"
       section.
+- [ ] Sound: found a real event-triggered script dispatcher
+      (`0x123630`) that fires a scripted sequence by ID via the same
+      10-opcode interpreter -- a real, general "run event N" mechanism
+      whatever posts the pending event ID (not yet found) can use. Ran
+      a full, mostly-natural real session (title, menu, cutscene,
+      sustained combat, then unscripted play) with a simple `Play()`-
+      only watch: the game genuinely progressed into new territory (a
+      real `"CARREGANDO"` loading screen, then back to a *different*
+      title-screen prompt, confirming real forward progress, not a
+      stall) -- and `Play()` was never called, not once, across the
+      entire cycle. **Recommendation for whoever picks this up next**:
+      try real interactive human input (not `send_key.py`-scripted)
+      before further static/live tracing -- this round's evidence
+      suggests the automated input pattern itself may not be
+      exercising whatever real condition `Play()` needs, e.g. an
+      untried menu path (2-player battle, options) or precise real
+      timing. All instrumentation reverted; 315/315 tests pass; no
+      code change. See PHASE8_LOG.md's "Sound, round eight" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
