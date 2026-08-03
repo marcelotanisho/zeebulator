@@ -2866,6 +2866,22 @@ playable start-to-finish at full speed, standalone build.
       This is the first actual code change to land from this entire
       investigation. See PHASE8_LOG.md's "Found and fixed the real root
       cause" section.
+- [ ] Sound: still not confirmed reachable in real Double Dragon code,
+      even with real input now driving well past the title screen.
+      `MediaHle` itself is real, tested, and wired for output, but
+      never registered under any `ClsId` (found in an earlier round);
+      this round drove real input through title, menu, cutscene,
+      walking, melee combat, and taking damage while logging every
+      `ClsId` real code requests and every call into an already-
+      successful generic scaffold object -- same six `ClsId`s as the
+      idle-title-screen round, no new ones, and no audio-shaped
+      scaffold calls. Also confirmed (again) no bundled real SDK header
+      defines `AEECLSID_MEDIA`'s actual numeric value. Real next lead:
+      manually walk `ddragonz.mod`'s own resource-descriptor table
+      (`sound.ggz` string refs at file offsets 0x4dae8/0x4e1a8, table
+      spans roughly 0x4dae0-0x4e460) rather than more "play further and
+      watch" rounds. All instrumentation reverted; 307/307 tests pass;
+      no code change. See PHASE8_LOG.md's "Sound, round two" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

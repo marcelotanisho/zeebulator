@@ -7835,3 +7835,64 @@ used to find this (PC watches at `0x11f868`/`0x11f884`/`0x11f888`/
 checkout --`; the real fix itself (`core/brew/mod_runtime.cpp`,
 `core/brew/mod_runtime.h`, `tests/mod_runtime_test.cpp`) is a genuine,
 committed code change -- the first of this entire investigation.
+
+## Sound, round two: still no real AEECLSID_MEDIA call, even through real combat and damage
+
+Direct follow-up to "`MediaHle` is real and wired, but never
+registered" above, now that real keyboard-driven input can reach far
+past that round's 100-second-idle-title-screen ceiling: title -> menu
+-> cutscene -> real walking -> real melee combat (score visibly
+climbing past 0, e.g. to 4600 in one run) -> **taking real damage**
+(lives visibly dropping from 2 to 1 in another run). Two pieces of
+temporary instrumentation, both fully reverted after use:
+
+1. `[DBGCLS]` in `IShellHle::CreateInstanceImpl` -- logs every
+   `ClsId` real code requests and fails to get, same technique as the
+   earlier round but now exercised across all of the above states, not
+   just an idle title screen. Result: **the exact same six `ClsId`s as
+   before, and no others** (`0x01001002`, `0x0102f679`, `0x01030852`,
+   `0x0102f681`, `0x0100550a`, `0x01005501`) -- the last two now firing
+   dozens of times (the self-rearming download/catalog-progress timer
+   already identified, confirmed still unrelated to audio by its own
+   call shape). Zero new `ClsId`s appeared despite real combat and
+   real damage happening on-screen.
+2. `[DBGSTUB]` in `scaffold_object.cpp`'s shared generic `Stub` --
+   logs `this`/`LR`/`r1`/`r2` every time real code calls an
+   un-overridden slot on any already-*successfully*-created scaffold
+   object, to check whether sound routes through one of the objects
+   that already succeeds rather than a fresh, still-failing
+   `CreateInstance`. Only 4 hits total, all during early graphics
+   startup (`this=0x8000d000`/`0x80019000`/`0x8000f000`, matching the
+   already-identified `0x01002001`/`AEECLSID_DIB`-ish/device-bitmap
+   scaffolds from Phase 5/8's graphics work) -- none during or after
+   combat, none audio-shaped.
+
+Also checked whether any bundled real SDK header defines
+`AEECLSID_MEDIA`'s actual numeric value directly, to shortcut the live
+search: confirmed (again) it doesn't -- `AEEMediaUtil.c` and
+`AEEShell.h`/`AEEIShell.h` only ever *use* the symbolic name via
+`ISHELL_GetHandler`/`ISHELL_CreateInstance`, never `#define` it, and a
+direct search for this project's own already-confirmed real numeric
+IDs (e.g. `0x01001001` for `AEECLSID_DISPLAY`) turns up nowhere in the
+bundled headers either -- consistent with every numeric `ClsId` this
+project has ever used coming from live evidence, never a header, and
+confirming there's no shortcut available here.
+
+**Conclusion**: within every real code path reached so far -- title,
+menu, cutscene, movement, melee combat, taking damage -- Double
+Dragon's Zeebo port genuinely never requests `IMedia` or calls into
+any already-successful generic object in an audio-shaped way. Two real
+possibilities remain open, neither confirmed: (a) the real trigger is
+gated behind a real game state not yet reached (an actual KO, a level
+transition, a boss encounter, a game-over screen), or (b) this
+specific title's Zeebo port uses a real vendor-specific audio path
+that isn't standard `AEECLSID_MEDIA` at all -- the same relationship
+`AEECLSID_GL`/`AEECLSID_EGL` (Zeebo-specific extensions) already have
+to stock BREW `IDisplay`. The real `ddragonz.mod` resource-descriptor
+table flagged in the previous round (`sound.ggz` string references at
+file offsets `0x4dae8`/`0x4e1a8`, inside a large fixed-stride
+per-asset table spanning roughly `0x4dae0`-`0x4e460`) is still the most
+concrete unexplored lead -- manually walking its real field layout,
+not another round of "play further and watch," is probably what
+resolves this. All instrumentation reverted; `git diff --stat` clean;
+307/307 tests pass; no code change this round.
