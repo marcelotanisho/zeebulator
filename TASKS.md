@@ -2784,6 +2784,36 @@ playable start-to-finish at full speed, standalone build.
       assumed. All instrumentation reverted; 304/304 tests pass; no
       code change. See PHASE8_LOG.md's "rigorous, correlated
       re-verification" section.
+- [ ] Sprite z-ordering, checked for a general (non-Double-Dragon)
+      emulation cause + corrected another self-made error: no
+      documented report of this issue found anywhere (Infuse's own
+      GitHub issues, general web search, two contemporary Zeebo
+      reviews praising the graphics with no layering complaints --
+      indirect evidence real hardware doesn't show this). Checked
+      `IShellHle::Tick()`'s timer-expiry ordering as a possible
+      general engine-level cause; likely not it, since Double Dragon
+      appears to use one recurring master timer. Then caught a real
+      self-contradiction from last round: live-captured the actual
+      calling instruction (not just LR) before a follower's `Update()`
+      and got the exact real `bx` inside `0x109620`'s own loop body,
+      contradicting last round's "array never contains followers"
+      claim. A clean, single-run, self-consistent capture (not
+      compared across separate process launches) confirmed the array
+      genuinely does hold all real entities -- just not from the very
+      start; last round's dump had simply caught an earlier moment.
+      There is no separate leader-driven linked list; `0x109620`
+      iterating this one shared 8-slot array is the whole mechanism.
+      **Real methodology caveat surfaced**: this project's frozen-
+      frame testing snapshots a fixed *simulated* millisecond offset,
+      an internal convenience checkpoint with no counterpart in real
+      play or in how Infuse's own timing settles -- if entity
+      spawn/eviction is still in progress exactly then, the snapshot
+      could catch a genuinely transient state, a real and general
+      (not title-specific) source of divergence worth treating as a
+      live caveat on this whole investigation rather than a confirmed
+      bug. Not confirmed either way. All instrumentation reverted;
+      304/304 tests pass; no code change. See PHASE8_LOG.md's
+      "pursued a general-emulation-bug hypothesis" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

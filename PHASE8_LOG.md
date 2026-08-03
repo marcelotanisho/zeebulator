@@ -7632,3 +7632,65 @@ All live instrumentation from this round (`arm_interpreter.cpp`'s
 correlated entry/exit/write probes, `tools/game_probe.cpp`'s
 temporarily re-added deterministic freeze) fully reverted -- `git
 diff --stat` clean, 304/304 tests pass. No code change landed.
+
+## Sprite z-ordering: pursued a general-emulation-bug hypothesis, corrected another self-made error, landed on a timing-sensitivity finding
+
+User pushed on two fronts this round: (1) checked whether this is a
+documented issue anywhere (Infuse's own GitHub issues, general web
+search, two contemporary Zeebo-version reviews) -- found nothing, and
+notably both reviews describe the graphics positively with no
+mention of sprite-layering problems, which is real (if indirect)
+evidence this is not authentic ROM/hardware behavior, consistent with
+the real-hardware footage and Infuse's own rendering. (2) Asked
+whether the real cause might not be Double-Dragon-specific at all,
+but a general ordering/timing issue in this project's own emulation
+infrastructure.
+
+**Investigated the general-emulation angle directly.** Checked
+`IShellHle::Tick()`'s timer-expiry ordering (`core/brew/ishell.cpp`):
+expired timers fire in `timers_`' vector order (registration order),
+not sorted by anything else. Real code only appears to use one
+recurring master timer for Double Dragon's own tick (per much
+earlier PHASE8_LOG evidence), so this specific mechanism likely isn't
+what's driving per-character update order -- flagged as a real,
+general emulation detail worth keeping in mind for other titles, but
+not confirmed as this bug's cause.
+
+**Then made, and caught, another real self-correction.** Live-
+captured the actual instruction executed immediately before entering
+a "follower" entity's `Update()` (`0x1165d4`) for all five followers:
+`prev_pc=0x1096?c` every time -- the exact real `bx r1` inside
+`0x109620`'s own loop body, contradicting last round's "the array
+never contains followers" conclusion. Re-ran a single, clean,
+self-consistent capture (both facts logged together in the same
+process run, not compared across separate launches) and found the
+array (`0x80337c44`) genuinely does hold multiple/all eight real
+entities -- just not all at once from the very start. Last round's
+entry/exit dump had simply caught an earlier moment, before the five
+followers had been spawned into the array yet. There is no separate
+"leader-driven linked list" mechanism after all; `0x109620` iterating
+this one real shared 8-slot array, in fixed slot order, calling each
+occupant's real `Update()` (which internally re-registers into the
+render list via `0x11f6c4`), is the whole real mechanism.
+
+**Why this matters for the user's hypothesis**: the array's contents
+visibly change over the run's duration as entities get spawned in
+(confirmed by the same capture showing mostly-null early, then
+progressively more real entity pointers later). This project's
+`SIGUSR1`/timed-freeze testing methodology captures a snapshot at a
+fixed *simulated* millisecond offset after the second real `Return`
+keydown -- a purely internal, engineering-convenience checkpoint with
+no real counterpart in how a human plays on real hardware or how
+Infuse's own timing naturally settles. If entity spawn/eviction is
+still slightly in-progress at the exact moment this project's own
+freeze fires, the snapshot could easily catch a genuinely different,
+transient mid-population state than what a real, continuously-running
+system would show once things settle -- a real, plausible, and
+importantly *general* (not Double-Dragon-specific) source of
+divergence between this project's captures and any other real or
+emulated system's, worth treating as a live methodology caveat for
+this investigation rather than a confirmed engine bug.
+
+Not yet confirmed either way. All live instrumentation from this
+round reverted -- `git diff --stat` clean, 304/304 tests pass. No
+code change landed.
