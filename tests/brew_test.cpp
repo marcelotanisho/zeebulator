@@ -148,6 +148,60 @@ TEST(IShellHle, CreateInstanceReturnsARegisteredInstance) {
   EXPECT_EQ(cpu.GetMemory().Read32(kPpObjAddr), kDisplayObj);
 }
 
+TEST(IShellHle, GetHandlerReturnsTheClassItselfForTheRealAudioMediaClass) {
+  // AEECLSID GetHandler(IShell *ps, AEECLSID cls, const char *pszMIME) --
+  // slot 32. Real evidence (TASKS.md/PHASE8_LOG.md Phase 8, the sound
+  // investigation): live-captured Double Dragon calling
+  // ISHELL_GetHandler(shell, 0x01005500, pszMIME) and immediately
+  // feeding the return value into ISHELL_CreateInstance -- see
+  // ishell.h's own doc comment for the full derivation.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 32 * 4);
+  constexpr uint32_t kAudioMediaCls = 0x01005500;
+  constexpr uint32_t kMimeAddr = 0x90000;
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, kAudioMediaCls, kMimeAddr), kAudioMediaCls);
+}
+
+TEST(IShellHle, GetHandlerReturnsZeroForAnUnrecognizedClass) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 32 * 4);
+  constexpr uint32_t kMimeAddr = 0x90000;
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, /*cls=*/0x1234, kMimeAddr), 0u);
+}
+
+TEST(IShellHle, GetHandlerResultChainsIntoCreateInstanceForTheRegisteredMediaObject) {
+  // The real end-to-end shape (see ishell.h's doc comment): real code
+  // calls GetHandler, then immediately CreateInstance()s whatever it
+  // returned. Confirms the two slots compose correctly for the real
+  // AEECLSID_MEDIA value, exactly like tools/game_probe.cpp wires
+  // MediaHle's object in.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  constexpr uint32_t kAudioMediaCls = 0x01005500;
+  constexpr uint32_t kMediaObj = 0x80003000;
+  shell_hle.RegisterInstance(kAudioMediaCls, kMediaObj);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t get_handler_sentinel = cpu.GetMemory().Read32(kVtableAddr + 32 * 4);
+  constexpr uint32_t kMimeAddr = 0x90000;
+  uint32_t cls =
+      hle.CallArmFunction(get_handler_sentinel, kObjectAddr, kAudioMediaCls, kMimeAddr);
+
+  uint32_t create_instance_sentinel = cpu.GetMemory().Read32(kVtableAddr + 2 * 4);
+  constexpr uint32_t kPpObjAddr = 0x90004;
+  EXPECT_EQ(hle.CallArmFunction(create_instance_sentinel, kObjectAddr, cls, kPpObjAddr), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read32(kPpObjAddr), kMediaObj);
+}
+
 TEST(IShellHle, GetDeviceInfoWritesRealScreenDimensions) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

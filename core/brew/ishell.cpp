@@ -145,6 +145,19 @@ void IShellHle::LoadResDataExImpl(IArmCore& core) {
   core.SetRegister(kR0, 0);  // SUCCESS
 }
 
+void IShellHle::GetHandlerImpl(IArmCore& core) {
+  // AEECLSID GetHandler(IShell *ps, AEECLSID cls, const char *pszMIME)
+  // See this class's own doc comment for the real evidence this slot's
+  // behavior is grounded in. Real code immediately feeds the return
+  // value into ISHELL_CreateInstance, so returning `cls` itself (when
+  // recognized) rather than some other synthetic value is enough --
+  // RegisterInstance registers the real handler object under that same
+  // ClsId.
+  constexpr uint32_t kAudioMediaCls = 0x01005500;
+  uint32_t cls = core.GetRegister(kR1);
+  core.SetRegister(kR0, cls == kAudioMediaCls ? cls : 0);
+}
+
 std::vector<IShellHle::ExpiredTimer> IShellHle::Tick(uint32_t elapsed_ms) {
   std::vector<ExpiredTimer> expired;
   for (auto it = timers_.begin(); it != timers_.end();) {
@@ -199,7 +212,7 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       Stub,  // 29 SetAlarm
       Stub,  // 30 CancelAlarm
       Stub,  // 31 AlarmsActive
-      Stub,  // 32 GetHandler
+      [this](IArmCore& c) { GetHandlerImpl(c); },  // 32 GetHandler
       Stub,  // 33 RegisterHandler
       Stub,  // 34 RegisterNotify
       Stub,  // 35 Notify

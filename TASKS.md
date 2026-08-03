@@ -2896,6 +2896,30 @@ playable start-to-finish at full speed, standalone build.
       no single obvious next call to follow. All instrumentation
       reverted; 307/307 tests pass; no code change. See
       PHASE8_LOG.md's "Sound, round three" section.
+- [x] Sound: **real root cause found and fixed.** Disassembled
+      `0x10a1e0` (a "cached resource -> playback slot" function found
+      the previous round) in full and found a real call through
+      `IShell`'s own vtable slot 32 (`GetHandler`) with `cls =
+      0x01005500` -- a completely different slot from `CreateInstance`,
+      which is exactly why three rounds of `CreateInstance`-only
+      logging never saw anything audio-shaped. Real code calls
+      `GetHandler` first (per the bundled real `AEEMediaUtil.c` sample's
+      own usage shape) and only calls `CreateInstance` with whatever it
+      returns -- `GetHandler` was a blind `Stub` (always 0), so real
+      code silently gave up before ever reaching `CreateInstance`.
+      Live-verified at the real call site (`0x10a2a0`): fired twice,
+      both through the real `IShell` object, both with `cls =
+      0x01005500`. Fixed by implementing `GetHandlerImpl`
+      (`core/brew/ishell.cpp`/`.h`) to return `cls` itself for that
+      value, and registering `MediaHle`'s object under the same ClsId
+      in `tools/game_probe.cpp`. **Verified with real, external,
+      OS-level proof, not a screenshot**: `pactl list sink-inputs`
+      showed a live, unmuted `zeebulator_game_probe` audio stream at
+      `s16le 2ch 22050Hz` -- Double Dragon's own real asset format --
+      still present and playing after driving through combat. Added 3
+      real unit tests; 310/310 tests pass. Second real code change from
+      this whole investigation. See PHASE8_LOG.md's "Sound, round four"
+      section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

@@ -7955,3 +7955,75 @@ in the per-frame draw path; this one is buried in a much larger real
 resource-management subsystem with no single obvious next call to
 follow. All instrumentation reverted; `git diff --stat` clean;
 307/307 tests pass; no code change this round.
+
+## Sound, round four: found and fixed the real gap -- GetHandler, not CreateInstance
+
+Picked the investigation back up by following the "activate a cached
+resource into a playback slot" call shape found last round
+(`0x11e964`-`0x11eabc`, reading the per-object cache arrays at
+context+0x870/+0x874 by index, then calling `0x11bfa0` to fill in a
+slot struct, then branching into `0x10a1e0`/`0x10a0c0` based on a
+flag). Disassembled `0x10a1e0` in full this time (last round only
+found it as a branch target) and found the real payoff near its end:
+a call through a resolved `IShell` object's own vtable slot `0x80`
+(offset 128, slot 32) with a constant `0x01005500` set up right before
+it (`mov r1,#0x5500; add r1,r1,#0x1000000`).
+
+Slot 32 in this project's own `IShellHle::Build` order is
+**`GetHandler`** -- `AEECLSID GetHandler(IShell*, AEECLSID cls, const
+char *pszMIME)` -- a completely different vtable slot from
+`CreateInstance` (slot 2), and the bundled real `AEEMediaUtil.c`
+sample's own real usage shape is `ISHELL_GetHandler(ps,
+AEECLSID_MEDIA, szMIME)` then `ISHELL_CreateInstance(ps, cls, ...)`
+with the returned value. **This is exactly why the last three sound
+rounds' `[DBGCLS]` instrumentation (watching only `CreateInstanceImpl`)
+never saw anything audio-shaped**: real code never calls
+`CreateInstance` for a media class directly at all -- it asks
+`GetHandler` first, gets back nothing (this slot was a blind `Stub`,
+always returning 0), and silently gives up before ever reaching
+`CreateInstance`.
+
+Live-verified with a temporary PC watch at the real call site
+(`0x10a2a0`, reverted after use): fired twice during the same title
+-> menu -> cutscene sequence used throughout this whole sound
+investigation, both times with `this` = the real `IShell` object
+(`0x80001000`) and `cls = 0x01005500`, confirming this is a real
+`ISHELL_GetHandler(shell, 0x01005500, pszMIME)` call, not a guess. The
+real `pszMIME` argument didn't resolve to printable text in that
+capture, so `GetHandlerImpl` doesn't try to match on it.
+
+**The fix** (`core/brew/ishell.cpp`/`.h`): implemented slot 32 for
+real -- returns `cls` itself when `cls == 0x01005500`, `0` otherwise.
+Doesn't need to know the *real* returned class ID, since real calling
+code immediately feeds this call's return value into
+`ISHELL_CreateInstance`: `tools/game_probe.cpp` now calls
+`shell_hle.RegisterInstance(0x01005500, media_hle.CreateMediaObject())`
+right after `media_hle.Build()`, closing the loop end to end with a
+single shared `IMedia` instance (the simplest first step, matching the
+one real bundled sample this project has seen using exactly one
+`IMedia` pointer reused across calls -- revisit if real evidence ever
+shows this game wanting concurrent instances).
+
+**Verified with real, external, OS-level proof** -- the same class of
+evidence Phase 6 originally used, not a screenshot (screenshots can't
+show audio): ran the fixed build through title -> menu -> cutscene ->
+walking -> melee combat, and checked `pactl list sink-inputs` twice.
+Found a live, unmuted (`Corked: no`) sink input at
+`application.process.binary = "zeebulator_game_probe"`, PID matching
+the real running process, `Sample Specification: s16le 2ch 22050Hz` --
+exactly Double Dragon's own real asset format (Phase 6). Still present
+and still uncorked after driving through combat, confirming the
+single shared `IMedia` instance survives repeated real `SetMediaParm`/
+`Play` calls rather than breaking after the first one.
+
+Added 3 real unit tests (`tests/brew_test.cpp`): `GetHandler` returns
+the class itself for the real audio class and `0` for anything else,
+and a full `GetHandler` -> `CreateInstance` chain test proving the two
+slots compose the way real code actually uses them. 310/310 tests
+pass. This is the second real code change to land from this whole
+investigation (after the sprite z-ordering sort fix) -- small diff
+(`core/brew/ishell.cpp`/`.h`, `tools/game_probe.cpp`, tests), but it's
+the real gap: not a missing codec, not a missing mixer, not a missing
+`IMedia` implementation (all of that was already real and correct from
+Phase 6) -- just one un-implemented vtable slot standing between a
+fully-working audio pipeline and real game code never finding it.

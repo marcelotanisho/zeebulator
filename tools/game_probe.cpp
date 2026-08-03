@@ -1142,6 +1142,17 @@ int main(int argc, char** argv) {
       unknown_0x01030766_methods);
   shell_hle.RegisterInstance(0x01030766, unknown_0x01030766_obj);
   media_hle.Build(/*vtable=*/0x8000B000);
+  // AEECLSID_MEDIA, found live via LR-capture (TASKS.md/PHASE8_LOG.md
+  // Phase 8, the sound investigation): real code calls
+  // `ISHELL_GetHandler(shell, 0x01005500, pszMIME)` -- see ishell.h's
+  // own doc comment on GetHandlerImpl for the full derivation -- then
+  // immediately CreateInstance()s whatever that returns. A single
+  // shared IMedia instance (not a fresh one per CreateInstance call) is
+  // the simplest first step and matches the one real bundled sample
+  // (AEEMediaUtil.c) this project has seen, which stores one IMedia
+  // pointer on its app/doc object and reuses it -- revisit if real
+  // evidence ever shows this game wanting concurrent IMedia instances.
+  shell_hle.RegisterInstance(/*AEECLSID_MEDIA=*/0x01005500, media_hle.CreateMediaObject());
 
   auto& mem = cpu.GetMemory();
   // A real stack, well past the loaded module -- ArmInterpreter::Reset()

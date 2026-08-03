@@ -42,6 +42,26 @@ namespace zeebulator {
 // resource-ID directory, exactly which real `.bar` entry a given
 // `(resType, wResID)` pair resolves to.
 //
+// GetHandler (slot 32) is real too, found live via the sprite z-ordering
+// investigation's LR-capture technique applied to the audio subsystem
+// (TASKS.md/PHASE8_LOG.md Phase 8): real code (reached from the same
+// per-resource "activate cached sound.ggz asset into a playback slot"
+// path a bulk audio preloader feeds into) calls
+// `ISHELL_GetHandler(pIShell, cls=0x01005500, pszMIME)` -- confirmed
+// live, not guessed, twice, both through the real IShell object
+// (matching real `AEECLSID ISHELL_GetHandler(IShell*, AEECLSID cls,
+// const char *pszMIME)`, the exact shape the bundled real
+// `AEEMediaUtil.c` sample uses for `AEECLSID_MEDIA`). The real MIME
+// string argument didn't resolve to anything printable in that live
+// capture, so it's ignored rather than matched on -- but the real
+// calling convention (documented in that same sample) immediately
+// feeds this call's return value into `ISHELL_CreateInstance`, so this
+// doesn't need to know the *real* returned class ID: it returns
+// `cls` itself when `cls == 0x01005500` (0 -- no handler -- otherwise),
+// and `RegisterInstance(0x01005500, ...)` (see tools/game_probe.cpp)
+// registers the real `MediaHle` object under that same value, closing
+// the loop end to end.
+//
 // SetTimer/CancelTimer are real too: real BREW timers are one-shot, not
 // repeating -- confirmed against a real bundled SDK sample
 // (`research/samples/conftest_source/conftest/conftest.c`), whose own
@@ -115,6 +135,7 @@ class IShellHle {
   void SetTimerImpl(IArmCore& core);
   void CancelTimerImpl(IArmCore& core);
   void LoadResDataExImpl(IArmCore& core);
+  void GetHandlerImpl(IArmCore& core);
 
   Memory& memory_;
   HleRuntime& hle_;
