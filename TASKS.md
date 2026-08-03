@@ -2814,6 +2814,28 @@ playable start-to-finish at full speed, standalone build.
       bug. Not confirmed either way. All instrumentation reverted;
       304/304 tests pass; no code change. See PHASE8_LOG.md's
       "pursued a general-emulation-bug hypothesis" section.
+- [ ] Sprite z-ordering: closed the timing-methodology caveat from the
+      round above. Replaced the fixed-sim-ms-offset freeze with one
+      that polls the real active-entity array (`applet_ptr+0xab0`,
+      8 slots) and only freezes once its contents hold identical for
+      90 consecutive main-loop iterations -- a genuinely settled state,
+      not a guessed clock offset. Verified deterministic and
+      reproducible: two fully independent process launches, same real
+      keypress sequence, converged on byte-identical array contents
+      and a pixel-identical screenshot (`PIL.ImageChops.difference`
+      bbox `None`). In that settled, reproduced frame, the tan-jacket
+      character (higher on screen, farther back) is still drawn in
+      front of the purple-suited character next to him (lower on
+      screen, closer) -- the same failure mode the user originally
+      flagged. Since this frame is provably not mid-spawn, **the
+      timing-sensitivity caveat is now ruled out** as the explanation;
+      this is a real, settled rendering-order defect. Also reconfirmed
+      the 8-slot array only held 2 of the 5 on-screen characters at
+      freeze time, so it's not the complete on-screen entity set --
+      what drives the other 3 characters' draw order is still open.
+      All instrumentation reverted; 304/304 tests pass; no code
+      change. See PHASE8_LOG.md's "Closed the timing-methodology
+      caveat" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes
