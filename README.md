@@ -34,6 +34,32 @@ Build options (all default `ON`):
 - `ZEEBULATOR_BUILD_LIBRETRO` — libretro core
 - `ZEEBULATOR_BUILD_TESTS` — test suite (GoogleTest)
 
+## Controls
+
+Keyboard mapping for `zeebulator_game_probe` (the current standalone
+game-running tool), if no gamepad is connected:
+
+| Key | Action |
+| --- | --- |
+| Arrow keys | D-pad |
+| Backspace / Enter | Back (menu confirm / title progression) |
+| Z / X / C / V | Face buttons 1–4 (X is punch/attack in Double Dragon) |
+| Q / E | Left / right shoulder |
+
+A connected Xbox-style (XInput) gamepad is used automatically instead,
+with the equivalent standard layout (D-pad, A/B/X/Y, shoulders, Start).
+
+Frontend hotkeys (always active, independent of the game controls above):
+
+| Key | Action |
+| --- | --- |
+| F5 / F6 / F7 / F8 | Window scale 1x / 2x / 3x / 4x |
+| F9 | Show/hide the on-screen overlay (FPS + status messages) |
+| F11 | Toggle fullscreen |
+
+The window is also freely resizable by dragging its edge — the emulated
+640x480 output is always letterboxed to fit, at any size.
+
 ## Project docs
 
 - [PRD.md](PRD.md) — goals, scope, milestones

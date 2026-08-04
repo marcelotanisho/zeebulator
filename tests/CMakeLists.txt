@@ -37,6 +37,8 @@ add_executable(zeebulator_tests
   font5x7_test.cpp
   scaffold_object_test.cpp
   atitc_test.cpp
+  letterbox_test.cpp
+  ${PROJECT_SOURCE_DIR}/frontends/standalone/letterbox.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)

@@ -11,6 +11,14 @@
 #include <GL/gl.h>
 #endif
 
+// Real FBO entry points (glGenFramebuffers et al.) aren't declared by
+// plain GL 1.1 headers above -- this SDL-bundled Khronos registry header
+// supplies the real PFNGL...PROC typedefs (portably across platforms,
+// unlike GL/glext.h which isn't guaranteed to exist everywhere) used to
+// cast what SDL_GL_GetProcAddress returns. Needs the base GL types the
+// headers above just provided, so it has to come after them.
+#include <SDL_opengl_glext.h>
+
 namespace zeebulator {
 
 namespace {
@@ -28,9 +36,16 @@ constexpr FontGlyph kFont3x5[] = {
     {'4', {0x5, 0x5, 0x7, 0x1, 0x1}}, {'5', {0x7, 0x4, 0x7, 0x1, 0x7}},
     {'6', {0x7, 0x4, 0x7, 0x5, 0x7}}, {'7', {0x7, 0x1, 0x1, 0x1, 0x1}},
     {'8', {0x7, 0x5, 0x7, 0x5, 0x7}}, {'9', {0x7, 0x5, 0x7, 0x1, 0x7}},
-    {'F', {0x7, 0x4, 0x7, 0x4, 0x4}}, {'P', {0x7, 0x5, 0x7, 0x4, 0x4}},
-    {'S', {0x7, 0x4, 0x7, 0x1, 0x7}}, {':', {0x0, 0x2, 0x0, 0x2, 0x0}},
-    {' ', {0x0, 0x0, 0x0, 0x0, 0x0}},
+    {'A', {0x2, 0x5, 0x7, 0x5, 0x5}}, {'C', {0x7, 0x4, 0x4, 0x4, 0x7}},
+    {'D', {0x6, 0x5, 0x5, 0x5, 0x6}}, {'E', {0x7, 0x4, 0x7, 0x4, 0x7}},
+    {'F', {0x7, 0x4, 0x7, 0x4, 0x4}}, {'H', {0x5, 0x5, 0x7, 0x5, 0x5}},
+    {'I', {0x7, 0x2, 0x2, 0x2, 0x7}}, {'L', {0x4, 0x4, 0x4, 0x4, 0x7}},
+    {'N', {0x5, 0x7, 0x7, 0x7, 0x5}}, {'O', {0x7, 0x5, 0x5, 0x5, 0x7}},
+    {'P', {0x7, 0x5, 0x7, 0x4, 0x4}}, {'R', {0x6, 0x5, 0x6, 0x5, 0x5}},
+    {'S', {0x7, 0x4, 0x7, 0x1, 0x7}}, {'T', {0x7, 0x2, 0x2, 0x2, 0x2}},
+    {'U', {0x5, 0x5, 0x5, 0x5, 0x7}}, {'V', {0x5, 0x5, 0x5, 0x5, 0x2}},
+    {'W', {0x5, 0x5, 0x5, 0x7, 0x5}}, {'X', {0x5, 0x5, 0x2, 0x5, 0x5}},
+    {':', {0x0, 0x2, 0x0, 0x2, 0x0}}, {' ', {0x0, 0x0, 0x0, 0x0, 0x0}},
 };
 
 const FontGlyph* FindGlyph(char c) {
@@ -86,6 +101,8 @@ Sdl2UnifiedBackend::Sdl2UnifiedBackend(SDL_Window* window, int width, int height
       if (controller_ != nullptr) break;
     }
   }
+
+  if (gl_context_ != nullptr) InitFramebuffer();
 }
 
 Sdl2UnifiedBackend::~Sdl2UnifiedBackend() {
@@ -93,8 +110,104 @@ Sdl2UnifiedBackend::~Sdl2UnifiedBackend() {
   if (audio_device_ != 0) SDL_CloseAudioDevice(audio_device_);
   if (gl_context_ != nullptr) {
     if (video_texture_ != 0) glDeleteTextures(1, &video_texture_);
+    if (fbo_texture_ != 0) glDeleteTextures(1, &fbo_texture_);
+    if (fbo_depth_renderbuffer_ != 0 && glDeleteRenderbuffers_ != nullptr) {
+      reinterpret_cast<PFNGLDELETERENDERBUFFERSPROC>(glDeleteRenderbuffers_)(
+          1, &fbo_depth_renderbuffer_);
+    }
+    if (fbo_ != 0 && glDeleteFramebuffers_ != nullptr) {
+      reinterpret_cast<PFNGLDELETEFRAMEBUFFERSPROC>(glDeleteFramebuffers_)(1, &fbo_);
+    }
     SDL_GL_DeleteContext(gl_context_);
   }
+}
+
+// See this class's own doc comment on why FBO entry points are loaded
+// through SDL_GL_GetProcAddress rather than linked against directly:
+// plain GL/gl.h (or OpenGL/gl.h on macOS) only declares GL 1.1, and this
+// project doesn't otherwise need a full GL loader (GLEW/GLAD) -- a
+// direct link would also just fail to resolve on some platforms/drivers
+// entirely, whereas SDL_GL_GetProcAddress is SDL's own portable answer
+// to exactly this (works identically on every platform SDL supports).
+// The 5 members these get stored into are opaque `void*` (see the
+// class's own doc comment on them) -- cast back to the real PFNGL...PROC
+// type at each call site below and in PresentFrame.
+bool Sdl2UnifiedBackend::InitFramebuffer() {
+  glGenFramebuffers_ = SDL_GL_GetProcAddress("glGenFramebuffers");
+  glBindFramebuffer_ = SDL_GL_GetProcAddress("glBindFramebuffer");
+  glFramebufferTexture2D_ = SDL_GL_GetProcAddress("glFramebufferTexture2D");
+  glCheckFramebufferStatus_ = SDL_GL_GetProcAddress("glCheckFramebufferStatus");
+  glDeleteFramebuffers_ = SDL_GL_GetProcAddress("glDeleteFramebuffers");
+  glGenRenderbuffers_ = SDL_GL_GetProcAddress("glGenRenderbuffers");
+  glBindRenderbuffer_ = SDL_GL_GetProcAddress("glBindRenderbuffer");
+  glRenderbufferStorage_ = SDL_GL_GetProcAddress("glRenderbufferStorage");
+  glFramebufferRenderbuffer_ = SDL_GL_GetProcAddress("glFramebufferRenderbuffer");
+  glDeleteRenderbuffers_ = SDL_GL_GetProcAddress("glDeleteRenderbuffers");
+  if (glGenFramebuffers_ == nullptr || glBindFramebuffer_ == nullptr ||
+      glFramebufferTexture2D_ == nullptr || glCheckFramebufferStatus_ == nullptr ||
+      glDeleteFramebuffers_ == nullptr || glGenRenderbuffers_ == nullptr ||
+      glBindRenderbuffer_ == nullptr || glRenderbufferStorage_ == nullptr ||
+      glFramebufferRenderbuffer_ == nullptr || glDeleteRenderbuffers_ == nullptr) {
+    std::fprintf(stderr,
+                 "Sdl2UnifiedBackend: real framebuffer-object entry points unavailable -- "
+                 "window scaling/resizing disabled\n");
+    return false;
+  }
+  auto GenFramebuffers = reinterpret_cast<PFNGLGENFRAMEBUFFERSPROC>(glGenFramebuffers_);
+  auto BindFramebuffer = reinterpret_cast<PFNGLBINDFRAMEBUFFERPROC>(glBindFramebuffer_);
+  auto FramebufferTexture2D =
+      reinterpret_cast<PFNGLFRAMEBUFFERTEXTURE2DPROC>(glFramebufferTexture2D_);
+  auto CheckFramebufferStatus =
+      reinterpret_cast<PFNGLCHECKFRAMEBUFFERSTATUSPROC>(glCheckFramebufferStatus_);
+  auto DeleteFramebuffers = reinterpret_cast<PFNGLDELETEFRAMEBUFFERSPROC>(glDeleteFramebuffers_);
+  auto GenRenderbuffers = reinterpret_cast<PFNGLGENRENDERBUFFERSPROC>(glGenRenderbuffers_);
+  auto BindRenderbuffer = reinterpret_cast<PFNGLBINDRENDERBUFFERPROC>(glBindRenderbuffer_);
+  auto RenderbufferStorage =
+      reinterpret_cast<PFNGLRENDERBUFFERSTORAGEPROC>(glRenderbufferStorage_);
+  auto FramebufferRenderbuffer =
+      reinterpret_cast<PFNGLFRAMEBUFFERRENDERBUFFERPROC>(glFramebufferRenderbuffer_);
+  auto DeleteRenderbuffers =
+      reinterpret_cast<PFNGLDELETERENDERBUFFERSPROC>(glDeleteRenderbuffers_);
+
+  glGenTextures(1, &fbo_texture_);
+  glBindTexture(GL_TEXTURE_2D, fbo_texture_);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width_, height_, /*border=*/0, GL_RGB, GL_UNSIGNED_BYTE,
+               nullptr);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  // Real depth buffer, matching the real 24-bit one already requested
+  // for the window's own default-framebuffer GL context (see this
+  // member's own doc comment on why this FBO needs one too).
+  GenRenderbuffers(1, &fbo_depth_renderbuffer_);
+  BindRenderbuffer(GL_RENDERBUFFER, fbo_depth_renderbuffer_);
+  RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width_, height_);
+  BindRenderbuffer(GL_RENDERBUFFER, 0);
+
+  GenFramebuffers(1, &fbo_);
+  BindFramebuffer(GL_FRAMEBUFFER, fbo_);
+  FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo_texture_, 0);
+  FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
+                           fbo_depth_renderbuffer_);
+  if (CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    std::fprintf(stderr,
+                 "Sdl2UnifiedBackend: real framebuffer incomplete -- window scaling/resizing "
+                 "disabled\n");
+    BindFramebuffer(GL_FRAMEBUFFER, 0);
+    DeleteFramebuffers(1, &fbo_);
+    DeleteRenderbuffers(1, &fbo_depth_renderbuffer_);
+    glDeleteTextures(1, &fbo_texture_);
+    fbo_ = 0;
+    fbo_texture_ = 0;
+    fbo_depth_renderbuffer_ = 0;
+    return false;
+  }
+  // Left bound -- every subsequent real GL call (this class's own 2D
+  // quad/overlay and the real app's own GLES draws) targets this
+  // offscreen surface until PresentFrame's final blit, see its own doc
+  // comment.
+  return true;
 }
 
 void Sdl2UnifiedBackend::PushVideoFrame(const void* framebuffer, int width, int height,
@@ -170,14 +283,62 @@ void Sdl2UnifiedBackend::PushVideoFrame(const void* framebuffer, int width, int 
   PresentFrame();
 }
 
-// Drawn last, on top of whatever real content (2D quad above or the
-// real app's own GLES draws via SwapBuffers) is already in the
-// backbuffer for this frame -- same save/restore-state pattern as the
-// PushVideoFrame quad above, so it never leaks state back to real app
-// or video-quad rendering next frame.
-void Sdl2UnifiedBackend::DrawFpsOverlay() {
-  char text[16];
-  std::snprintf(text, sizeof(text), "FPS:%d", static_cast<int>(fps_display_value_ + 0.5));
+namespace {
+
+constexpr int kFontPixel = 3;    // real screen pixels per font "pixel"
+constexpr int kFontGap = 1;      // real screen pixels between font pixels
+constexpr int kFontCharGap = 6;  // extra real screen pixels between glyphs
+constexpr int kFontLineHeight = 5 * (kFontPixel + kFontGap) + 6;
+
+// Draws one line of text, top-left origin at (origin_x, origin_y) in
+// whatever coordinate space the caller's already set up (real screen
+// pixels for the overlay below) -- assumes glBegin/glEnd-style immediate
+// drawing is already valid (texturing disabled, color already set).
+// Characters with no glyph (see kFont3x5) are silently skipped rather
+// than drawn as a placeholder or rejected -- degrades gracefully for any
+// status text that ends up including a character this small font simply
+// doesn't have, rather than needing every caller to pre-validate its
+// own strings against the font's coverage.
+void DrawText(int origin_x, int origin_y, const char* text) {
+  int pen_x = origin_x;
+  for (const char* p = text; *p != '\0'; ++p) {
+    const FontGlyph* glyph = FindGlyph(*p);
+    if (glyph != nullptr) {
+      for (int row = 0; row < 5; ++row) {
+        for (int col = 0; col < 3; ++col) {
+          if (((glyph->rows[row] >> (2 - col)) & 1) == 0) continue;
+          int x = pen_x + col * (kFontPixel + kFontGap);
+          int y = origin_y + row * (kFontPixel + kFontGap);
+          glBegin(GL_QUADS);
+          glVertex2i(x, y);
+          glVertex2i(x + kFontPixel, y);
+          glVertex2i(x + kFontPixel, y + kFontPixel);
+          glVertex2i(x, y + kFontPixel);
+          glEnd();
+        }
+      }
+    }
+    pen_x += 3 * (kFontPixel + kFontGap) + kFontCharGap;
+  }
+}
+
+}  // namespace
+
+// Drawn last, into the still-bound offscreen surface (see InitFramebuffer's
+// own doc comment), on top of whatever real content (2D quad above or the
+// real app's own GLES draws via SwapBuffers) is already there for this
+// frame -- same save/restore-state pattern as the PushVideoFrame quad
+// above, so it never leaks state back to real app or video-quad rendering
+// next frame. Entirely skipped (nothing drawn, including the FPS line)
+// while overlay_visible_ is false.
+void Sdl2UnifiedBackend::DrawOverlay() {
+  if (!overlay_visible_) return;
+
+  char fps_text[16];
+  std::snprintf(fps_text, sizeof(fps_text), "FPS:%d", static_cast<int>(fps_display_value_ + 0.5));
+
+  bool show_status =
+      !status_message_.empty() && SDL_GetTicks() < status_message_expires_ms_;
 
   glPushAttrib(GL_ALL_ATTRIB_BITS);
   glDisable(GL_TEXTURE_2D);
@@ -194,33 +355,15 @@ void Sdl2UnifiedBackend::DrawFpsOverlay() {
   glPushMatrix();
   glLoadIdentity();
 
-  glColor4f(1.0f, 1.0f, 0.0f, 1.0f);
-
-  constexpr int kPixel = 3;    // real screen pixels per font "pixel"
-  constexpr int kGap = 1;      // real screen pixels between font pixels
-  constexpr int kCharGap = 6;  // extra real screen pixels between glyphs
   constexpr int kOriginX = 6;
   constexpr int kOriginY = 6;
 
-  int pen_x = kOriginX;
-  for (const char* p = text; *p != '\0'; ++p) {
-    const FontGlyph* glyph = FindGlyph(*p);
-    if (glyph != nullptr) {
-      for (int row = 0; row < 5; ++row) {
-        for (int col = 0; col < 3; ++col) {
-          if (((glyph->rows[row] >> (2 - col)) & 1) == 0) continue;
-          int x = pen_x + col * (kPixel + kGap);
-          int y = kOriginY + row * (kPixel + kGap);
-          glBegin(GL_QUADS);
-          glVertex2i(x, y);
-          glVertex2i(x + kPixel, y);
-          glVertex2i(x + kPixel, y + kPixel);
-          glVertex2i(x, y + kPixel);
-          glEnd();
-        }
-      }
-    }
-    pen_x += 3 * (kPixel + kGap) + kCharGap;
+  glColor4f(1.0f, 1.0f, 0.0f, 1.0f);
+  DrawText(kOriginX, kOriginY, fps_text);
+
+  if (show_status) {
+    glColor4f(0.4f, 1.0f, 1.0f, 1.0f);
+    DrawText(kOriginX, kOriginY + kFontLineHeight, status_message_.c_str());
   }
 
   glMatrixMode(GL_PROJECTION);
@@ -228,6 +371,12 @@ void Sdl2UnifiedBackend::DrawFpsOverlay() {
   glMatrixMode(GL_MODELVIEW);
   glPopMatrix();
   glPopAttrib();
+}
+
+void Sdl2UnifiedBackend::ShowStatusMessage(const std::string& text) {
+  status_message_ = text;
+  constexpr Uint32 kStatusMessageDurationMs = 2500;
+  status_message_expires_ms_ = SDL_GetTicks() + kStatusMessageDurationMs;
 }
 
 // Real display refresh rate is capped well below 1000Hz, so a 500ms
@@ -243,8 +392,85 @@ void Sdl2UnifiedBackend::PresentFrame() {
     fps_frame_count_ = 0;
     fps_last_tick_ms_ = now;
   }
-  DrawFpsOverlay();
+  DrawOverlay();
+
+  if (fbo_ == 0) {
+    // See InitFramebuffer's own doc comment: no real FBO support, so
+    // everything above was already rendered directly into the real
+    // window at its native size -- nothing left to blit.
+    SDL_GL_SwapWindow(window_);
+    return;
+  }
+
+  // Blit the offscreen surface (2D quad/real app draws/overlay, all
+  // still at the fixed width_ x height_ it's always rendered at) onto
+  // the real window, letterboxed to whatever size that window actually
+  // is right now -- see letterbox.h. This is the one point in a frame
+  // where the real default framebuffer is bound instead of fbo_.
+  auto BindFramebuffer = reinterpret_cast<PFNGLBINDFRAMEBUFFERPROC>(glBindFramebuffer_);
+  BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+  int drawable_width = 0;
+  int drawable_height = 0;
+  SDL_GL_GetDrawableSize(window_, &drawable_width, &drawable_height);
+  ViewportRect rect = ComputeLetterboxedViewport(drawable_width, drawable_height, width_, height_);
+
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glViewport(rect.x, rect.y, rect.width, rect.height);
+
+  glPushAttrib(GL_ALL_ATTRIB_BITS);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_BLEND);
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, fbo_texture_);
+
+  glMatrixMode(GL_PROJECTION);
+  glPushMatrix();
+  glLoadIdentity();
+  glOrtho(0.0, 1.0, 1.0, 0.0, -1.0, 1.0);
+
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix();
+  glLoadIdentity();
+
+  // Unlike the video texture in PushVideoFrame (loaded directly from
+  // pixel data via glTexImage2D, row 0 = top -- see its own doc
+  // comment), fbo_texture_ was filled by rendering *into* it, which
+  // fills it in OpenGL's standard bottom-left-origin texture convention
+  // (v=0 = bottom of what was drawn). So unlike that other quad, this
+  // one flips v (not u) to compensate -- texcoord v=0 pairs with the
+  // *bottom* screen vertex here, not the top.
+  glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+  glBegin(GL_TRIANGLE_FAN);
+  glTexCoord2f(0.0f, 1.0f);
+  glVertex2f(0.0f, 0.0f);
+  glTexCoord2f(1.0f, 1.0f);
+  glVertex2f(1.0f, 0.0f);
+  glTexCoord2f(1.0f, 0.0f);
+  glVertex2f(1.0f, 1.0f);
+  glTexCoord2f(0.0f, 0.0f);
+  glVertex2f(0.0f, 1.0f);
+  glEnd();
+
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix();
+  glMatrixMode(GL_MODELVIEW);
+  glPopMatrix();
+  glPopAttrib();
+
   SDL_GL_SwapWindow(window_);
+
+  // Rebind for the next frame's rendering (this class's own and the
+  // real app's) -- see InitFramebuffer's own doc comment.
+  BindFramebuffer(GL_FRAMEBUFFER, fbo_);
+}
+
+void Sdl2UnifiedBackend::SetWindowScale(int scale) {
+  if (scale < 1 || scale > 4) return;
+  window_scale_ = scale;
+  SDL_SetWindowSize(window_, width_ * scale, height_ * scale);
 }
 
 void Sdl2UnifiedBackend::PushAudioSamples(const int16_t* interleaved_stereo, size_t frame_count,

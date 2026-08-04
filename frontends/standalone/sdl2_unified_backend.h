@@ -2,8 +2,11 @@
 
 #include <SDL.h>
 
+#include <string>
+
 #include "core/backend.h"
 #include "core/brew/gl_backend.h"
+#include "frontends/standalone/letterbox.h"
 
 namespace zeebulator {
 
@@ -62,6 +65,31 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
   // snapshot once this goes true).
   bool HasRealGlActivity() const { return gl_swap_seen_; }
 
+  // Everything (the 2D IDisplay quad, the real app's own GLES draws, the
+  // overlay) renders into a fixed `width_`x`height_` offscreen surface --
+  // see the FBO members below -- and PresentFrame blits that, letterboxed,
+  // onto the real window's own current size every frame. So the real
+  // window can be any size (including live-resized by the player) without
+  // this class needing to be told about it explicitly; SetWindowScale
+  // exists only for the common "pick a whole-number preset" hotkey case,
+  // driving a real `SDL_SetWindowSize` to `width_*scale x height_*scale`.
+  // Clamped to [1,4]; out-of-range values are ignored.
+  void SetWindowScale(int scale);
+  int WindowScale() const { return window_scale_; }
+
+  // Shows/hides the whole overlay (FPS counter and any active status
+  // message below it). Visible by default, matching this class's
+  // previous always-on FPS overlay.
+  void SetOverlayVisible(bool visible) { overlay_visible_ = visible; }
+  bool OverlayVisible() const { return overlay_visible_; }
+
+  // Shows `text` as a second overlay line for a few real seconds, then it
+  // clears itself -- transient feedback for a hotkey action (e.g. "Scale:
+  // 2x", "Saved slot 1"). No-op while the overlay itself is hidden (see
+  // SetOverlayVisible) other than remembering the text for whenever it's
+  // shown again within the same window.
+  void ShowStatusMessage(const std::string& text);
+
   // GlBackend -- CreateContext/DestroyContext are no-ops (true/nothing):
   // this class's one real context is created in the constructor and
   // lives until the destructor, regardless of the app's own real
@@ -105,21 +133,80 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
   ZPadState PollController();
   ZPadState PollKeyboard();
 
+  // Loads the handful of real FBO entry points this class needs via
+  // SDL_GL_GetProcAddress (portable across platforms/drivers, unlike
+  // linking against them directly -- see sdl2_unified_backend.cpp's own
+  // doc comment on why) and creates fbo_/fbo_texture_ at width_ x
+  // height_. Returns false (leaving fbo_ == 0) if either step fails, in
+  // which case PresentFrame falls back to rendering directly into the
+  // real window at its native size -- no window-scaling support, but
+  // not a crash -- for whatever ancient/broken driver doesn't have
+  // real FBO support (effectively unheard of since GL 3.0/2007).
+  bool InitFramebuffer();
+
   // Common tail of both real presentation paths (PushVideoFrame's 2D
-  // quad and the real app's own eglSwapBuffers): updates the rolling
-  // FPS estimate, draws it as a small top-left overlay (immediate-mode
-  // GL quads, matching the save/restore-state pattern PushVideoFrame
-  // already uses, so it never corrupts real app-owned GL state), then
-  // does the one real SDL_GL_SwapWindow for this frame.
+  // quad and the real app's own eglSwapBuffers): draws the overlay (see
+  // DrawOverlay) into the still-bound offscreen surface, then blits that
+  // whole surface (letterboxed to the real window's own current size)
+  // onto the real default framebuffer and does the one real
+  // SDL_GL_SwapWindow for this frame, then rebinds the offscreen surface
+  // so the next frame's rendering (both this class's own and the real
+  // app's) keeps targeting it rather than the real window directly.
   void PresentFrame();
-  void DrawFpsOverlay();
+  // Updates the rolling FPS estimate and draws it, plus any active
+  // status message (see ShowStatusMessage), as small top-left text
+  // (immediate-mode GL quads, matching the save/restore-state pattern
+  // PushVideoFrame already uses, so it never corrupts real app-owned GL
+  // state) -- no-op entirely while overlay_visible_ is false.
+  void DrawOverlay();
 
   SDL_Window* window_;
   SDL_GLContext gl_context_;
-  int width_;
-  int height_;
+  int width_;   // logical/emulated resolution -- always 640x480, real
+  int height_;  // window size never changes what this reports to the guest.
+
+  // Offscreen surface everything (2D IDisplay quad, real app GLES draws,
+  // overlay) renders into, fixed at width_ x height_ regardless of the
+  // real window's own size -- see SetWindowScale's own doc comment.
+  // Left bound for the whole of each frame's rendering; only unbound
+  // momentarily inside PresentFrame for the final blit.
+  GLuint fbo_ = 0;
+  GLuint fbo_texture_ = 0;
+  // Real depth renderbuffer attached alongside fbo_texture_ -- without
+  // one, real app draws made with GL_DEPTH_TEST enabled (confirmed real,
+  // load-bearing behavior -- see the SDL_GL_DEPTH_SIZE request on the
+  // real window's own GL context, made for exactly this reason before
+  // this class existed) have nothing to test against inside this FBO,
+  // which silently breaks real depth-gated compositing (confirmed live:
+  // this is what produced a real, visible blue-tinted overlay across the
+  // whole image once real rendering moved into this FBO).
+  GLuint fbo_depth_renderbuffer_ = 0;
+  // Real function pointers, loaded via SDL_GL_GetProcAddress -- stored
+  // as opaque `void*` here rather than the real `PFNGL...PROC` typedefs
+  // (`SDL_opengl_glext.h`) since those need real system GL types
+  // (`::GLenum` et al.) this project's headers deliberately don't pull
+  // in (see gl_types.h's own `zeebulator::GLenum` et al., used
+  // everywhere else in this header instead) -- cast back to the real
+  // typedefs only at each call site in sdl2_unified_backend.cpp, where
+  // the real platform GL header is already included first.
+  void* glGenFramebuffers_ = nullptr;
+  void* glBindFramebuffer_ = nullptr;
+  void* glFramebufferTexture2D_ = nullptr;
+  void* glCheckFramebufferStatus_ = nullptr;
+  void* glDeleteFramebuffers_ = nullptr;
+  void* glGenRenderbuffers_ = nullptr;
+  void* glBindRenderbuffer_ = nullptr;
+  void* glRenderbufferStorage_ = nullptr;
+  void* glFramebufferRenderbuffer_ = nullptr;
+  void* glDeleteRenderbuffers_ = nullptr;
+
+  int window_scale_ = 1;
   GLuint video_texture_ = 0;  // lazily created on first PushVideoFrame
   bool gl_swap_seen_ = false;
+
+  bool overlay_visible_ = true;
+  std::string status_message_;
+  Uint32 status_message_expires_ms_ = 0;
 
   Uint32 fps_last_tick_ms_ = 0;
   int fps_frame_count_ = 0;

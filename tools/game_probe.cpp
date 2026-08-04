@@ -405,9 +405,13 @@ int main(int argc, char** argv) {
   // order alone -- exactly the real, confirmed symptom (enemies and a
   // health-bar fill drawn in the wrong front/back order).
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-  SDL_Window* window =
-      SDL_CreateWindow("Zeebulator - game probe", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                        kWidth, kHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
+  // Resizable so a manual drag-resize works too, not just the F5-F8
+  // scale-preset hotkeys below -- Sdl2UnifiedBackend letterboxes
+  // whatever real size the window ends up at either way (see its own
+  // PresentFrame doc comment), so nothing else needs to change for this.
+  SDL_Window* window = SDL_CreateWindow(
+      "Zeebulator - game probe", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kWidth, kHeight,
+      SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
 
   zeebulator::ArmInterpreter cpu;
   constexpr uint32_t kTrapBase = 0xF0000000;
@@ -1347,6 +1351,43 @@ int main(int argc, char** argv) {
     uint32_t loop_start_ms = SDL_GetTicks();
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) running = false;
+      // Frontend-only hotkeys (TASKS_TOOLING.md Phase A/D) -- F-keys are
+      // never forwarded to the guest by either SdlKeyToAvk or
+      // SdlKeyToHidButton below, so these can't collide with any real
+      // game input. Consumed here (never falls through to the guest
+      // forwarding logic) on key-down only, matching a real button
+      // press rather than firing twice per physical press.
+      if (event.type == SDL_KEYDOWN && !event.key.repeat) {
+        int scale = 0;
+        switch (event.key.keysym.sym) {
+          case SDLK_F5: scale = 1; break;
+          case SDLK_F6: scale = 2; break;
+          case SDLK_F7: scale = 3; break;
+          case SDLK_F8: scale = 4; break;
+          default: break;
+        }
+        if (scale != 0) {
+          backend.SetWindowScale(scale);
+          char status[16];
+          std::snprintf(status, sizeof(status), "SCALE %dX", scale);
+          backend.ShowStatusMessage(status);
+          continue;
+        }
+        if (event.key.keysym.sym == SDLK_F9) {
+          backend.SetOverlayVisible(!backend.OverlayVisible());
+          continue;
+        }
+        if (event.key.keysym.sym == SDLK_F11) {
+          // Desktop (borderless) fullscreen, not exclusive -- avoids a
+          // real display-mode switch, matching what the letterboxed
+          // blit (Sdl2UnifiedBackend::PresentFrame) already handles
+          // cleanly for any real drawable size, fullscreen included.
+          bool is_fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+          SDL_SetWindowFullscreen(window, is_fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+          backend.ShowStatusMessage(is_fullscreen ? "WINDOWED" : "FULLSCREEN");
+          continue;
+        }
+      }
       if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !event.key.repeat) {
         uint32_t hid_button_uid = SdlKeyToHidButton(event.key.keysym.sym);
         // The classic AVK path only runs for keys with *no* real HID
