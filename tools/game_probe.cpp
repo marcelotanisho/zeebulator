@@ -16,6 +16,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "core/audio/mixer.h"
@@ -33,6 +34,7 @@
 #include "core/loader/ggz.h"
 #include "core/loader/mod.h"
 #include "core/loader/pkg.h"
+#include "core/save_state.h"
 #include "frontends/standalone/sdl2_unified_backend.h"
 
 namespace {
@@ -382,6 +384,11 @@ int main(int argc, char** argv) {
   }
   auto mod_data = ReadFile(argv[1]);
   auto cls_id = static_cast<uint32_t>(std::strtoul(argv[4], nullptr, 10));
+  // TASKS_TOOLING.md Phase B, stage 1 -- single fixed slot, next to the
+  // ROM itself, not the git-ignored research/games/ tree's own concern
+  // (this file is real tooling output, not research material, but
+  // colocating it is the simplest place a player would look for it).
+  const std::string save_state_path = std::string(argv[1]) + ".savestate";
 
   zeebulator::VirtualFilesystem vfs;
   MergeGgzInto(vfs, argv[2]);
@@ -1385,6 +1392,21 @@ int main(int argc, char** argv) {
           bool is_fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
           SDL_SetWindowFullscreen(window, is_fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
           backend.ShowStatusMessage(is_fullscreen ? "WINDOWED" : "FULLSCREEN");
+          continue;
+        }
+        // Save states (TASKS_TOOLING.md Phase B, stage 1 -- CPU
+        // registers/CPSR + full guest memory only; see save_state.h's
+        // own doc comment on what this does NOT cover yet).
+        if (event.key.keysym.sym == SDLK_F1) {
+          std::ofstream out(save_state_path, std::ios::binary);
+          bool ok = out && zeebulator::SaveState(cpu, out);
+          backend.ShowStatusMessage(ok ? "STATE SAVED" : "SAVE FAILED");
+          continue;
+        }
+        if (event.key.keysym.sym == SDLK_F2) {
+          std::ifstream in(save_state_path, std::ios::binary);
+          bool ok = in && zeebulator::LoadState(cpu, in);
+          backend.ShowStatusMessage(ok ? "STATE LOADED" : "LOAD FAILED");
           continue;
         }
       }

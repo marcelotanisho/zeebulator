@@ -53,12 +53,19 @@ Frontend hotkeys (always active, independent of the game controls above):
 
 | Key | Action |
 | --- | --- |
+| F1 / F2 | Save / load state (single slot, next to the ROM file as `<rom>.savestate`) |
 | F5 / F6 / F7 / F8 | Window scale 1x / 2x / 3x / 4x |
 | F9 | Show/hide the on-screen overlay (FPS + status messages) |
 | F11 | Toggle fullscreen |
 
 The window is also freely resizable by dragging its edge — the emulated
 640x480 output is always letterboxed to fit, at any size.
+
+Save states currently capture CPU registers and full guest memory only,
+not host-side audio/timer state — expect a brief audio/timer hiccup
+right after loading one until the game naturally re-arms it. See
+[TASKS_TOOLING.md](TASKS_TOOLING.md) Phase B for the full-fidelity
+follow-up.
 
 ## Project docs
 

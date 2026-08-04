@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <istream>
+#include <ostream>
 #include <stdexcept>
 
 #include "core/cpu/arm_core.h"
@@ -59,6 +61,18 @@ class ArmInterpreter : public IArmCore {
 
   void SetCallOutRange(uint32_t base, uint32_t size) override;
   void SetCallOutHandler(CallOutHandler handler) override;
+
+  // Save-state support (TASKS_TOOLING.md Phase B, stage 1): registers,
+  // CPSR, and the full guest memory image (see Memory::Serialize).
+  // Deliberately does NOT cover call_out_base_/call_out_size_/
+  // call_out_handler_ -- those are wiring the harness (game_probe.cpp)
+  // sets up once at construction, not resumable game state, and
+  // call_out_handler_ (a std::function closing over the harness's own
+  // locals) couldn't be meaningfully serialized anyway. A loaded state
+  // is only valid to apply to a core the harness has already finished
+  // setting up the same way.
+  bool Serialize(std::ostream& out) const;
+  bool Deserialize(std::istream& in);
 
  private:
   struct Operand2Result {

@@ -1,5 +1,7 @@
 #include "core/cpu/arm_interpreter.h"
 
+#include <sstream>
+
 #include <gtest/gtest.h>
 
 using zeebulator::ArmInterpreter;
@@ -517,4 +519,32 @@ TEST(Cpu, OtherMediaInstructionSpaceStillUnimplemented) {
   ArmInterpreter cpu;
   cpu.GetMemory().Write32(0, 0xE6BF0F30);  // REV R0, R0
   EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
+}
+
+TEST(Cpu, SerializeThenDeserializeRoundTripsRegistersCpsrAndMemory) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x11111111);
+  cpu.SetRegister(kR4, 0x44444444);
+  cpu.SetRegister(kSP, 0x80300000);
+  cpu.SetCpsr(0xF0000010);
+  cpu.GetMemory().Write32(0x1000, 0xCAFEBABE);
+
+  std::stringstream stream;
+  ASSERT_TRUE(cpu.Serialize(stream));
+
+  ArmInterpreter restored;
+  restored.SetRegister(kR0, 0xDEADDEAD);  // must be overwritten by Deserialize
+  ASSERT_TRUE(restored.Deserialize(stream));
+
+  EXPECT_EQ(restored.GetRegister(kR0), 0x11111111u);
+  EXPECT_EQ(restored.GetRegister(kR4), 0x44444444u);
+  EXPECT_EQ(restored.GetRegister(kSP), 0x80300000u);
+  EXPECT_EQ(restored.GetCpsr(), 0xF0000010u);
+  EXPECT_EQ(restored.GetMemory().Read32(0x1000), 0xCAFEBABEu);
+}
+
+TEST(Cpu, DeserializeFromAnEmptyStreamFailsWithoutCrashing) {
+  ArmInterpreter cpu;
+  std::stringstream empty_stream;
+  EXPECT_FALSE(cpu.Deserialize(empty_stream));
 }

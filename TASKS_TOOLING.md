@@ -86,23 +86,34 @@ voices, media handles) is real, separate work from guest CPU/memory state
 — a stage-one snapshot is useful immediately but will NOT correctly resume
 mid-sound-effect or mid-timer; that's stage two's job.
 
-- [ ] **Stage 1 — CPU + guest memory only:**
-  - [ ] `ArmInterpreter`: serialize all registers, CPSR/flags, mode
-  - [ ] `Memory`: serialize the sparse page map (only allocated pages, not
-        the full 4GB address space) — page index + 4KB contents each
-  - [ ] Simple versioned binary format (a magic/version header first, so
-        stage 2's format can extend it without breaking stage-1-only
-        saves)
-  - [ ] Wire a save/load hook into `game_probe.cpp`'s main loop (hotkey to
-        start; see Phase D for the hotkey trigger)
-  - [ ] Document the known gap loudly (both in this file and any UI/log
-        output): reloading a stage-1-only save resumes guest code/data
-        correctly, but host-side transient state (in-flight timers, active
-        Mixer voices, MediaHle notify registrations) is NOT restored —
-        expect audio/timer glitches immediately after a stage-1 load until
-        the guest naturally re-arms them itself
-  - [ ] Test: save then immediately reload should leave `ArmInterpreter`
-        register state and a probed set of memory addresses byte-identical
+- [x] **Stage 1 — CPU + guest memory only:**
+  - [x] `ArmInterpreter::Serialize`/`Deserialize`: all 16 registers +
+        CPSR, delegating memory to `Memory`'s own (deliberately excludes
+        `call_out_base_`/`call_out_size_`/`call_out_handler_` -- harness
+        wiring, not resumable game state, and the handler is a
+        `std::function` that couldn't be serialized meaningfully anyway)
+  - [x] `Memory::Serialize`/`Deserialize`: only pages actually allocated
+        so far (page index + full 4KB contents each) — `Deserialize`
+        fully replaces existing contents rather than merging
+  - [x] `core/save_state.{h,cpp}`: `SaveState`/`LoadState`, a small magic
+        ("ZBSS") + version header wrapping `ArmInterpreter::Serialize` —
+        version mismatches or a wrong magic fail the load cleanly rather
+        than misreading stage-2 fields that aren't there yet
+  - [x] Wired into `game_probe.cpp`'s main loop: F1 saves to
+        `<rom-path>.savestate` (single fixed slot for now), F2 loads —
+        both show a real success/failure status message
+        (`ShowStatusMessage`), not just silent success
+  - [x] Documented the known gap (both here and in `README.md`'s own
+        Controls section): reloading a stage-1-only save resumes guest
+        code/data correctly, but host-side transient state (in-flight
+        timers, active Mixer voices, MediaHle notify registrations) is
+        NOT restored — expect audio/timer glitches immediately after a
+        stage-1 load until the guest naturally re-arms them itself
+  - [x] Tests: `tests/memory_test.cpp` (round-trip, empty-memory case,
+        truncated-stream failure), `tests/cpu_test.cpp` (round-trip
+        registers+CPSR+memory, empty-stream failure), and
+        `tests/save_state_test.cpp` (the versioned wrapper: round-trip,
+        wrong magic, future version, empty stream) — 9 new tests total
 - [ ] **Stage 2 — full-fidelity, host-side HLE state included:**
   - [ ] Give each stateful HLE class (`MediaHle`, `IShellHle`, `FileHle`,
         `ModRuntime`, `Mixer`, HID device state, ...) an explicit

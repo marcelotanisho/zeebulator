@@ -1,5 +1,7 @@
 #include "core/memory/memory.h"
 
+#include <sstream>
+
 #include <gtest/gtest.h>
 
 using zeebulator::Memory;
@@ -54,4 +56,45 @@ TEST(Memory, UntouchedPagesRemainZero) {
   mem.Write8(0x500, 0x7F);
   EXPECT_EQ(mem.Read8(0x501), 0);
   EXPECT_EQ(mem.Read8(0x4FF), 0);
+}
+
+TEST(Memory, SerializeThenDeserializeRoundTripsAllAllocatedPages) {
+  Memory mem;
+  mem.Write32(0x2000, 0xCAFEBABE);
+  mem.Write8(0x9000, 0x42);  // a second, non-adjacent page
+  mem.Write32(Memory::kPageSize - 2, 0xDEADBEEF);  // straddles two pages
+
+  std::stringstream stream;
+  ASSERT_TRUE(mem.Serialize(stream));
+
+  Memory restored;
+  restored.Write8(0x1, 0xFF);  // pre-existing content Deserialize must discard
+  ASSERT_TRUE(restored.Deserialize(stream));
+
+  EXPECT_EQ(restored.Read32(0x2000), 0xCAFEBABEu);
+  EXPECT_EQ(restored.Read8(0x9000), 0x42);
+  EXPECT_EQ(restored.Read32(Memory::kPageSize - 2), 0xDEADBEEFu);
+  EXPECT_EQ(restored.Read8(0x1), 0) << "Deserialize should replace, not merge";
+}
+
+TEST(Memory, SerializeOfAnEmptyMemoryDeserializesToAllZeros) {
+  Memory mem;
+  std::stringstream stream;
+  ASSERT_TRUE(mem.Serialize(stream));
+
+  Memory restored;
+  ASSERT_TRUE(restored.Deserialize(stream));
+  EXPECT_EQ(restored.Read32(0x1234), 0u);
+}
+
+TEST(Memory, DeserializeFromATruncatedStreamFails) {
+  Memory mem;
+  mem.Write8(0x100, 0xAB);
+  std::stringstream stream;
+  ASSERT_TRUE(mem.Serialize(stream));
+
+  std::string truncated = stream.str().substr(0, 5);  // well short of one full page
+  std::stringstream truncated_stream(truncated);
+  Memory restored;
+  EXPECT_FALSE(restored.Deserialize(truncated_stream));
 }

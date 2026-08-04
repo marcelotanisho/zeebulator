@@ -8,6 +8,8 @@ add_library(zeebulator_core STATIC
   core.cpp
   core.h
   backend.h
+  save_state.cpp
+  save_state.h
   memory/memory.cpp
   memory/memory.h
   cpu/arm_core.h

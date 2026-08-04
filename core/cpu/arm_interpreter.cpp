@@ -123,6 +123,27 @@ void ArmInterpreter::SetRegister(int index, uint32_t value) {
 uint32_t ArmInterpreter::GetCpsr() const { return cpsr_; }
 void ArmInterpreter::SetCpsr(uint32_t value) { cpsr_ = value; }
 
+bool ArmInterpreter::Serialize(std::ostream& out) const {
+  out.write(reinterpret_cast<const char*>(regs_.data()),
+            static_cast<std::streamsize>(regs_.size() * sizeof(uint32_t)));
+  out.write(reinterpret_cast<const char*>(&cpsr_), sizeof(cpsr_));
+  if (!out.good()) return false;
+  return memory_.Serialize(out);
+}
+
+bool ArmInterpreter::Deserialize(std::istream& in) {
+  std::array<uint32_t, 16> new_regs{};
+  uint32_t new_cpsr = 0;
+  in.read(reinterpret_cast<char*>(new_regs.data()),
+          static_cast<std::streamsize>(new_regs.size() * sizeof(uint32_t)));
+  in.read(reinterpret_cast<char*>(&new_cpsr), sizeof(new_cpsr));
+  if (!in.good()) return false;
+  if (!memory_.Deserialize(in)) return false;
+  regs_ = new_regs;
+  cpsr_ = new_cpsr;
+  return true;
+}
+
 void ArmInterpreter::SetCallOutRange(uint32_t base, uint32_t size) {
   call_out_base_ = base;
   call_out_size_ = size;
