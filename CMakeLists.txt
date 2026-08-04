@@ -55,6 +55,36 @@ if(ZEEBULATOR_BUILD_STANDALONE)
   find_package(OpenGL REQUIRED)
 endif()
 
+# Real General MIDI wavetable synthesis (PHASE8_LOG.md's "Sound, round
+# thirteen"): the real Zeebo hardware's own MIDI playback went through
+# Qualcomm's real CMX synthesizer -- a real, GM1/GM2-compliant,
+# wavetable/sample-based engine (confirmed directly in the real Zeebo
+# SDK developer guide, not guessed) -- not the hand-rolled sine/square/
+# sawtooth approximation this project started with. TinySoundFont (MIT
+# license) is a small, single-header real SoundFont2 synthesizer;
+# GeneralUser GS is a real, widely-used GM-compliant SoundFont whose
+# own license explicitly permits bundling in other software projects
+# ("feel free to use it in your software projects... modify the
+# SoundFont bank or its packaging to suit your needs"). This can't
+# reproduce Qualcomm's own proprietary wavetable samples (not publicly
+# available), but both are real GM-standard engines using the same
+# real program-number instrument assignments, so the *instrument
+# choice* matches even though the exact *timbre* isn't byte-identical.
+FetchContent_Declare(
+  tinysoundfont
+  GIT_REPOSITORY https://github.com/schellingb/TinySoundFont.git
+  GIT_TAG 853a0a171759f1ddba0de1442133a75912bbeffa
+)
+FetchContent_MakeAvailable(tinysoundfont)
+
+FetchContent_Declare(
+  generaluser_gs_soundfont
+  URL https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2
+  URL_HASH SHA256=9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe
+  DOWNLOAD_NO_EXTRACT TRUE
+)
+FetchContent_MakeAvailable(generaluser_gs_soundfont)
+
 # Scoped here (after every FetchContent_MakeAvailable above, before any
 # of this project's own add_subdirectory calls below) so it only applies
 # to this project's own targets, not vendored third-party ones (zlib,

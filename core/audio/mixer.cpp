@@ -1,6 +1,7 @@
 #include "core/audio/mixer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 namespace zeebulator {
@@ -8,7 +9,7 @@ namespace zeebulator {
 Mixer::Mixer(int output_sample_rate) : output_sample_rate_(output_sample_rate) {}
 
 Mixer::VoiceId Mixer::Play(std::shared_ptr<const std::vector<int16_t>> samples, int channels,
-                            int sample_rate, bool loop) {
+                            int sample_rate, bool loop, int volume) {
   std::lock_guard<std::mutex> lock(mutex_);
   Voice voice;
   voice.id = next_id_++;
@@ -16,8 +17,16 @@ Mixer::VoiceId Mixer::Play(std::shared_ptr<const std::vector<int16_t>> samples, 
   voice.channels = channels;
   voice.sample_rate = sample_rate;
   voice.loop = loop;
+  voice.volume = std::clamp(volume, 0, 100);
   voices_.push_back(std::move(voice));
   return voices_.back().id;
+}
+
+void Mixer::SetVolume(VoiceId id, int volume) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (Voice& v : voices_) {
+    if (v.id == id) v.volume = std::clamp(volume, 0, 100);
+  }
 }
 
 void Mixer::Stop(VoiceId id) {
@@ -59,30 +68,46 @@ void Mixer::Mix(Backend& backend, size_t frame_count) {
       size_t total_frames = voice.samples->size() / static_cast<size_t>(voice.channels);
       if (total_frames == 0) continue;
 
-      for (size_t i = 0; i < frame_count; ++i) {
-        size_t src_frame = voice.position_frames + i;
+      // Linear resampling: real decoded clips don't all share the
+      // Mixer's fixed output rate (see this class's own doc comment),
+      // so each output frame advances the source position by the
+      // voice's own rate ratio rather than 1:1.
+      const double step = static_cast<double>(voice.sample_rate) / output_sample_rate_;
+      double pos = voice.position_frames;
+      for (size_t i = 0; i < frame_count; ++i, pos += step) {
+        double sample_pos = pos;
         if (voice.loop) {
-          src_frame %= total_frames;
-        } else if (src_frame >= total_frames) {
+          sample_pos = std::fmod(sample_pos, static_cast<double>(total_frames));
+        } else if (sample_pos >= static_cast<double>(total_frames)) {
           break;  // this voice has nothing left to contribute this call
         }
 
-        int16_t left, right;
+        size_t frame0 = static_cast<size_t>(sample_pos);
+        size_t frame1 = voice.loop ? (frame0 + 1) % total_frames
+                                    : std::min(frame0 + 1, total_frames - 1);
+        double frac = sample_pos - static_cast<double>(frame0);
+
+        double gain = voice.volume / 100.0;
+        double left, right;
         if (voice.channels == 2) {
-          left = (*voice.samples)[src_frame * 2];
-          right = (*voice.samples)[src_frame * 2 + 1];
+          left = ((*voice.samples)[frame0 * 2] * (1.0 - frac) + (*voice.samples)[frame1 * 2] * frac) *
+                 gain;
+          right = ((*voice.samples)[frame0 * 2 + 1] * (1.0 - frac) +
+                    (*voice.samples)[frame1 * 2 + 1] * frac) *
+                  gain;
         } else {
-          left = right = (*voice.samples)[src_frame];
+          left = right =
+              ((*voice.samples)[frame0] * (1.0 - frac) + (*voice.samples)[frame1] * frac) * gain;
         }
-        accum[i * 2] += left;
-        accum[i * 2 + 1] += right;
+        accum[i * 2] += static_cast<int32_t>(left);
+        accum[i * 2 + 1] += static_cast<int32_t>(right);
       }
 
       if (voice.loop) {
-        voice.position_frames = (voice.position_frames + frame_count) % total_frames;
+        voice.position_frames = std::fmod(pos, static_cast<double>(total_frames));
       } else {
-        voice.position_frames += frame_count;
-        if (voice.position_frames >= total_frames) voice.finished = true;
+        voice.position_frames = pos;
+        if (voice.position_frames >= static_cast<double>(total_frames)) voice.finished = true;
       }
     }
     voices_.erase(std::remove_if(voices_.begin(), voices_.end(),

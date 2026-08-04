@@ -10,6 +10,9 @@
 
 using zeebulator::ArmInterpreter;
 using zeebulator::HleRuntime;
+using zeebulator::IArmCore;
+using zeebulator::kR0;
+using zeebulator::kR1;
 using zeebulator::MediaHle;
 using zeebulator::Mixer;
 using zeebulator::VirtualFilesystem;
@@ -24,6 +27,7 @@ constexpr uint32_t kScratch = 0x00090000;
 
 // Real MM_PARM_* constants -- see core/brew/media_hle.cpp.
 constexpr uint32_t kParmMediaData = 1;
+constexpr uint32_t kParmVolume = 4;
 constexpr uint32_t kParmPlayRepeat = 11;
 constexpr uint32_t kMmdFileName = 0;
 constexpr uint32_t kMmdBuffer = 1;
@@ -181,6 +185,16 @@ struct Fixture {
   }
 };
 
+class RecordingBackend : public zeebulator::Backend {
+ public:
+  void PushVideoFrame(const void*, int, int, zeebulator::PixelFormat) override {}
+  zeebulator::ZPadState PollInput() override { return {}; }
+  void PushAudioSamples(const int16_t* interleaved_stereo, size_t frame_count, int) override {
+    last_frames.assign(interleaved_stereo, interleaved_stereo + frame_count * 2);
+  }
+  std::vector<int16_t> last_frames;
+};
+
 }  // namespace
 
 // Slot indices, matching AEEIMedia.h's real order (see media_hle.cpp).
@@ -325,6 +339,36 @@ TEST(MediaHle, PlayStartsAMixerVoiceThatMixesRealDecodedSamples) {
   EXPECT_EQ(f.cpu.GetMemory().Read32(pb_addr), 0u);
 }
 
+TEST(MediaHle, SetVolumeIsReflectedByGetVolume) {
+  // Real MM_PARM_VOLUME used to be accepted and silently discarded --
+  // see MediaHle::SetMediaParmImpl's own doc comment.
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+
+  uint32_t p1_addr = kScratch + 0x300;
+  f.hle.CallArmFunction(f.Slot(kGetMediaParm), obj, kParmVolume, p1_addr, 0);
+  EXPECT_EQ(f.cpu.GetMemory().Read32(p1_addr), 100u) << "real AEE_MAX_VOLUME default";
+
+  f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmVolume, 30, 0);
+  f.hle.CallArmFunction(f.Slot(kGetMediaParm), obj, kParmVolume, p1_addr, 0);
+  EXPECT_EQ(f.cpu.GetMemory().Read32(p1_addr), 30u);
+}
+
+TEST(MediaHle, SetVolumeActuallyReducesMixedOutputAmplitude) {
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaData("tone.wav");
+  f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+  f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmVolume, 50, 0);
+  f.hle.CallArmFunction(f.Slot(kPlay), obj);
+
+  RecordingBackend backend;
+  f.mixer.Mix(backend, 1);
+
+  EXPECT_EQ(backend.last_frames[0], 50) << "tone.wav's first real sample is 100 -- at 50% volume "
+                                            "that must reach the Mixer's own output as 50";
+}
+
 TEST(MediaHle, StopEndsPlaybackAndReturnsToReadyState) {
   Fixture f;
   uint32_t obj = f.media_hle.CreateMediaObject();
@@ -444,4 +488,70 @@ TEST(MediaHle, RejectsNonPcmWavInsteadOfMisdecoding) {
   uint32_t result = hle.CallArmFunction(cpu.GetMemory().Read32(kVtable + kSetMediaParm * 4), obj,
                                          kParmMediaData, kScratch, 0);
   EXPECT_NE(result, 0u);
+}
+
+// Real Double Dragon code registers a notify callback for every sound
+// object and relies on it firing (MM_CMD_PLAY/MM_STATUS_DONE) to reset
+// its own per-channel priority bookkeeping once a sound finishes --
+// confirmed via live disassembly of the real registered callback
+// (`ddragonz.mod` 0x11d020/0x11f4dc, see MediaHle's class doc comment).
+// Without Tick() actually firing it, a channel a high-priority sound
+// once claimed stays permanently unusable by anything lower-priority --
+// this is the real, live-reproduced "sound effects stop firing the
+// longer you play" bug this whole investigation chased down.
+TEST(MediaHle, TickFiresRegisteredNotifyWithDoneStatusOnceAVoiceFinishes) {
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaData("tone.wav");
+  f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+
+  int notify_calls = 0;
+  uint32_t notify_user_seen = 0;
+  uint32_t notify_cmd_seen = 0;
+  uint32_t notify_status_seen = 0;
+  uint32_t notify_fn = f.hle.Register([&](IArmCore& core) {
+    ++notify_calls;
+    notify_user_seen = core.GetRegister(kR0);
+    uint32_t notify_struct = core.GetRegister(kR1);
+    notify_cmd_seen = f.cpu.GetMemory().Read32(notify_struct + 8);
+    notify_status_seen = f.cpu.GetMemory().Read32(notify_struct + 16);
+    core.SetRegister(kR0, 0);
+  });
+
+  constexpr uint32_t kUserData = 0x12345678;
+  f.hle.CallArmFunction(f.Slot(kRegisterNotify), obj, notify_fn, kUserData);
+  f.hle.CallArmFunction(f.Slot(kPlay), obj);
+
+  // Not finished yet -- Tick() shouldn't fire anything.
+  f.media_hle.Tick();
+  EXPECT_EQ(notify_calls, 0);
+
+  // Drain the whole (very short, 4-sample) clip.
+  RecordingBackend backend;
+  f.mixer.Mix(backend, 100);
+
+  f.media_hle.Tick();
+  EXPECT_EQ(notify_calls, 1);
+  EXPECT_EQ(notify_user_seen, kUserData);
+  EXPECT_EQ(notify_cmd_seen, 4u) << "MM_CMD_PLAY";
+  EXPECT_EQ(notify_status_seen, 2u) << "MM_STATUS_DONE";
+
+  // Ticking again shouldn't re-fire for the same already-consumed voice.
+  f.media_hle.Tick();
+  EXPECT_EQ(notify_calls, 1);
+}
+
+TEST(MediaHle, TickWithNoRegisteredNotifyDoesNotCrash) {
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaData("tone.wav");
+  f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+  f.hle.CallArmFunction(f.Slot(kPlay), obj);
+
+  RecordingBackend backend;
+  f.mixer.Mix(backend, 100);
+  f.media_hle.Tick();
+
+  uint32_t pb_addr = kScratch + 0x200;
+  EXPECT_EQ(f.hle.CallArmFunction(f.Slot(kGetState), obj, pb_addr), 2u) << "MM_STATE_READY";
 }

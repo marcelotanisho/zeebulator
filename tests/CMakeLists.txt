@@ -32,6 +32,7 @@ add_executable(zeebulator_tests
   mixer_test.cpp
   media_hle_test.cpp
   midi_test.cpp
+  soundfont_synth_test.cpp
   mod_runtime_test.cpp
   font5x7_test.cpp
   scaffold_object_test.cpp

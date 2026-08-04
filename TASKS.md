@@ -746,6 +746,13 @@ Phase 6 — see that phase's writeup.)
 ## Phase 6 — Audio
 Exit criterion: target test game's audio plays back correctly.
 
+**Exit criterion met** (see the Phase 8 sound investigation's "Sound,
+round twelve" in PHASE8_LOG.md / TASKS.md's own Phase 8 section):
+real, audible Double Dragon gameplay music and SFX confirmed live.
+The remaining gap (MIDI music rendered as plain sine tones, no real
+instrument timbre) is a separate, scoped synthesis-quality follow-up,
+not a blocker to this phase's own criterion.
+
 **Both codecs the real target game actually needs (PCM, MIDI) are done
 and verified against real Double Dragon assets; IMA-ADPCM/MP3 are
 deliberately deferred (see research below) — same relationship Phase
@@ -3012,6 +3019,118 @@ playable start-to-finish at full speed, standalone build.
       untried menu path (2-player battle, options) or precise real
       timing. All instrumentation reverted; 315/315 tests pass; no
       code change. See PHASE8_LOG.md's "Sound, round eight" section.
+- [ ] Sound: found the real `Play()`-trigger function itself
+      (`0x11d04c` -- a genuine tail-call to `IMedia::Play()`), and
+      proved nothing calls it, via exhaustive static search (all 780
+      real PIC function-pointer materializations in the ROM, plus a
+      raw-literal scan) and live tracing (a PC-reached watch and a
+      memory-read watch for its address, across idle title screen,
+      scripted play, and genuine human-driven interactive play).
+      Real human input was tried directly this round per round
+      eight's recommendation -- confirmed reaching the emulator
+      correctly (every button press logged a real HID callback) --
+      and still zero `Play()` calls, including at idle title screen
+      where the user confirms music should already be playing. Also
+      ruled out a preference/mute gate (`GetPrefs` is never called by
+      real code at all) and a separate download-progress interface
+      class (`0x01005511`, confirmed unrelated to media playback).
+      Every concrete hypothesis so far has been tried and ruled out;
+      this is now a genuine open question. No code change this round.
+      See PHASE8_LOG.md's "Sound, round nine" section.
+- [ ] Sound: found and confirmed live (via real human interactive
+      play) a real per-entity event dispatcher (`0x10d4c8`) that
+      calls `Play()` for event code 2 -- fires every tick, proving
+      it's live per-frame code, but its event pointer was null on
+      every observed call across an extended real play session
+      (movement, combat, landed hits). A second promising lead (a
+      "global Play() trampoline" that fired continuously during real
+      play) was traced precisely and conclusively closed as a real,
+      unrelated OpenGL `glBlendFunc(GL_SRC_ALPHA, ...)` call reached
+      through a generic shared vtable-dispatch trampoline that
+      happens to reuse the same slot number as `IMedia::Play()` --
+      confirmed via the real GL object address and vtable slot this
+      project itself built, not left ambiguous. No code change this
+      round. See PHASE8_LOG.md's "Sound, round ten" section.
+- [ ] Sound: traced the real per-entity event dispatcher's full data
+      path (its event pointer comes from a shared, 60+-call-site
+      helper `0x10b270` that does a real, populated table lookup --
+      not an empty/missing-resource issue). Live-instrumented the
+      actual event code and had the user drive the most exhaustive
+      real session yet: combat, multiple enemy defeats, losing all
+      lives, a full game-over cycle, back to title. Across 87,116 real
+      non-null event deliveries, the event code was always `0` or `1`
+      -- never the `2` that triggers `Play()`. Also ruled out a stale/
+      incomplete ROM dump: this project's `Double Dragon/mod/274754/`
+      files are byte-for-byte identical (sha256) to the independently-
+      sourced `Double Dragon (Brazil) (Es,Pt).zip`. This is the
+      cleanest negative result so far -- either this ROM's own data
+      never populates a sound-trigger event under any reachable real
+      player action, or a second, still-unfound sound-triggering
+      mechanism exists elsewhere. No code change this round. See
+      PHASE8_LOG.md's "Sound, round eleven" section.
+- [x] Sound: **real gameplay audio confirmed working.** The actual gap
+      was never a missing `Play()` trigger -- it was two sibling
+      `CreateInstance` class IDs (`0x0100550a`/`0x01005501`) that had
+      been silently failing since round one/two of this investigation,
+      alongside the one class this project happened to register first
+      (`0x01005500`). Real Double Dragon sets up multiple separate
+      sound channels through a shared generic init routine; fixed by
+      registering the same factory for all three real class IDs
+      (`tools/game_probe.cpp`). Confirmed live: real, audible music and
+      SFX for the first time this investigation. Follow-up quality
+      fixes once audio was actually reachable to listen to: real
+      per-voice resampling in `core/audio/mixer.cpp` (was frame-for-
+      frame with no rate conversion at all), skipping real GM
+      percussion-channel (10/index 9) notes in `RenderMidiToPcm`
+      rather than mis-rendering them as pitches, and real post-mix
+      peak normalization instead of a hard clamp (real, measured
+      clipping distortion from dense 9-channel polyphony). Remaining
+      "sounds like a cheap synthesizer" quality gap confirmed (with
+      the user) to be melody/timing-correct, timbre-only -- our
+      renderer has no real instrument-timbre modeling at all, a
+      separate, scoped follow-up task, not a bug. See PHASE8_LOG.md's
+      "Sound, round twelve" section.
+- [x] Sound: **real General MIDI wavetable synthesis.** Researched what
+      real synthesizer Double Dragon's music actually targeted rather
+      than guessing (real Zeebo SDK developer guide: Qualcomm's real
+      CMX synthesizer, GM1/GM2-compliant, wavetable/sample-based) and
+      replaced the hand-rolled sine/square/sawtooth synth with a real
+      soundfont-based one -- TinySoundFont (MIT) + GeneralUser GS (a
+      real, license-verified GM soundfont), both fetched via CMake
+      `FetchContent`, not committed. New `core/audio/soundfont_synth.
+      {h,cpp}`, wired into `MediaHle` as an optional dependency (tests
+      keep using the fast hand-rolled fallback; real usage in
+      `tools/game_probe.cpp` uses the real soundfont). Confirmed live
+      by the user: correct GM instrument assignment (real Overdriven
+      Guitar/Distortion Guitar/Electric Bass/String Ensemble/Brass
+      Section programs all reading as themselves). Follow-up: real
+      music was drowning out real SFX -- measured live (peak pinned at
+      the exact int16 ceiling, real clipping); implemented real
+      per-voice `MM_PARM_VOLUME` support in `Mixer`/`MediaHle` (a
+      previously-documented, never-applied gap) first, confirmed live
+      it wasn't the real cause, then found and fixed the actual one
+      (`SoundFontSynth` had no headroom at all) with a real -16dB gain
+      reduction, tuned to the user's own live A/B comparison against
+      the real reference. See PHASE8_LOG.md's "Sound, round thirteen"
+      section.
+- [x] Sound: some real SFX (e.g. one of the two punch attacks) never
+      play. Round fourteen instrumented the full real chain
+      (`GetHandler`/`CreateInstance`/decode/`Play`) and ruled out an
+      HLE bug entirely (every call at every stage succeeded). Round
+      fifteen found the real explanation: real Double Dragon code uses
+      a per-character, 4-channel round-robin priority-stealing sound
+      system, gated by a stored per-channel priority stamp that only a
+      real `MM_STATUS_DONE` notification (fired via `IMEDIA_
+      RegisterNotify`'s callback) resets -- and `MediaHle` never fired
+      that notification (a previously-documented, not-yet-implemented
+      gap). Added `MediaHle::Tick()`, firing the real registered
+      callback with a real `AEEMediaCmdNotify`-shaped struct once a
+      voice finishes, wired into `tools/game_probe.cpp`'s main loop.
+      Live-confirmed fixed by the user across multiple extended play
+      sessions (punch/enemy-hit/enemy-fall sounds all kept working),
+      matching real Infuse behavior for the first time this
+      investigation directly compared against it. See PHASE8_LOG.md's
+      "Sound, round fifteen" section.
 - [ ] Add any needed per-title quirks to `core/brew/compat/`, keyed by game
       hash — never inline in general HLE code (Design Principle 5)
 - [ ] Lock in this title as a permanent CI regression fixture once it passes

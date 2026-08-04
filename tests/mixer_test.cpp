@@ -134,6 +134,75 @@ TEST(Mixer, StopRemovesVoiceEntirely) {
   EXPECT_EQ(backend.last_frames[0], 0) << "stopped voice contributes nothing";
 }
 
+TEST(Mixer, VoiceAtHalfOutputRatePlaysBackAtHalfSpeed) {
+  // A voice recorded at half the Mixer's output rate must take twice
+  // as many output frames to fully play -- otherwise it's being read
+  // frame-for-frame against the wrong rate (the real "extremely deep"
+  // pitch bug this project shipped, PHASE8_LOG.md's "Sound, round
+  // twelve"), not resampled.
+  Mixer mixer(22050);
+  RecordingBackend backend;
+  Mixer::VoiceId id =
+      mixer.Play(MakeMono({0, 100, 200, 300}), /*channels=*/1, /*sample_rate=*/11025,
+                 /*loop=*/false);
+
+  mixer.Mix(backend, 7);  // not quite enough output frames to finish yet
+  EXPECT_TRUE(mixer.IsPlaying(id));
+
+  mixer.Mix(backend, 1);  // the 8th output frame finishes a 4-source-frame clip at half rate
+  EXPECT_FALSE(mixer.IsPlaying(id));
+}
+
+TEST(Mixer, ResamplingLinearlyInterpolatesBetweenSourceFrames) {
+  Mixer mixer(22050);
+  RecordingBackend backend;
+  mixer.Play(MakeMono({0, 100}), /*channels=*/1, /*sample_rate=*/11025, /*loop=*/false);
+
+  mixer.Mix(backend, 2);  // step=0.5: output frame 1 lands exactly halfway between 0 and 100
+  EXPECT_EQ(backend.last_frames[0], 0);
+  EXPECT_EQ(backend.last_frames[2], 50);
+}
+
+TEST(Mixer, PlayAtHalfVolumeHalvesOutputAmplitude) {
+  // Real MM_PARM_VOLUME (see MediaHle::SetMediaParmImpl) used to be
+  // accepted and silently discarded -- a real, dense soundfont-
+  // rendered music voice drowning out real, much quieter SFX voices in
+  // this shared Mixer (PHASE8_LOG.md's "Sound, round thirteen") is
+  // exactly the real symptom actually applying it fixes.
+  Mixer mixer(22050);
+  RecordingBackend backend;
+  mixer.Play(MakeMono({1000}), 1, 22050, false, /*volume=*/50);
+
+  mixer.Mix(backend, 1);
+
+  EXPECT_EQ(backend.last_frames[0], 500);
+  EXPECT_EQ(backend.last_frames[1], 500);
+}
+
+TEST(Mixer, PlayAtZeroVolumeIsSilent) {
+  Mixer mixer(22050);
+  RecordingBackend backend;
+  mixer.Play(MakeMono({30000}), 1, 22050, false, /*volume=*/0);
+
+  mixer.Mix(backend, 1);
+
+  EXPECT_EQ(backend.last_frames[0], 0);
+  EXPECT_EQ(backend.last_frames[1], 0);
+}
+
+TEST(Mixer, SetVolumeChangesAnAlreadyPlayingVoice) {
+  Mixer mixer(22050);
+  RecordingBackend backend;
+  Mixer::VoiceId id = mixer.Play(MakeMono({1000, 1000}), 1, 22050, false);
+
+  mixer.Mix(backend, 1);
+  EXPECT_EQ(backend.last_frames[0], 1000) << "starts at the real default (full) volume";
+
+  mixer.SetVolume(id, 20);
+  mixer.Mix(backend, 1);
+  EXPECT_EQ(backend.last_frames[0], 200) << "a live volume change must affect the very next Mix()";
+}
+
 TEST(Mixer, MixWithNoActiveVoicesPushesSilence) {
   Mixer mixer(22050);
   RecordingBackend backend;

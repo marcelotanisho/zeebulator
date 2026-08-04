@@ -74,14 +74,30 @@ std::optional<std::vector<uint8_t>> Gunzip(const std::vector<uint8_t>& compresse
 // on (unlike DecodeAudioFile) -- sniffs the real container magic bytes
 // instead: `RIFF` for WAV, `MThd` for Standard MIDI. Assumes the caller
 // has already gunzipped it if needed.
-std::optional<WavAudio> DecodeAudioBuffer(const std::vector<uint8_t>& data, int mix_sample_rate) {
+// Renders parsed MIDI through the real soundfont synth when one was
+// given and actually loaded, falling back to the hand-rolled
+// approximation otherwise (see MediaHle's own constructor doc comment
+// and RenderMidiToPcm's doc comment).
+WavAudio RenderMidi(const MidiFile& midi, int mix_sample_rate, SoundFontSynth* soundfont_synth) {
+  if (soundfont_synth != nullptr && soundfont_synth->IsLoaded()) {
+    WavAudio out;
+    out.sample_rate = mix_sample_rate;
+    out.channels = 1;
+    out.samples = soundfont_synth->RenderMidi(midi, mix_sample_rate);
+    return out;
+  }
+  return RenderMidiToPcm(midi, mix_sample_rate);
+}
+
+std::optional<WavAudio> DecodeAudioBuffer(const std::vector<uint8_t>& data, int mix_sample_rate,
+                                           SoundFontSynth* soundfont_synth) {
   if (data.size() >= 4 && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F') {
     return ParseWav(data.data(), data.size());
   }
   if (data.size() >= 4 && data[0] == 'M' && data[1] == 'T' && data[2] == 'h' && data[3] == 'd') {
     auto midi = ParseMidi(data.data(), data.size());
     if (!midi) return std::nullopt;
-    return RenderMidiToPcm(*midi, mix_sample_rate);
+    return RenderMidi(*midi, mix_sample_rate, soundfont_synth);
   }
   return std::nullopt;
 }
@@ -103,14 +119,14 @@ bool HasExtension(const std::string& name, const char* ext) {
 
 // Codec is chosen by file extension -- see MediaHle's class doc.
 std::optional<WavAudio> DecodeAudioFile(const std::string& name, const std::vector<uint8_t>& data,
-                                         int mix_sample_rate) {
+                                         int mix_sample_rate, SoundFontSynth* soundfont_synth) {
   if (HasExtension(name, ".wav")) {
     return ParseWav(data.data(), data.size());
   }
   if (HasExtension(name, ".mid") || HasExtension(name, ".midi")) {
     auto midi = ParseMidi(data.data(), data.size());
     if (!midi) return std::nullopt;
-    return RenderMidiToPcm(*midi, mix_sample_rate);
+    return RenderMidi(*midi, mix_sample_rate, soundfont_synth);
   }
   return std::nullopt;
 }
@@ -118,9 +134,10 @@ std::optional<WavAudio> DecodeAudioFile(const std::string& name, const std::vect
 }  // namespace
 
 MediaHle::MediaHle(Memory& memory, HleRuntime& hle, const VirtualFilesystem& vfs, Mixer& mixer,
-                    uint32_t object_region_start)
-    : memory_(memory), hle_(hle), vfs_(vfs), mixer_(mixer),
-      next_object_address_(object_region_start) {}
+                    uint32_t object_region_start, SoundFontSynth* soundfont_synth)
+    : memory_(memory), hle_(hle), vfs_(vfs), mixer_(mixer), soundfont_synth_(soundfont_synth),
+      next_object_address_(object_region_start),
+      notify_scratch_address_(object_region_start + kNotifyScratchOffset) {}
 
 uint32_t MediaHle::AllocateMediaObject() {
   uint32_t obj_addr = next_object_address_;
@@ -169,7 +186,7 @@ void MediaHle::SetMediaParmImpl(IArmCore& core) {
         core.SetRegister(kR0, 1);
         return;
       }
-      decoded = DecodeAudioFile(name, *file_data, mixer_.OutputSampleRate());
+      decoded = DecodeAudioFile(name, *file_data, mixer_.OutputSampleRate(), soundfont_synth_);
     } else if (cls_data == kMmdBuffer) {
       std::vector<uint8_t> raw(data_size);
       for (uint32_t i = 0; i < data_size; ++i) raw[i] = memory_.Read8(data_ptr + i);
@@ -179,10 +196,10 @@ void MediaHle::SetMediaParmImpl(IArmCore& core) {
       constexpr uint8_t kGzipMagic[2] = {0x1f, 0x8b};
       if (raw.size() >= 2 && raw[0] == kGzipMagic[0] && raw[1] == kGzipMagic[1]) {
         if (auto decompressed = Gunzip(raw)) {
-          decoded = DecodeAudioBuffer(*decompressed, mixer_.OutputSampleRate());
+          decoded = DecodeAudioBuffer(*decompressed, mixer_.OutputSampleRate(), soundfont_synth_);
         }
       } else {
-        decoded = DecodeAudioBuffer(raw, mixer_.OutputSampleRate());
+        decoded = DecodeAudioBuffer(raw, mixer_.OutputSampleRate(), soundfont_synth_);
       }
     } else {
       core.SetRegister(kR0, 1);  // MMD_ISOURCE not supported yet
@@ -207,10 +224,27 @@ void MediaHle::SetMediaParmImpl(IArmCore& core) {
     return;
   }
 
-  if (param_id == kParmChannelShare || param_id == kParmVolume) {
+  if (param_id == kParmVolume) {
+    // Real MM_PARM_VOLUME, 0-100 (AEE_MAX_VOLUME) -- actually applied
+    // now (this used to be accepted-but-ignored, a real, documented
+    // gap: with real gameplay music actually audible for the first
+    // time, PHASE8_LOG.md's "Sound, round twelve", a real, dense
+    // multi-channel soundfont-rendered track drowning out real, much
+    // quieter SFX voices in the shared Mixer turned out to be exactly
+    // the kind of real per-channel volume balancing this parameter
+    // exists for). Also updates an already-playing voice immediately,
+    // not just future Play() calls -- real code can legitimately call
+    // this after Play() has already started.
+    media.volume = std::clamp(static_cast<int32_t>(p1), 0, 100);
+    if (media.has_voice) mixer_.SetVolume(media.voice, media.volume);
+    core.SetRegister(kR0, 0);
+    return;
+  }
+
+  if (param_id == kParmChannelShare) {
     // Accepted, not yet applied to playback -- see class doc. Returning
     // success (rather than an error) avoids spuriously failing real app
-    // logic that doesn't strictly depend on these actually taking effect.
+    // logic that doesn't strictly depend on this actually taking effect.
     core.SetRegister(kR0, 0);
     return;
   }
@@ -221,10 +255,12 @@ void MediaHle::SetMediaParmImpl(IArmCore& core) {
 
 void MediaHle::GetMediaParmImpl(IArmCore& core) {
   // int GetMediaParm(IMedia *po, int nParamID, int32 *pP1, int32 *pP2)
+  auto it = media_by_object_.find(core.GetRegister(kR0));
   auto param_id = static_cast<int32_t>(core.GetRegister(kR1));
   uint32_t p_p1 = core.GetRegister(kR2);
   if (param_id == kParmVolume) {
-    if (p_p1 != 0) memory_.Write32(p_p1, 100);  // AEE_MAX_VOLUME -- see class doc
+    int volume = (it != media_by_object_.end()) ? it->second.volume : 100;
+    if (p_p1 != 0) memory_.Write32(p_p1, static_cast<uint32_t>(volume));
     core.SetRegister(kR0, 0);
     return;
   }
@@ -239,10 +275,29 @@ void MediaHle::PlayImpl(IArmCore& core) {
   }
   Media& media = it->second;
   if (media.has_voice) mixer_.Stop(media.voice);
-  media.voice = mixer_.Play(media.samples, media.channels, media.sample_rate, media.loop);
+  media.voice =
+      mixer_.Play(media.samples, media.channels, media.sample_rate, media.loop, media.volume);
   media.has_voice = true;
   media.state = kStatePlay;
   core.SetRegister(kR0, 0);
+}
+
+void MediaHle::Tick() {
+  // Real AEEMediaCmdNotify field values this project's own live trace of
+  // the real registered callback (`ddragonz.mod` 0x11d020) confirmed it
+  // actually reads -- see the class doc comment.
+  constexpr uint32_t kMmCmdPlay = 4;
+  constexpr uint32_t kMmStatusDone = 2;
+  memory_.Write32(notify_scratch_address_ + 8, kMmCmdPlay);
+  memory_.Write32(notify_scratch_address_ + 16, kMmStatusDone);
+
+  for (auto& [object_addr, media] : media_by_object_) {
+    if (!media.has_voice || media.notify_fn == 0) continue;
+    if (mixer_.IsPlaying(media.voice)) continue;
+    media.has_voice = false;
+    media.state = kStateReady;
+    hle_.CallArmFunction(media.notify_fn, media.notify_user, notify_scratch_address_);
+  }
 }
 
 void MediaHle::StopImpl(IArmCore& core) {

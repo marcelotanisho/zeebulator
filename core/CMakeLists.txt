@@ -1,3 +1,9 @@
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/audio/soundfont_path.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/soundfont_path.h
+  @ONLY
+)
+
 add_library(zeebulator_core STATIC
   core.cpp
   core.h
@@ -27,6 +33,8 @@ add_library(zeebulator_core STATIC
   loader/atitc.h
   audio/mixer.cpp
   audio/mixer.h
+  audio/soundfont_synth.cpp
+  audio/soundfont_synth.h
   brew/hle_runtime.cpp
   brew/hle_runtime.h
   brew/interface_object.cpp
@@ -60,3 +68,10 @@ target_include_directories(zeebulator_core PUBLIC ${PROJECT_SOURCE_DIR})
 # generated zconf.h (in the binary dir) needs to be added explicitly.
 target_include_directories(zeebulator_core PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_core PRIVATE zlibstatic)
+# TinySoundFont is header-only (no CMakeLists of its own to depend on);
+# the generated/ dir holds this build's own configure_file output
+# (soundfont_path.h, the real fetched .sf2's real absolute path).
+target_include_directories(zeebulator_core PRIVATE
+  ${tinysoundfont_SOURCE_DIR}
+  ${CMAKE_CURRENT_BINARY_DIR}/generated
+)

@@ -1,5 +1,6 @@
 #include "core/loader/midi.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <gtest/gtest.h>
@@ -243,6 +244,113 @@ TEST(Midi, RenderProducesNonSilentAudioAtCorrectPitch) {
   double seconds = static_cast<double>(pcm.samples.size()) / pcm.sample_rate;
   double approx_freq = (crossings / 2.0) / seconds;
   EXPECT_NEAR(approx_freq, 440.0, 30.0);
+}
+
+TEST(Midi, ProgramChangeIsCapturedAtNoteOnTimeNotRetroactively) {
+  std::vector<uint8_t> events;
+  AppendVlq(events, 0);
+  events.insert(events.end(), {0xC0, 48});  // Program Change, channel 0, program 48 (Strings)
+  AppendVlq(events, 0);
+  events.insert(events.end(), {0x90, 60, 100});  // Note On -- must capture program 48
+  AppendVlq(events, 10);
+  events.insert(events.end(), {0xC0, 0});  // Program Change to 0 -- must NOT affect the note above
+  AppendVlq(events, 470);
+  events.insert(events.end(), {0x80, 60, 0});
+
+  auto bytes = BuildMidi(480, events);
+  auto midi = ParseMidi(bytes.data(), bytes.size());
+  ASSERT_TRUE(midi.has_value());
+  ASSERT_EQ(midi->notes.size(), 1u);
+  EXPECT_EQ(midi->notes[0].program, 48)
+      << "a later Program Change on the same channel must not retroactively change an "
+         "already-started note's captured program";
+}
+
+double Rms(const std::vector<int16_t>& samples, size_t begin, size_t end) {
+  double sum_sq = 0.0;
+  for (size_t i = begin; i < end; ++i) sum_sq += static_cast<double>(samples[i]) * samples[i];
+  return std::sqrt(sum_sq / static_cast<double>(end - begin));
+}
+
+TEST(Midi, PluckEnvelopeInstrumentsDecayOverTheNotesOwnDuration) {
+  // Program 0 (Acoustic Grand Piano) is a real GM "plucked" family --
+  // real piano notes audibly lose energy over their own duration even
+  // while held, unlike a sustained organ/pad tone.
+  std::vector<uint8_t> events;
+  AppendVlq(events, 0);
+  events.insert(events.end(), {0x90, 69, 127});
+  AppendVlq(events, 1920);  // a long-held note: 4 quarter notes = 2s at default tempo
+  events.insert(events.end(), {0x80, 69, 0});
+
+  auto bytes = BuildMidi(480, events);
+  auto midi = ParseMidi(bytes.data(), bytes.size());
+  ASSERT_TRUE(midi.has_value());
+  ASSERT_EQ(midi->notes[0].program, 0);
+
+  auto pcm = RenderMidiToPcm(*midi, 22050);
+  size_t n = pcm.samples.size();
+  double rms_first_half = Rms(pcm.samples, 0, n / 2);
+  double rms_second_half = Rms(pcm.samples, n / 2, n);
+  EXPECT_LT(rms_second_half, rms_first_half * 0.5)
+      << "a plucked-family note must audibly decay well before its own end";
+}
+
+TEST(Midi, SustainEnvelopeInstrumentsDoNotDecayOverTheNotesOwnDuration) {
+  std::vector<uint8_t> events;
+  AppendVlq(events, 0);
+  events.insert(events.end(), {0xC0, 48});  // Strings -- a real GM "sustained" family
+  AppendVlq(events, 0);
+  events.insert(events.end(), {0x90, 69, 127});
+  AppendVlq(events, 1920);
+  events.insert(events.end(), {0x80, 69, 0});
+
+  auto bytes = BuildMidi(480, events);
+  auto midi = ParseMidi(bytes.data(), bytes.size());
+  ASSERT_TRUE(midi.has_value());
+  ASSERT_EQ(midi->notes[0].program, 48);
+
+  auto pcm = RenderMidiToPcm(*midi, 22050);
+  size_t n = pcm.samples.size();
+  double rms_first_half = Rms(pcm.samples, 0, n / 2);
+  double rms_second_half = Rms(pcm.samples, n / 2, n);
+  EXPECT_GT(rms_second_half, rms_first_half * 0.8)
+      << "a sustained-family note must hold its loudness across its own duration";
+}
+
+TEST(Midi, PercussionChannelNotesRenderAsANoiseBurstNotAPitchedTone) {
+  // Real GM channel 10 (index 9) note numbers mean specific drum
+  // sounds, not pitches -- running them through the pitched
+  // synthesizer produced real, confirmed-live spurious low-frequency
+  // "boom" throughout real background music (PHASE8_LOG.md's "Sound,
+  // round twelve"). A note on channel 9 renders as a short, fast-
+  // decaying noise burst -- audibly present (unlike total silence,
+  // which read as a "missing instrument" once real gameplay music was
+  // reachable to listen to) but not a pitched tone.
+  std::vector<uint8_t> events;
+  AppendVlq(events, 0);
+  events.insert(events.end(), {0x99, 36, 127});  // Note On, channel 9, note 36 ("bass drum")
+  AppendVlq(events, 480);
+  events.insert(events.end(), {0x89, 36, 0});  // Note Off, channel 9
+
+  auto bytes = BuildMidi(480, events);
+  auto midi = ParseMidi(bytes.data(), bytes.size());
+  ASSERT_TRUE(midi.has_value());
+  ASSERT_EQ(midi->notes.size(), 1u);
+  EXPECT_EQ(midi->notes[0].channel, 9);
+
+  auto pcm = RenderMidiToPcm(*midi, 22050);
+  bool any_nonzero = false;
+  for (int16_t s : pcm.samples) {
+    if (s != 0) any_nonzero = true;
+  }
+  EXPECT_TRUE(any_nonzero) << "a percussion hit must be audible, not silent";
+
+  // A real percussive hit decays away in well under the source note's
+  // own (musically meaningless, for real drum note numbers) duration.
+  size_t tail_samples = std::min(pcm.samples.size(), static_cast<size_t>(0.05 * pcm.sample_rate));
+  double tail_rms = Rms(pcm.samples, pcm.samples.size() - tail_samples, pcm.samples.size());
+  EXPECT_LT(tail_rms, 500.0) << "a real percussion hit must have decayed away well before the "
+                                 "end of a half-second source note";
 }
 
 TEST(Midi, EmptyFileRendersWithoutCrashing) {

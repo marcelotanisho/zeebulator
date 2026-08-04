@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "core/audio/mixer.h"
+#include "core/audio/soundfont_synth.h"
 #include "core/brew/file_hle.h"
 #include "core/brew/gl_hle.h"
 #include "core/brew/idisplay.h"
@@ -425,7 +426,16 @@ int main(int argc, char** argv) {
   zeebulator::GlHle gl_hle(backend);
   zeebulator::Mixer mixer(kAudioSampleRate);
   zeebulator::FileHle file_hle(cpu.GetMemory(), hle, vfs, /*object_region=*/0x80100000);
-  zeebulator::MediaHle media_hle(cpu.GetMemory(), hle, vfs, mixer, /*object_region=*/0x80200000);
+  // Real General MIDI wavetable synthesis (see CMakeLists.txt's own doc
+  // comment) instead of MediaHle's hand-rolled fallback -- real, not
+  // guessed: loading a real ~32MB soundfont once here, not per-clip.
+  zeebulator::SoundFontSynth soundfont_synth;
+  if (!soundfont_synth.IsLoaded()) {
+    std::fprintf(stderr, "warning: real soundfont failed to load -- falling back to the "
+                          "hand-rolled MIDI synth\n");
+  }
+  zeebulator::MediaHle media_hle(cpu.GetMemory(), hle, vfs, mixer, /*object_region=*/0x80200000,
+                                  &soundfont_synth);
 
   constexpr uint32_t kBase = 0x00100000;
   zeebulator::LoadMod(cpu, mod_data, kBase);
@@ -1155,6 +1165,30 @@ int main(int argc, char** argv) {
   // silently stomp.
   shell_hle.RegisterFactory(/*AEECLSID_MEDIA=*/0x01005500,
                              [&media_hle]() { return media_hle.CreateMediaObject(); });
+  // Sibling media class IDs, found live via the same LR-capture as
+  // AEECLSID_MEDIA above (PHASE8_LOG.md, "Sound, round twelve"): a
+  // second, near-identical real function (`ddragonz.mod` 0x10a0c0)
+  // runs the exact same GetHandler-less CreateInstance+SetMediaParm+
+  // RegisterNotify sequence as the confirmed AEECLSID_MEDIA one, but
+  // takes its class ID as a caller-supplied parameter rather than a
+  // hardcoded constant -- and real, repeated `CreateInstance` calls
+  // for `0x0100550a` and `0x01005501` were captured live at that exact
+  // function's own call site (`lr=0x0010a12c`) from the very first
+  // round of this investigation, never followed up on until real
+  // gameplay sound was confirmed to work via another real
+  // implementation of this same ROM, which ruled out "this build's
+  // data never triggers sound" and pointed back at gaps in this
+  // project's own class registration instead. Almost certainly
+  // separate real sound *channels* (e.g. one or more SFX channels
+  // distinct from the confirmed background-music one) that were
+  // silently failing `CreateInstance` this entire investigation --
+  // registered here with the same generic per-call factory, since
+  // this project's own `MediaHle` doesn't dispatch on codec/class
+  // identity at all (it sniffs real container magic bytes instead).
+  shell_hle.RegisterFactory(0x0100550a,
+                             [&media_hle]() { return media_hle.CreateMediaObject(); });
+  shell_hle.RegisterFactory(0x01005501,
+                             [&media_hle]() { return media_hle.CreateMediaObject(); });
 
   auto& mem = cpu.GetMemory();
   // A real stack, well past the loaded module -- ArmInterpreter::Reset()
@@ -1403,6 +1437,10 @@ int main(int argc, char** argv) {
         }
       }
     }
+    // Fires real MM_STATUS_DONE notifications for voices that finished
+    // since the last tick -- see MediaHle::Tick's own doc comment; real
+    // Double Dragon sound-channel bookkeeping depends on this firing.
+    media_hle.Tick();
     // Real BREW timers are one-shot -- real game code re-arms its own via
     // ISHELL_SetTimer from inside the callback (see core/brew/ishell.h).
     // Driving these is what actually runs the game's per-frame logic;

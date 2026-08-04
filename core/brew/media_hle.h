@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/audio/mixer.h"
+#include "core/audio/soundfont_synth.h"
 #include "core/brew/hle_runtime.h"
 #include "core/brew/virtual_filesystem.h"
 #include "core/loader/midi.h"
@@ -64,17 +65,42 @@ namespace zeebulator {
 // not needed by it, so they're not implemented; ParseWav already
 // rejects non-PCM `fmt ` tags explicitly rather than mis-decoding them.
 //
-// RegisterNotify stores the callback but does not fire it yet --
-// invoking it on real state transitions (MM_STATUS_START/DONE/ABORT)
-// needs a periodic "tick" hook this project doesn't have wired into a
-// real run loop yet (Phase 7/8 territory), not a fundamental gap.
+// RegisterNotify stores the callback and Tick() fires it (MM_CMD_PLAY,
+// MM_STATUS_DONE) once a voice finishes playing naturally -- real
+// Double Dragon code depends on this, not just a nice-to-have. Traced
+// live (PHASE8_LOG.md, the sound investigation's final round): every
+// sound-media object the game creates registers the same real callback
+// (`ddragonz.mod` 0x11d020 -> 0x11f4dc), and the real per-attack sound
+// system uses a small pool of shared "channels" per character, each
+// gated by a stored priority stamp that only a request of equal-or-
+// higher priority may reclaim. The DONE notification's own real
+// callback body is what resets a channel's stored stamp (or re-arms a
+// looping one via Resume) once its sound actually finishes -- without
+// ever firing it, a channel a high-priority sound once claimed stays
+// permanently unusable by anything lower-priority, which is exactly
+// the real, live-reproduced "sound effects stop firing the longer you
+// play" symptom this was chasing. The real callback only reads two
+// fields of its `AEEMediaCmdNotify`-shaped second argument (confirmed
+// via that same disassembly, not guessed): `+8` must equal 4
+// (MM_CMD_PLAY) and `+16` is the status (2 = MM_STATUS_DONE, 3 =
+// MM_STATUS_ABORT; both route to the same real handler) -- so that's
+// all this class populates.
 class MediaHle {
  public:
   // `object_region_start` is a bump-allocated address range this class
   // owns for newly-created IMedia object headers (4 bytes each) -- must
-  // not overlap any other memory region the caller is using.
+  // not overlap any other memory region the caller is using. A small
+  // slice near the far end of that same region (see kNotifyScratchOffset)
+  // is reserved for the scratch AEEMediaCmdNotify struct Tick() reuses
+  // for every real notification it fires, well past any real object
+  // count a play session could reach.
+  // `soundfont_synth`, if non-null and `IsLoaded()`, is used for real
+  // MIDI decode instead of `RenderMidiToPcm`'s hand-rolled synth (see
+  // that function's own doc comment) -- optional so existing tests
+  // that don't care about real instrument timbre don't have to pay for
+  // loading a real ~32MB soundfont just to construct a MediaHle.
   MediaHle(Memory& memory, HleRuntime& hle, const VirtualFilesystem& vfs, Mixer& mixer,
-           uint32_t object_region_start);
+           uint32_t object_region_start, SoundFontSynth* soundfont_synth = nullptr);
 
   // Builds the shared IMedia vtable, used by every IMedia instance this
   // class creates.
@@ -88,6 +114,16 @@ class MediaHle {
   // whole real call chain. Returns the IMedia* value the app should
   // receive; Build() must be called first.
   uint32_t CreateMediaObject();
+
+  // Fires the real MM_STATUS_DONE notification (see class doc) for
+  // every voice that has finished playing naturally since the last
+  // Tick(), then marks it no longer playing. Call once per real game
+  // loop iteration, the same way ModRuntime::Tick()/IShellHle::Tick()
+  // already are -- a voice that finishes between two Tick() calls is
+  // only noticed at the next one, matching how a real interrupt-driven
+  // notification would still need a live app to be pumping its event
+  // loop to receive it.
+  void Tick();
 
  private:
   enum MediaState {
@@ -105,6 +141,7 @@ class MediaHle {
     Mixer::VoiceId voice = 0;
     bool has_voice = false;
     bool loop = false;
+    int volume = 100;  // 0-100, AEE_MAX_VOLUME convention
     int state = kStateIdle;
     uint32_t notify_fn = 0;
     uint32_t notify_user = 0;
@@ -122,12 +159,18 @@ class MediaHle {
 
   uint32_t AllocateMediaObject();
 
+  // Comfortably past any real object count a play session could reach
+  // (see kNotifyScratchOffset's own doc comment on the constructor).
+  static constexpr uint32_t kNotifyScratchOffset = 0xF0000;
+
   Memory& memory_;
   HleRuntime& hle_;
   const VirtualFilesystem& vfs_;
   Mixer& mixer_;
+  SoundFontSynth* soundfont_synth_;
   uint32_t vtable_address_ = 0;
   uint32_t next_object_address_;
+  uint32_t notify_scratch_address_;
   std::unordered_map<uint32_t, Media> media_by_object_;
 };
 

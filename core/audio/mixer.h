@@ -15,14 +15,19 @@ namespace zeebulator {
 // pushed to the Backend Abstraction Interface. Mono voices are
 // duplicated to both output channels.
 //
-// Deliberately does not resample: every voice is read frame-for-frame
-// against the Mixer's fixed output rate. A voice recorded at a different
-// rate would play back at the wrong pitch/speed -- a real, documented
-// limitation, not currently a problem since every real Double Dragon
-// audio asset is uniformly 22050Hz (confirmed against the actual game
-// data, see TASKS.md Phase 6). Revisit if a future title needs mixed
-// sample rates.
+// Each voice is linearly resampled from its own real decoded rate to
+// the Mixer's fixed output rate. The "every real Double Dragon audio
+// asset is uniformly 22050Hz" assumption this class used to rely on
+// (see TASKS.md Phase 6) turned out to be based on only one of the
+// game's real sound channels -- once the other real channels this
+// project had been silently failing to create (`0x0100550a`/
+// `0x01005501`, PHASE8_LOG.md's "Sound, round twelve") started
+// actually decoding real audio, their real declared WAV rates
+// differed from 22050Hz, and playing them back frame-for-frame against
+// a fixed-rate output (no resampling) is exactly what produced the
+// real, confirmed-live "extremely deep" pitch bug that fix surfaced.
 //
+
 // Thread-safety: `Mix()` is expected to run on a real-time audio
 // callback thread (see Sdl2AudioBackend) while Play/Stop/Pause/Resume
 // run on the emulation thread -- guarded by a single mutex, simple
@@ -38,9 +43,18 @@ class Mixer {
   // Starts playing `samples` (interleaved if stereo) from the beginning.
   // The Mixer does not decode anything itself -- the caller (IMedia HLE)
   // already produced the whole clip. `loop` repeats from the start
-  // instead of finishing.
+  // instead of finishing. `volume` is 0-100 (AEE_MAX_VOLUME), matching
+  // the real IMedia MM_PARM_VOLUME convention this project's own
+  // MediaHle already documents -- out-of-range values are clamped, not
+  // rejected.
   VoiceId Play(std::shared_ptr<const std::vector<int16_t>> samples, int channels,
-               int sample_rate, bool loop);
+               int sample_rate, bool loop, int volume = 100);
+
+  // Changes an already-playing voice's volume in place (real MM_PARM_
+  // VOLUME can be set after Play() has already started, not just
+  // before it -- see MediaHle::SetMediaParmImpl). No-op for an unknown
+  // id.
+  void SetVolume(VoiceId id, int volume);
 
   void Stop(VoiceId id);
   void Pause(VoiceId id);
@@ -62,8 +76,9 @@ class Mixer {
     int channels;
     int sample_rate;
     bool loop;
+    int volume = 100;  // 0-100, AEE_MAX_VOLUME convention
     bool paused = false;
-    size_t position_frames = 0;  // in source frames, not bytes/samples
+    double position_frames = 0.0;  // in source frames, not bytes/samples
     bool finished = false;
   };
 

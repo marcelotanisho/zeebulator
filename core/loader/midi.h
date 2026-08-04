@@ -10,13 +10,17 @@
 namespace zeebulator {
 
 // One note, already merged across all tracks/channels into a single
-// absolute-tick timeline. Percussion (channel 10) isn't distinguished
-// from melodic notes -- see RenderMidiToPcm.
+// absolute-tick timeline.
 struct MidiNote {
   uint32_t start_tick;
   uint32_t end_tick;
   int note;      // MIDI note number, 0-127 (69 = A4 = 440Hz)
   int velocity;  // 0-127
+  int channel;   // 0-15; channel 9 is the real GM percussion channel
+  int program;   // 0-127, the real GM instrument active on this note's
+                 // channel via the most recent Program Change event
+                 // before this note started (0 -- Acoustic Grand Piano
+                 // -- if the file never sent one, per the GM default).
 };
 
 struct MidiFile {
@@ -28,6 +32,15 @@ struct MidiFile {
   std::vector<std::pair<uint32_t, uint32_t>> tempo_changes;
 };
 
+// Converts an absolute tick position to real seconds, honoring every
+// real tempo change up to that point. Shared by this file's own
+// hand-rolled synth (`RenderMidiToPcm`) and
+// `core/audio/soundfont_synth.cpp`'s real soundfont-based one -- both
+// need the same real tick->time conversion to place real note events
+// at the right real moment.
+double TickToSeconds(uint32_t tick, int division,
+                      const std::vector<std::pair<uint32_t, uint32_t>>& tempo_changes);
+
 // Parses a Standard MIDI File, format 0 or 1 (format 2 -- independent
 // unsynced sequences -- and SMPTE-timecode division are explicitly
 // rejected rather than mis-parsed; real Double Dragon .mid files are
@@ -36,14 +49,31 @@ struct MidiFile {
 std::optional<MidiFile> ParseMidi(const uint8_t* data, size_t size);
 
 // Renders a parsed MIDI file to PCM with a simple synthesizer: every
-// note becomes a sine tone at its correct pitch and real-time position
-// (ticks converted to seconds via the tempo map), amplitude scaled by
-// velocity, with a short linear fade in/out to avoid clicks between
-// notes. Deliberately no instrument/timbre modeling (every note sounds
-// the same regardless of MIDI program-change events) and no special
-// handling for the percussion channel -- a documented, honest scope for
-// a first correct-but-crude synthesizer, not a full General MIDI
-// implementation.
+// melodic note becomes a tone at its correct pitch and real-time
+// position (ticks converted to seconds via the tempo map), amplitude
+// scaled by velocity. Real GM channel-10 percussion notes
+// (`channel == 9`) are skipped entirely rather than rendered as pitched
+// tones -- their note numbers mean specific drum sounds, not pitches,
+// and running them through the pitched synthesizer produced real,
+// confirmed-live spurious low-frequency content (heard as "extremely
+// deep and very loud" background music, PHASE8_LOG.md's "Sound, round
+// twelve") once real gameplay music was actually reachable for the
+// first time.
+//
+// Each note's own real GM program number (`MidiNote::program`) selects
+// one of a small number of waveform/envelope archetypes grouped by the
+// real, standardized GM program-number families (piano, organ, guitar,
+// bass, strings, brass, etc. -- see `TimbreForProgram` in the .cpp):
+// plucked/percussive families (piano, guitar, bass, chromatic
+// percussion, ethnic, percussive) get a triangle or sawtooth wave with
+// a real exponential decay envelope instead of a flat sustain, since a
+// real piano/guitar/bass note audibly loses energy over its own
+// duration even while held; sustained families (organ, strings, brass,
+// pads, etc.) keep a flat sustain with a short linear fade in/out.
+// Still deliberately no real sampled-instrument or soundfont-based
+// rendering (a much larger undertaking than this synthesizer's own
+// documented scope) -- this is a better-shaped crude synthesizer, not
+// a full General MIDI implementation.
 WavAudio RenderMidiToPcm(const MidiFile& midi, int sample_rate);
 
 }  // namespace zeebulator

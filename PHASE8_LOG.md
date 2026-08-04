@@ -8254,3 +8254,630 @@ since this round's evidence suggests the automated input pattern
 itself may not be exercising whatever real condition `Play()` needs.
 All instrumentation reverted; `git diff --stat` clean; 315/315 tests
 pass; no code change this round.
+
+## Sound, round nine: found the real `Play()` trigger function itself
+(never called); real human interactive input closes off the
+"automated input pattern" hypothesis
+
+Prompted by the user's own report that Double Dragon's title screen is
+*known* to have music and sound effects from the start -- a much
+stronger constraint than "some gameplay moment should have sound,"
+since it means the trigger shouldn't require deep state at all.
+
+**Traced the real boot-time media init function in full**
+(`ddragonz.mod` `0x10a1e0`), instruction by instruction, not just the
+call sites already known from earlier rounds. Confirmed it runs at
+real boot (before any input), and does exactly this and nothing more:
+calls the real IShell slot-43 method (currently a stub returning
+success), calls `GetHandler(0x01005500)` (succeeds, this project's own
+round-one fix), calls `CreateInstance(0x01005500)` (succeeds, this
+project's own round-two fix, object `0x80200000`), then
+`SetMediaParm(kParmMediaData)` (succeeds -- the real decoded audio
+this project's round-six fix produces), `SetMediaParm(kParmChannelShare)`
+(no-op success), and finally `RegisterNotify(fn=0x0011d020, pUser=this)`.
+Then it returns. **It never calls `Play()`.** This is a complete,
+line-by-line account of the function, not a sample of call sites --
+there is no other branch or exit path in it that could call `Play()`.
+
+**Found a second, real, and directly relevant function**:
+`0x0011d04c`. Given a context pointer `Q` (fields at `Q+8` = a media
+object, `Q+40` = an optional secondary context), it does a real,
+concrete `IMedia::Play()` tail-call (vtable offset `0x18` = slot 6) on
+the object at `Q+8` if `Q+40` is null, or on a secondary object if not
+-- and in the latter case, sets a completion byte at
+`(*(Q+40))+37` afterward. This is exactly the shape of a real
+"start this sound" entry point, not a guess -- the vtable-slot-6
+`Play()` call is unambiguous in the disassembly.
+
+**But nothing calls it.** Searched exhaustively for how code could
+reach `0x11d04c`:
+- Scanned the *entire* binary for the real ARM PIC function-pointer
+  idiom (`ldr rX,[pc,#N]; add rX,pc,rX`) used everywhere else in this
+  project's own confirmed callback-registration sites (e.g. this same
+  round's confirmation that `0x0011d020` is materialized this exact
+  way at `0x10a394`/`0x10a398`) -- 780 such pairs found across the
+  whole ROM, none resolve to `0x11d04c`.
+- Searched for `0x11d04c` stored as a raw absolute 32-bit literal
+  anywhere in the binary (the way a non-PIC jump/vtable table would
+  store it) -- none found.
+- Added a live PC-reached watch (`fetch_addr == 0x11d04c`) and a live
+  memory-read watch (any `Read32` returning exactly `0x0011d04c`) to
+  the interpreter/memory layer. Ran a full session: idle boot (30s,
+  title screen, zero input), scripted menu+combat driving, and then
+  **genuine human-driven interactive play** (the user, not
+  `send_key.py`) covering many distinct real button IDs
+  (`0x106c3fe/3ff/400/401/403/40b/40c`) across an extended real
+  session from title through combat. Zero hits, on either watch,
+  across all of it.
+
+**This closes off round eight's open hypothesis.** Round eight's
+recommendation was "try real human input, since the automated pattern
+might not be exercising whatever `Play()` needs." That's now been
+tried directly, extensively, and it made no difference: real human
+input reaches the emulator correctly (confirmed live -- every single
+button press produced a real `HID button callback(...) ran` log line,
+proving genuine delivery, not a focus/input-plumbing problem), and
+still zero `Play()` calls, including at the pure idle title screen
+where the user confirms music should already be playing with no input
+at all.
+
+**Also tested and ruled out a preference/mute-gate hypothesis**: the
+same PIC-idiom scan applied to `IShell::GetPrefs`/`SetPrefs` (slots
+23/24) via the real, confirmed IShell call-trampoline pattern (the
+`ldr r0,[r7,#-4]; ldr r0,[r0,#192]; bx r0` sequence used at every
+other real IShell call site this project has found) turns up real
+call sites for slots 2 (`CreateInstance`), 32 (`GetHandler`), and 43
+(the unconfirmed slot), but never 23 or 24. Real code never calls
+`GetPrefs` at all -- a mute/volume preference check gating playback is
+not the explanation.
+
+**Also traced and ruled out** a separate, real class (`0x01005511`,
+already scaffolded in `game_probe.cpp` from earlier investigation) as
+a candidate for the missing link -- confirmed it's Zeebo's real
+download/install-progress notification service (reached only after a
+real HID controller is detected, gated behind a real environment-
+readiness byte), sharing the *same* generic notify callback
+(`0x0011d020`) as the media object purely because that callback is a
+generic dispatcher, not because the two subsystems are related. Its
+own "call vtable slot 11 with literal 100" action is on a completely
+different object (the download-progress interface, not `IMedia`) --
+confirmed by tracing its real callback body (`0x11f4dc`) directly
+rather than relying on the prior summary of it.
+
+**Where this leaves the investigation**: every concrete, testable
+hypothesis this project has been able to form has now been tried and
+ruled out -- decode correctness (proven right), `GetHandler`/
+`CreateInstance` gating (fixed, confirmed), a preference/mute gate
+(ruled out), the download-progress subsystem (ruled out, unrelated),
+and "the input pattern doesn't exercise the trigger" (ruled out by
+real human play). A real, concrete `Play()`-calling function exists in
+the ROM and is provably never reached by any static or dynamic
+analysis this project has been able to perform, including a real human
+at the controls for an extended session starting from a cold title
+screen. This is now a genuine open question rather than an
+unexplored one. All instrumentation reverted; `git diff --stat` clean;
+no code change this round.
+
+## Sound, round ten: a real per-entity event dispatcher confirmed live
+(never carries a real event); a promising "global Play() trampoline"
+lead conclusively closed as a real, unrelated GL call
+
+Prompted by the user's own confirmation that Double Dragon's title
+screen is known to have music and sound effects from the start --
+narrowing the search to whatever should fire with zero player input.
+
+**Broadened the search past the single `0x11d04c` candidate** by
+scanning the whole ROM for the real instruction *shape* of a
+`Play()`-type call site (vtable-deref, then `+0x18`/slot-6 load, then
+an indirect call) rather than one specific address. Found 14 real
+matches. Two were the already-known internals of `0x11d04c` itself
+(confirms the scan is sound); the rest were new candidates.
+
+**Found and confirmed live a real per-entity event dispatcher**
+(`0x10d4c8`): takes `(self, pEvent)`; if `pEvent` is null, delegates
+elsewhere immediately; otherwise switches on `*pEvent` (event codes
+0-3), and for event code 2 specifically, selects a sound ID (`0xbe2`)
+and calls the same-shaped `Play()`-style trampoline on the entity's
+own media object (`self+8`, the same offset this project has
+confirmed the real `IMedia` object lives at in every other function
+this investigation has traced). Two real, direct `bl` callers found
+(`0x10b1b8`, `0x10b340`), themselves gated by a real "did this
+per-frame animation value change" comparison -- the classic shape of
+an animation-frame-triggered sound event.
+
+Instrumented all three addresses live (dispatcher entry, its event-2
+branch, and the trampoline target) and had the user drive real,
+extended interactive gameplay -- movement, repeated attacks, landing
+hits on enemies. **The dispatcher fires continuously, every tick,
+confirming this is real, live, per-frame entity-update code, not dead
+weight.** But its event pointer was `NULL` on every single call
+observed, across the whole session. The event-2/`Play()` branch never
+fired.
+
+**A second, separate real call site initially looked like the
+breakthrough**: a different function (reached via `bl 0x124118`) that
+also matched the `Play()`-shaped scan, and which *did* fire
+continuously during real gameplay (confirmed live, repeatedly, not a
+one-off). Traced its target precisely: it fetches an object pointer
+from a fixed global slot (`0x14ccb4`, real address, computed and
+confirmed live -- not a guess), dereferences it for a vtable, and
+calls vtable slot 6 on it. Added a live probe on the exact call target
+and the global slot's live value. Result: global slot resolves to
+`0x80008000` -- **the project's own GL interface object**
+(`GlHle::BuildGl`'s `object_address`, `tools/game_probe.cpp`), not
+`IMedia`. Vtable slot 6 on the real GL interface (verified directly
+against the slot ordering in `GlHle::BuildGl`, sourced from the real
+extracted `AEEGL.h`) is `glBlendFunc`. The call's own argument,
+`0x302`, is the real OpenGL ES enum value for `GL_SRC_ALPHA`. This is
+a real, legitimate rendering call (almost certainly a hit-flash or
+sprite-transparency blend effect), reached via a shared/generic
+"call vtable slot N on a fixed global object" trampoline utility that
+just happens to reuse slot 6 -- the same numeric slot as `IMedia`'s
+`Play()` -- for a completely different interface. A real, valuable,
+and now conclusively closed false positive: confirmed via concrete,
+named evidence (a real object address this project itself allocated,
+a real vtable slot this project itself built, a real matching OpenGL
+enum), not left ambiguous.
+
+**Where this leaves the investigation**: the one per-entity dispatcher
+genuinely capable of calling real `IMedia::Play()` (`0x10d4c8`,
+event code 2) is confirmed live and running every tick, but never
+once carried a real event through an extended real human play session
+covering movement, sustained combat, and landed hits. Combined with
+round nine's findings (the boot-time `Play()`-trigger function
+`0x11d04c` also never reached, `GetPrefs` never called, the
+download-progress interface confirmed unrelated), this round adds:
+the dispatcher that *would* trigger `Play()` is real, live, and
+reachable, but whatever real per-frame condition is supposed to post
+a non-null event to it never did, across the most extensive real
+testing this investigation has run. All instrumentation reverted;
+`git diff --stat` clean; 315/315 tests pass; no code change this
+round.
+
+## Sound, round eleven: traced the real per-entity event dispatcher's
+actual live data (not just whether it's reached) across the most
+exhaustive real session yet -- the data value that would trigger
+`Play()` never once appears
+
+Direct continuation of round ten's dispatcher (`0x10d4c8`). Round ten
+established it fires live but with a null event pointer from its two
+statically-discovered combat call sites. This round broadened the
+search to every real caller.
+
+**Found the true breadth of the mechanism**: `0x10d4c8`'s event
+pointer is populated by a shared helper (`0x10b270`) with 60+ real
+call sites scattered across `0x104e5c`-`0x109c3c` -- a widely-used
+per-entity animation/state utility, not something specific to one
+function. Traced `0x10b270` itself: it does a real per-category table
+lookup (`entity+category*4+0x3000+{0xb84,0xc30,0xd88,0xcdc}`, category
+`0x25`/37 observed live) to find a candidate event value, checks it
+against a real `0xffff` "no entry" sentinel (confirmed live: real
+values seen were `0/9/0xd/0x3f/0x71/0xa1/0xd3/0x104` -- the table is
+genuinely populated, never empty), then only delivers the event to
+`0x10d4c8` if that value differs from the previously-recorded one (a
+real "did this change" gate).
+
+**Live-instrumented the actual event pointer, its dereferenced value,
+and whether `Play()`'s branch (`0x10d564`, event code `2`) is ever
+reached**, then had the user drive an exhaustive real session: normal
+combat (as before), then explicitly defeating multiple enemies, then
+deliberately losing all three lives, sitting through the real continue
+countdown, reaching a genuine game-over state, and returning to the
+title screen. Result across **87,116 real, non-null event
+deliveries** (not a small sample -- confirmed live via five distinct
+real caller sites, including the exact combat dispatch site from round
+ten, 371 of those deliveries): the dereferenced event code was **`0`
+or `1` in every single case, never `2` or `3`**. `Play()`'s branch
+(`0x10d564`) was hit zero times. No crash, no wandering, process
+healthy throughout.
+
+**Ruled out a stale/incomplete ROM dump as the explanation**: this
+project's own `research/games/Double Dragon/mod/274754/` files
+(already used for this entire investigation) are byte-for-byte
+identical (`sha256sum`, all three of `ddragonz.mod`/`data.ggz`/
+`sound.ggz`) to the ones inside `Double Dragon (Brazil) (Es,Pt).zip`,
+the project's other independently-sourced copy of the same title. Not
+a demo-vs-retail difference -- there is only one real copy of this
+ROM in this project, and it's the one already under test.
+
+**Where this leaves the investigation**: this is the cleanest and
+most exhaustive negative result yet. The mechanism capable of
+triggering `Play()` is real, confirmed alive, confirmed carrying real
+(non-null, non-sentinel, table-driven) data continuously throughout
+gameplay -- and the specific data value that would mean "play a
+sound" has not appeared once across a session covering every normal
+player action this project can identify (movement, every attack type
+tried, landing hits, taking damage, dying, a full game-over cycle).
+Two real possibilities remain: (a) this exact ROM's own data tables
+genuinely never populate a `2`/`3` event under any real, reachable
+player action (a property of the shipped title itself, not of this
+project's emulation), or (b) a second, structurally different
+sound-triggering mechanism exists elsewhere in the ROM that hasn't
+been found despite exhaustive vtable-shaped-call-site scanning,
+`GetPrefs` call-site scanning, and this round's full data-path trace.
+All instrumentation reverted; `git diff --stat` clean; 315/315 tests
+pass; no code change this round.
+
+## Sound, round twelve: real gameplay audio confirmed working -- the
+missing piece was two sibling `CreateInstance` class IDs, silently
+failing since round one
+
+The user independently ran this exact ROM through another real Zeebo
+tool ("Infuse") and confirmed genuine gameplay sound -- ruling out
+round eleven's "this build's data never triggers a sound event" theory
+outright, and reframing the entire investigation: the gap was in this
+project's own class registration, not the ROM's content.
+
+**Revisited two real, never-followed-up `CreateInstance` failures**
+from round one/two of this investigation: `0x0100550a` and
+`0x01005501`, requested repeatedly at `lr=0x0010a12c` from the very
+first live capture, alongside the confirmed-working `0x01005500`
+(`AEECLSID_MEDIA`). Found the real function they're requested from
+(`ddragonz.mod` `0x10a0c0`): a near-identical twin of the already-
+understood `AEECLSID_MEDIA` init function (`0x10a1e0`), running the
+same `CreateInstance`+`SetMediaParm`+`RegisterNotify` sequence, but
+taking its class ID as a real caller-supplied parameter (`r5`) rather
+than a hardcoded constant -- and never calling `GetHandler` itself.
+Real Double Dragon sets up **multiple separate sound channels**
+(background music plus at least one further channel, likely SFX) via
+this shared generic setup routine; only the one this project happened
+to hardcode (`0x01005500`) ever succeeded, so every real channel using
+`0x0100550a`/`0x01005501` failed `CreateInstance` silently, this
+entire investigation, without ever crashing or logging an obvious
+error.
+
+**Fix**: registered the same generic `MediaHle::CreateMediaObject()`
+factory for both sibling class IDs too (`tools/game_probe.cpp`) --
+this project's own `MediaHle` never dispatched on codec/class identity
+in the first place (it sniffs real container magic bytes), so no
+other change was needed.
+
+**Verified live, immediately**: real, audible gameplay sound for the
+first time this entire investigation -- confirmed directly by the
+user. Real `MediaHle::PlayImpl` calls now fire for three distinct real
+objects with three distinct real decoded clips (`0x80200000`: 38,878
+samples; `0x80200004`: 34,081 samples; `0x80200008`: 1,046,798 samples
+-- the ~47s real MIDI-rendered background music from round six, now
+actually audible for the first time).
+
+**Follow-up audio-quality issues found and fixed, once real audio was
+actually reachable to listen to**:
+- The user reported the (now-audible) music as "extremely deep and
+  very loud." Isolated the exact decoded PCM buffer to a standalone
+  WAV file (bypassing the Mixer/backend entirely) and confirmed live
+  the same real distortion is present in the raw decode itself, not
+  introduced downstream.
+- `core/audio/mixer.cpp`'s `Mix()` never resampled -- every voice was
+  read frame-for-frame against the Mixer's fixed output rate
+  regardless of its own real decoded rate, a real, previously-
+  documented "not a problem since every asset is 22050Hz" assumption
+  that broke as soon as real, previously-unreachable channels started
+  decoding real content. Replaced with real linear resampling (a
+  fractional source position, advanced by each voice's own real
+  rate ratio). Didn't fix this specific complaint (all three real
+  clips here happen to already be 22050Hz) but is a real, now-fixed
+  correctness gap for whatever real asset isn't.
+- Instrumented `RenderMidiToPcm` live: the real background music track
+  is 1,788 real notes across 9 real simultaneous MIDI channels
+  (including real GM channel 10/index 9, the percussion channel --
+  404 of those notes), spanning real note numbers 29-84 (~44Hz-1047Hz).
+  This project's synthesizer had never distinguished the percussion
+  channel from melodic ones (a documented, known gap from earlier
+  work) -- real channel-10 note *numbers* mean specific drum sounds,
+  not pitches, so running them through the pitched sine synthesizer
+  injected real spurious low-frequency content throughout the track.
+  Fixed: `MidiNote` now carries its real source channel, and
+  `RenderMidiToPcm` skips real channel-9 notes entirely rather than
+  mis-rendering them.
+- The fixed per-note headroom (`0.2f` amplitude, sized for ~5
+  simultaneous notes) plus a hard per-sample clamp meant real, dense
+  9-channel polyphony regularly exceeded full scale -- confirmed live,
+  ~5-7% of samples pinned at the exact int16 limit, real audible
+  clipping distortion. Replaced the hard clamp with real post-mix
+  peak normalization (scale the whole clip down by its own real peak
+  only when that peak exceeds full scale), removing the clipping
+  without touching any note's real loudness relative to any other.
+- None of the three fixes above changed the user's actual complaint.
+  Asked directly, and confirmed: the real melody, real rhythm, and
+  real tempo are all correct -- it's recognizably the right piece,
+  just through what the user accurately described as a "cheap/toy"
+  synthesizer voice. This isolates the remaining gap precisely: every
+  real note (`RenderMidiToPcm`) is still a plain sine tone with no
+  real instrument timbre modeling at all (an explicitly documented,
+  known scope limitation from when this synthesizer was first built,
+  not a new bug) -- a real, correctly-decoded, correctly-timed MIDI
+  performance rendered through a synthesis engine several real steps
+  short of sounding like real instruments. A different, much larger
+  kind of task than anything else in this investigation (real
+  per-GM-program waveform/timbre modeling, or a real sampled-
+  instrument/soundfont-based renderer), not a bug to keep chasing the
+  same way as the rest of this investigation.
+
+**Where this leaves the investigation**: real audible gameplay sound
+is confirmed working for the first time. The original blocking
+question this entire investigation chased ("why does `Play()` never
+get called") is resolved -- it wasn't a missing trigger at all, it was
+missing class registrations from round one that silently broke every
+channel except the one this project happened to test first. What
+remains is a scoped, well-understood synthesis-quality gap (plain sine
+tones vs. real instrument timbres), not an open mystery. `git diff
+--stat`: real changes in `tools/game_probe.cpp` (the two sibling
+factory registrations), `core/audio/mixer.{h,cpp}` (real resampling),
+`core/loader/midi.{h,cpp}` (real percussion-channel skip + real
+post-mix normalization), plus new real test coverage in
+`tests/mixer_test.cpp` and `tests/midi_test.cpp`. 318/318 tests pass.
+
+
+
+## Sound, round thirteen: real General MIDI wavetable synthesis (a
+soundfont, not a hand-tuned approximation), plus real per-voice
+volume/headroom control
+
+Round twelve's hand-rolled synthesizer got individual instruments
+correctly differentiated and correctly decaying/sustaining, but the
+user's own direct comparison against real gameplay music was clear:
+"nothing like the real thing." The user then asked a well-founded
+architectural question -- shouldn't the real instrument sound live in
+the game's own files? -- which surfaced an important correction:
+Double Dragon's music is Standard MIDI Files, which contain only note
+events (pitch, timing, velocity, program number), never audio. On real
+hardware, the actual sound came from the platform's own MIDI
+synthesizer, not the game's own assets.
+
+**Researched what that real synthesizer actually was**, rather than
+guessing: the Zeebo SDK's own developer guide
+(`research/docs/sdk_installer_extract/ZeeboSDKPackage-1.2.4/
+ZeeboDeveloperGuide0.97.pdf`, real hardware built on a Qualcomm
+MSM7201A chipset) documents MIDI playback going through Qualcomm's
+**CMX** synthesizer -- a real, GM1/GM2-compliant, wavetable/sample-
+based engine (72-voice polyphony, 44kHz, 512KB wavetable), not FM
+synthesis and not a hand-tuned waveform approximation. This confirmed
+a soundfont-based renderer is the architecturally correct direction
+(the same synthesis *style* as the real hardware), even though
+Qualcomm's own proprietary wavetable samples aren't publicly
+available -- what's achievable is the same standardized GM instrument
+*assignment* (a compliant soundfont's program 29 is "Overdriven
+Guitar," exactly like CMX's own), not byte-identical *timbre*.
+
+**Two licensed external dependencies added**, both verified directly
+rather than assumed: TinySoundFont (MIT license, `schellingb/
+TinySoundFont`, a small single-header SoundFont2 synthesizer, fetched
+via CMake `FetchContent` pinned to a specific commit) and GeneralUser
+GS (a widely-used GM-compliant SoundFont whose own license explicitly
+permits bundling in other software projects -- confirmed by fetching
+its actual license text, not assumed -- also fetched via
+`FetchContent` with a `URL_HASH` for integrity; 32.3MB, confirmed a
+valid `RIFF`/`SoundFont` file via `file`). Neither is committed to the
+repo, matching this project's existing zlib/SDL2/googletest
+`FetchContent` pattern. `core/audio/soundfont_path.h.in` is a
+`configure_file` template resolving to the fetched file's real
+absolute path on each machine.
+
+**New `core/audio/soundfont_synth.{h,cpp}`** (`SoundFontSynth`): loads
+the bundled soundfont once, and `RenderMidi()` drives note-on/note-
+off/program-change events through it in absolute-time order (built
+from `MidiFile::notes`, using the same `TickToSeconds` this project's
+hand-rolled synth already used -- promoted out of `midi.cpp`'s
+anonymous namespace into a shared public declaration in `midi.h` so
+both renderers use the same tick->time conversion). Real GM channel-10
+percussion is handled by the soundfont's own drum kit (bank 128, via
+`tsf_channel_set_presetnumber`'s `flag_mididrums` argument), not this
+project's own hand-rolled percussion classification -- that logic now
+belongs only to the fallback synth.
+
+**Wired into `MediaHle`** via a new optional `SoundFontSynth*`
+constructor parameter (defaults to `nullptr`, so every existing test
+construction call site needed zero changes) -- when non-null and
+loaded, real MIDI decode uses it instead of the hand-rolled
+`RenderMidiToPcm`, which stays as a tested fallback (and is what every
+existing unit test still exercises, avoiding a ~32MB soundfont load
+per test). `tools/game_probe.cpp` constructs one `SoundFontSynth` for
+the whole process lifetime and passes it in.
+
+**Verified live, immediately**: confirmed directly by the user --
+"instruments seem right" -- correct General MIDI instrument assignment
+(programs 29/30 = Overdriven/Distortion Guitar, 33 = Electric Bass, 48
+= String Ensemble, 61 = Brass Section, all reading correctly as
+themselves) replacing the hand-rolled synth's crude sine/square/
+sawtooth approximation entirely.
+
+**Follow-up balance issue found and fixed**, once real instruments
+were actually audible to judge balance with: the user reported real
+gameplay music drowning out the SFX. Measured directly (a temporary
+per-`Play()` peak/RMS instrumentation, reverted after use): the
+soundfont-rendered background music was hitting **peak=32767 -- the
+exact int16 ceiling, genuine clipping** -- with RMS 22,673, against
+WAV-based SFX voices sitting at RMS ~2,500-4,600. The first
+hypothesis -- the already-documented but never-applied `MM_PARM_
+VOLUME` (`core/brew/media_hle.cpp`'s own long-standing "accepted, not
+yet applied" gap) -- was implemented properly: `Mixer` gained a
+per-voice `volume` field (`Play()`'s new parameter, plus a new
+`SetVolume()` for already-playing voices), and
+`MediaHle::SetMediaParmImpl`/`GetMediaParmImpl` now actually store and
+apply it. Confirmed live this didn't change the symptom (real Double
+Dragon code apparently never sets differing per-channel volumes here),
+so the real cause was elsewhere: `SoundFontSynth`'s own internal
+mixing of up to 9 simultaneous channels, with no headroom management
+at all (`tsf_set_output`'s own `global_gain_db` parameter was 0dB).
+Fixed with a -16dB gain reduction applied *before* TinySoundFont's own
+internal render (not a post-render scale-down, which can only turn
+down audio that's already been distorted by clipping) -- re-measured
+live: RMS dropped from 22,673 to a level comparable to the SFX, peak
+no longer pinned at the ceiling. The -16dB figure came from the user's
+own direct A/B comparison against the real reference ("still a bit
+loud... let's go like 10% lower" -- 20*log10(0.9) is ~-0.9dB, applied
+on top of an initial -15dB first pass).
+
+**Where this leaves the investigation**: audible, correctly-balanced
+gameplay music and SFX, using correct General MIDI instrument
+assignments through a real soundfont synthesizer, confirmed
+correct-sounding live by the user against a real reference. New test
+coverage: `tests/soundfont_synth_test.cpp` (the bundled soundfont
+actually loads; a note is audible; two distinct GM program families
+render audibly differently; channel-10 percussion produces audible
+drum-kit output; an empty MIDI file renders a single silent sample
+without crashing) and new `Mixer`/`MediaHle` volume tests
+(`tests/mixer_test.cpp`, `tests/media_hle_test.cpp`). All temporary
+instrumentation reverted; `git diff --stat` clean of debug cruft;
+331/331 tests pass.
+
+## Sound, round fourteen: some real SFX (e.g. one of the two punch
+attacks) never play -- confirmed to be outside this project's own HLE
+pipeline entirely
+
+The user reported a specific, reproducible pattern: left-arm punches
+have sound, right-arm punches never do, and a sound "disappeared
+completely" after landing a hit on an enemy.
+
+**Instrumented the full real chain** (`GetHandler`, `CreateInstance`,
+`SetMediaParm`'s decode path, `Play`) with live success/failure
+logging and had the user reproduce the exact same sequence. Result:
+every single real call at every stage succeeded. 2 real `GetHandler`
+calls, both success; 17 real `CreateInstance` calls for real media
+classes (`0x01005500`/`0x01005501`/`0x0100550a`), zero failures (the
+only real failures were pre-existing, already-known-unrelated classes
+this project has never needed, `0x01001002`/`0x0102f679`/
+`0x0102f681`/`0x01030852`); 18 real `SetMediaParm` decode calls, all
+"OK", zero decode failures; 14 real `Play()` calls, all "OK", zero
+playback failures.
+
+**This rules out an HLE registration/decode/playback bug entirely**
+for whatever produced the reported symptom -- there is no error
+anywhere in this project's own real pipeline to fix. The real
+explanation has to be the same category of gap round eleven already
+mapped in exhaustive depth: real game code that, for some real
+actions, never calls `Play()` (or even `CreateInstance`) at all. Round
+eleven traced the real per-entity event dispatcher this depends on
+down to a specific data-driven gate and confirmed live (87,116 real
+non-null event deliveries) that the specific value needed to trigger
+`Play()` never appeared during an exhaustive real session covering
+combat, multiple enemy defeats, and a full game-over cycle -- this
+round's "right punch never plays, left punch does" is a much more
+specific, reproducible instance of that same real, still-unresolved
+question (what real condition, if any, would ever produce that
+trigger value), not a new one.
+
+**Where this leaves the investigation**: every fixable gap this
+project's own HLE can account for has been found and fixed --
+registration, decode, mixing, timbre, balance. What's left (some real
+SFX genuinely never triggering `Play()`) is the same real open
+question round eleven already invested extremely heavily in without a
+resolution, not a quick follow-up. No code change this round (pure
+diagnostic); all temporary instrumentation reverted; 331/331 tests
+pass.
+
+## Sound, round fifteen: found and fixed the real bug -- `RegisterNotify`
+was never firing, so a real per-channel priority-stealing system could
+never reclaim a channel once a higher-priority sound had claimed it
+
+Picked back up with a corrected reproduction protocol: pausing/
+unpausing and having the user press exactly one real key (`x`) per
+punch, tracking every `Play()` live against every press. This
+surfaced an error in round fourteen's own button-UID assumption:
+`0x106c403` (used throughout the earlier "left/right punch" theory)
+is not an attack button at all -- it's `SdlKeyToHidButton`'s `kBack`
+(`tools/game_probe.cpp`), mapped from Enter/Backspace, the real
+title/menu-confirm button (already correctly documented as such in
+that function's own doc comment). The real, sole punch button is
+`SDLK_x` -> `kButton2` = `0x106c40b`. The earlier "left punch always
+sounds, right punch never does" pattern was very likely this same
+mislabeling: attributing the menu-confirm chime (which naturally
+always succeeds, since it isn't gated by any of what follows) to one
+of the two "punch" buttons.
+
+With the real button confirmed, live testing found real punch presses
+*do* call `Play()` early in a session and *stop* calling it the longer
+play continues -- not just for punches, but eventually for unrelated
+real SFX too (enemies hitting the ground, enemy attacks). Systematically
+ruled out every resource-based theory with live instrumentation before
+looking at real game logic: Mixer voice count never exceeded 4
+concurrent voices with zero sustained clipping (a temporary high-water-
+mark diagnostic in `Mixer::Mix`), and the media-object bump allocator
+(`object_region_start=0x80200000`) had a full 1MB of headroom -- neither
+was remotely close to exhaustion.
+
+**Traced the real call chain live**, three levels deep, via temporary
+`ArmInterpreter::Step()` PC-triggered hooks (no direct `bl`/literal-
+pointer references existed anywhere in the ROM for any of these,
+confirmed by both a static full-binary scan and the earlier live-write-
+watch technique turning up nothing -- they're reached by a plain,
+unconditional tail-branch chain instead, `b`, not `bl`):
+
+- `0x11f528`: a real per-frame, per-character dispatcher walking 5
+  "sound channel" slots (`entity+0x3000..0x3800`-ish, stride 8 bytes).
+- `0x11e8ac`/`0x11ea28`: per-slot wrapper functions, entered via a
+  normal `bl` (confirmed: `0x11f5bc`/`0x11f594`) then tail-jumping
+  (`b`, LR untouched) into the shared trigger below.
+- `0x11eb0c`: the actual `Play()`-calling utility this whole
+  investigation has been finding sibling instances of since round
+  nine. Every single real entry into this function led to a
+  successful `Play()` in every live capture (18 entries, 18 plays) --
+  it was never once "reached but rejected." The real chain stopped
+  *before* this function, not inside it.
+
+**Found the real gate**: `0x11ea28`'s own body (`ldrsb r0,[r8,#44];
+cmp r0,r9; popgt...`) only lets a channel actually fire if a freshly-
+read "current priority" value is >= the priority recorded the last
+time *that channel* successfully played. Traced the real channel-
+picker (`0x11f620`) that decides which of a per-character 4-channel
+round-robin pool (`entity+0x19c`-relative, slots 1-4; slot 0 is
+reserved separately) a new sound claims: it walks the rotation looking
+for the first channel whose stored priority is <= the new sound's own
+priority (i.e. "can this new sound steal it"), and force-claims the
+first channel in rotation if none qualify. Net effect: a channel a
+high-priority sound once claimed becomes permanently unusable by
+anything lower-priority, because nothing was ever found to bring its
+stored priority back down -- confirmed live via a targeted memory
+write-watch on the exact stamp bytes (`0x803036a4/ac/b4/bc/c4` for this
+session's entity), which showed the punch channel's `current_stamp`
+cycling through several values below its own frozen `last_played_stamp`
+forever, explaining the gradual, multi-SFX-category degradation
+exactly as reported (each channel/priority pairing gets stuck
+independently as higher-priority sounds cycle through over a session).
+
+**Found the real fix**: this project's own `MediaHle` class doc
+comment already flagged the gap driving all of this -- `RegisterNotify`
+stored a callback but never fired it, "not a fundamental gap," pending
+a periodic tick hook. Live instrumentation confirmed real Double
+Dragon code registers this callback for *every* sound media object (5
+for 5 objects at boot, all the same real callback address, `0x11d020`)
+and *never* polls `GetState` (zero calls across a full session) --
+real code depends entirely on the notification firing. Traced
+`0x11d020`'s real body (dispatches `MM_CMD_PLAY`/`MM_STATUS_DONE` or
+`MM_STATUS_ABORT` to `0x11f4dc`) and confirmed live-evidence match
+with an earlier round's own already-bundled comment in
+`tools/game_probe.cpp` (a one-shot download-complete simulation that
+reached this same real success-path check but noted `pUser+37` needing
+to be nonzero to proceed further -- exactly the "ready" flag `0x11eb0c`
+sets on every real successful `Play()`). `0x11f4dc`'s real body, once
+that flag is set, either resumes a looping sound or -- the real path
+taken for a one-shot SFX -- resets the channel's stored priority stamp
+back to 0 (`strb r0,[r3,#36]`, landing on the exact byte the whole
+channel-stealing chain above reads). Without ever firing this
+notification, that reset never runs, and channels stay poisoned
+forever.
+
+**The fix**: `MediaHle::Tick()` (new), called once per real game loop
+iteration alongside `ModRuntime::Tick()`/`IShellHle::Tick()` in
+`tools/game_probe.cpp`. For every media object whose voice has
+finished playing naturally since the last tick, it fires the real
+registered callback with a real `AEEMediaCmdNotify`-shaped struct
+(`+8`=4/`MM_CMD_PLAY`, `+16`=2/`MM_STATUS_DONE` -- the only two fields
+the real callback body actually reads, confirmed by its own
+disassembly rather than a guessed real header layout) via
+`HleRuntime::CallArmFunction`, reusing a scratch struct address well
+past any real object count a session could reach. Live-confirmed fixed
+by the user across multiple extended play sessions after this landed:
+punch sounds, enemy-hit sounds, and enemy-fall sounds all kept working
+throughout, matching real Infuse behavior for the first time this
+investigation directly compared against it.
+
+Added real test coverage (`tests/media_hle_test.cpp`):
+`TickFiresRegisteredNotifyWithDoneStatusOnceAVoiceFinishes` (registers
+a real HLE-backed notify callback, drains a real short WAV voice via
+`Mixer::Mix`, and asserts the callback fires exactly once with the
+real user data and the real `MM_CMD_PLAY`/`MM_STATUS_DONE` field
+values) and `TickWithNoRegisteredNotifyDoesNotCrash`. All temporary
+diagnostics (`ArmInterpreter::Step()` PC hooks, `Memory::Write8`/
+`Write32` watches, and the `[DBGPLAY3]`/`[DBGNOTIFY]`/`[DBGGETSTATE]`/
+`[DBGMIX]` prints) fully reverted; 333/333 tests pass.
