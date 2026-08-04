@@ -77,14 +77,22 @@ the guest app itself observes (still reports 640x480 via `AEEDeviceInfo`/
 
 Exit criterion: the player can save the exact current emulation state to a
 file and reload it later, resuming play from that exact point (including
-audio/timers, not just CPU+memory) — specifically to let QA sessions like
-the sound investigation (`PHASE8_LOG.md`) capture "right here" instead of
-re-driving a whole session to reproduce a bug.
+audio/timers, not just CPU+memory/visuals) — specifically to let QA
+sessions like the sound investigation (`PHASE8_LOG.md`) capture "right
+here" instead of re-driving a whole session to reproduce a bug.
 
-Scoped in two stages since host-side HLE state (timers, active sound
-voices, media handles) is real, separate work from guest CPU/memory state
-— a stage-one snapshot is useful immediately but will NOT correctly resume
-mid-sound-effect or mid-timer; that's stage two's job.
+**Status: CPU/memory (stage 1) and GL texture/visual state (stage 2a) are
+both done and live-confirmed working from a cold relaunch. Audio/timer
+state (stage 2b) is the one real gap left** — a cold `--load-state`
+resumes gameplay and renders correctly, but produces no music/SFX until
+the guest naturally re-triggers them.
+
+Scoped in stages since host-side state (GL textures, HLE timers/active
+sound voices/media handles) is real, separate work from guest CPU/memory
+state, and turned out to itself split further once actually tested live
+(see stage 2a) — a stage-1-only snapshot looked useful in isolation but
+didn't actually solve the real motivating use case (a cold relaunch) until
+stage 2a landed too.
 
 - [x] **Stage 1 — CPU + guest memory only:**
   - [x] `ArmInterpreter::Serialize`/`Deserialize`: all 16 registers +
@@ -103,6 +111,11 @@ mid-sound-effect or mid-timer; that's stage two's job.
         `<rom-path>.savestate` (single fixed slot for now), F2 loads —
         both show a real success/failure status message
         (`ShowStatusMessage`), not just silent success
+  - [x] `--load-state` CLI flag: auto-loads the fixed-slot save right
+        after setup, before the event loop starts, no F2 keypress
+        needed — specifically so relaunching the tool to look at a
+        player-reported bug can jump straight to their saved point
+        non-interactively
   - [x] Documented the known gap (both here and in `README.md`'s own
         Controls section): reloading a stage-1-only save resumes guest
         code/data correctly, but host-side transient state (in-flight
@@ -114,7 +127,63 @@ mid-sound-effect or mid-timer; that's stage two's job.
         registers+CPSR+memory, empty-stream failure), and
         `tests/save_state_test.cpp` (the versioned wrapper: round-trip,
         wrong magic, future version, empty stream) — 9 new tests total
-- [ ] **Stage 2 — full-fidelity, host-side HLE state included:**
+- [x] **Stage 2a — GL texture state (found live-necessary, not in the
+      original scope below):** confirmed live that Stage 1 alone doesn't
+      actually solve the real motivating use case (loading a save from a
+      *cold* relaunch, e.g. to inspect a player-reported bug) — a fresh
+      process's real OpenGL context has never uploaded any of the real
+      sprite/UI textures the loaded guest memory references by ID, and
+      real gameplay (not the fixed boot sequence) is what normally
+      creates them, so a cold load rendered as solid-color garbage
+      where real textures should be.
+  - [x] `core/gl_texture_log.{h,cpp}`: `GlTextureRecordingBackend`, a
+        `GlBackend` decorator recording every real
+        GenTextures/DeleteTextures/BindTexture/TexParameter/TexImage2D
+        call (forwarding everything unchanged to a wrapped real
+        backend) — plus `Serialize`/`DeserializeGlTextureLog` and
+        `ReplayGlTextureLog`, which re-issues the recorded calls
+        against a target backend and verifies (not just assumes) the
+        replayed real texture IDs match the recorded ones, relying on
+        every real desktop GL driver's own practical (if not formally
+        spec-guaranteed) deterministic sequential-ID-assignment
+        behavior from a fresh context
+  - [x] Wired into `game_probe.cpp`: `GlHle` now dispatches through a
+        `GlTextureRecordingBackend` wrapping the real backend; F1
+        appends the recorded log after the CPU/memory save; `--load-state`
+        replays it (through the same recorder, so a later save's own
+        history stays consistent) after `LoadState` restores CPU/memory
+  - [x] `GlTextureRecordingBackend::ClearLog()`, called once right after
+        the always-identical boot/setup sequence finishes: that
+        sequence's own real texture creation doesn't belong in a saved
+        log (a fresh relaunch already recreates it identically on its
+        own) — replaying it on top of a process that just did the same
+        boot would double-create those textures and desync every real
+        ID from there on
+  - [x] Fixed a real, live-confirmed bug this surfaced:
+        `Sdl2UnifiedBackend`'s own `video_texture_` (used by
+        `PushVideoFrame`) was created *lazily*, via a raw `glGenTextures`
+        call entirely outside the `GlBackend` interface (so invisible to
+        recording) and tied to real frame-presentation timing rather
+        than guest instruction execution — meaning it could consume a
+        real texture ID at a different relative point across two
+        separate runs, permanently offsetting every later real ID by
+        one. Now created eagerly, unconditionally, in the constructor
+        (alongside the FBO's own `fbo_texture_`), matching
+        `PushVideoFrame`'s own always-fixed real width/height
+        (`width_`/`height_`) — confirmed live: a real save/cold-load
+        round trip through actual gameplay (several enemies defeated)
+        now renders correctly with no GL texture ID mismatch at all
+  - [x] Tests: `tests/gl_texture_log_test.cpp` (recording captures real
+        assigned IDs; `TexImage2D` pixel data is copied by value, not
+        referenced; `ClearLog`; serialize/deserialize round-trip; replay
+        reproduces the same textures on a fresh backend; replay reports
+        failure on an ID mismatch rather than silently rendering wrong)
+        — 6 new tests
+- [ ] **Stage 2b — remaining host-side HLE state (audio/timers, original
+      scope):** confirmed live this is still missing — a save/cold-load
+      round trip resumes gameplay and renders correctly (see stage 2a)
+      but produces no music/SFX until the guest naturally re-triggers
+      them; this is the real remaining gap.
   - [ ] Give each stateful HLE class (`MediaHle`, `IShellHle`, `FileHle`,
         `ModRuntime`, `Mixer`, HID device state, ...) an explicit
         `Serialize`/`Deserialize` pair — likely a small shared interface
@@ -134,7 +203,7 @@ mid-sound-effect or mid-timer; that's stage two's job.
   - [ ] `ModRuntime`: heap allocator state
   - [ ] Test: save/reload mid-sound-effect and confirm the sound actually
         keeps playing correctly afterward (this is the concrete case
-        Stage 1 is known to get wrong)
+        stage 1/2a are known to still get wrong)
 - [ ] Multiple save slots (not just one "the" save state) — QA sessions
       often want several different bug-repro checkpoints alive at once
 - [ ] Decide where save files live (a `saves/` dir alongside the ROM? a

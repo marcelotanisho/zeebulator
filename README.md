@@ -61,11 +61,20 @@ Frontend hotkeys (always active, independent of the game controls above):
 The window is also freely resizable by dragging its edge — the emulated
 640x480 output is always letterboxed to fit, at any size.
 
-Save states currently capture CPU registers and full guest memory only,
-not host-side audio/timer state — expect a brief audio/timer hiccup
-right after loading one until the game naturally re-arms it. See
-[TASKS_TOOLING.md](TASKS_TOOLING.md) Phase B for the full-fidelity
-follow-up.
+Save states capture CPU registers, full guest memory, and (via
+`--load-state`, see below) the real GL texture uploads needed to render
+correctly again from a cold relaunch. They do not yet capture host-side
+audio/timer state — expect no music/SFX right after a cold load until
+the game naturally re-triggers them. See
+[TASKS_TOOLING.md](TASKS_TOOLING.md) Phase B for that remaining gap.
+
+Pass `--load-state` on the command line to auto-load the fixed-slot save
+right at startup, without needing to press F2 — this is also what
+replays the real GL texture uploads needed for correct visuals from a
+cold process (F2, loading within the same already-running session,
+skips that replay since the live session's textures are already
+correct). Useful for jumping straight back to a previously-saved point
+non-interactively, e.g. relaunching to inspect a reported bug.
 
 ## Project docs
 

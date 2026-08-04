@@ -78,6 +78,31 @@ Sdl2UnifiedBackend::Sdl2UnifiedBackend(SDL_Window* window, int width, int height
     if (SDL_GL_SetSwapInterval(1) != 0) {
       std::fprintf(stderr, "SDL_GL_SetSwapInterval(1) failed: %s\n", SDL_GetError());
     }
+
+    // Created here, eagerly, rather than lazily on the first
+    // PushVideoFrame call as before -- real width/height there are
+    // always width_/height_ anyway (the guest's own IDisplay always
+    // operates at this fixed logical resolution), so there was never a
+    // real reason to wait. This also fixes a real, confirmed-live bug:
+    // this raw glGenTextures call happens entirely outside the
+    // GlBackend interface, invisible to GlTextureRecordingBackend's own
+    // recording (core/gl_texture_log.h, TASKS_TOOLING.md Phase B stage
+    // 2) -- a *lazily* created video_texture_ could get allocated at a
+    // different relative point across two separate real runs (its
+    // creation was tied to real frame-presentation timing, not guest
+    // instruction execution), consuming a real GL texture ID at a
+    // different moment each time and desyncing every real texture ID a
+    // save's replay expects from then on. Unconditional here (not
+    // inside InitFramebuffer, which can return early on an old/broken
+    // driver -- see its own doc comment) since plain glGenTextures/
+    // glTexImage2D need no extension loading and can't fail that way.
+    glGenTextures(1, &video_texture_);
+    glBindTexture(GL_TEXTURE_2D, video_texture_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width_, height_, /*border=*/0, GL_RGB,
+                 GL_UNSIGNED_SHORT_5_6_5, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
   }
 
   SDL_AudioSpec desired{};
@@ -216,32 +241,22 @@ void Sdl2UnifiedBackend::PushVideoFrame(const void* framebuffer, int width, int 
   if (gl_context_ == nullptr) return;
   SDL_GL_MakeCurrent(window_, gl_context_);
 
-  bool first_time = video_texture_ == 0;
-  if (first_time) {
-    glGenTextures(1, &video_texture_);
-  }
   glBindTexture(GL_TEXTURE_2D, video_texture_);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   // RGB565 maps directly onto GL's own packed GL_UNSIGNED_SHORT_5_6_5
   // format -- no pixel conversion needed. Texel row 0 (the first bytes
   // in `framebuffer`) becomes texture coordinate t=0, matching
   // `framebuffer`'s own row 0 = top of the real IDisplay image, so the
   // quad below can use un-flipped texcoords.
   //
-  // Storage is allocated once (glTexImage2D) and every subsequent frame
-  // updates it in place (glTexSubImage2D) rather than reallocating --
-  // repeatedly calling glTexImage2D at the ~30-60Hz this gets pushed at
-  // is a known real driver footgun (can stall or transiently corrupt a
-  // frame on some drivers); glTexSubImage2D is the correct, standard
-  // pattern for a streaming texture that never changes size.
-  if (first_time) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, /*border=*/0, GL_RGB,
-                 GL_UNSIGNED_SHORT_5_6_5, framebuffer);
-  } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_SHORT_5_6_5,
-                     framebuffer);
-  }
+  // Storage was already allocated once, eagerly, in InitFramebuffer (see
+  // its own doc comment on why) -- every frame here just updates it in
+  // place via glTexSubImage2D rather than reallocating, avoiding a real
+  // driver footgun (repeated glTexImage2D calls at the ~30-60Hz this
+  // gets pushed at can stall or transiently corrupt a frame on some
+  // drivers); glTexSubImage2D is the correct, standard pattern for a
+  // streaming texture that never changes size.
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_SHORT_5_6_5,
+                   framebuffer);
 
   // Real app GL state (matrices, enables, ...) may currently hold
   // whatever the app itself last set -- save/restore around the quad so

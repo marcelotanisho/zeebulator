@@ -10,6 +10,8 @@ add_library(zeebulator_core STATIC
   backend.h
   save_state.cpp
   save_state.h
+  gl_texture_log.cpp
+  gl_texture_log.h
   memory/memory.cpp
   memory/memory.h
   cpu/arm_core.h

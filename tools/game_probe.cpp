@@ -31,6 +31,7 @@
 #include "core/brew/scaffold_object.h"
 #include "core/brew/virtual_filesystem.h"
 #include "core/cpu/arm_interpreter.h"
+#include "core/gl_texture_log.h"
 #include "core/loader/ggz.h"
 #include "core/loader/mod.h"
 #include "core/loader/pkg.h"
@@ -363,6 +364,27 @@ int main(int argc, char** argv) {
   // happened even though it did. Line-buffered instead, so every
   // printed line reaches the file the moment it's printed.
   std::setvbuf(stdout, nullptr, _IOLBF, 0);
+
+  // A bare `--load-state` flag (any position) auto-loads the fixed-slot
+  // save (see save_state_path below) right after setup, before the
+  // event loop starts -- lets a non-interactive launch (e.g. this
+  // project's own dev workflow of relaunching the tool to inspect a
+  // player-reported bug) land exactly on a previously-F1-saved point
+  // without needing a live F2 keypress. Stripped out here, before any
+  // of the positional-argument parsing below, so it can appear anywhere
+  // on the command line without shifting the fixed positional slots.
+  bool auto_load_state = false;
+  {
+    int write_i = 1;
+    for (int read_i = 1; read_i < argc; ++read_i) {
+      if (std::string(argv[read_i]) == "--load-state") {
+        auto_load_state = true;
+        continue;
+      }
+      argv[write_i++] = argv[read_i];
+    }
+    argc = write_i;
+  }
   if (argc < 5) {
     // cls_id is IModule::CreateInstance's real AEECLSID -- the literal
     // the module's own code compares the passed ClsId against (found by
@@ -378,7 +400,7 @@ int main(int argc, char** argv) {
     // PHASE8_LOG.md for how this was found.
     std::fprintf(stderr,
                   "usage: %s <game.mod> <data.ggz> <sound.ggz> <cls_id_decimal> [boot.pkg] "
-                  "[resources.bar]\n",
+                  "[resources.bar] [--load-state]\n",
                   argv[0]);
     return 1;
   }
@@ -434,7 +456,14 @@ int main(int argc, char** argv) {
   // separate backends.
   zeebulator::Sdl2UnifiedBackend backend(window, kWidth, kHeight, kAudioSampleRate);
   zeebulator::IDisplayHle display(backend, kWidth, kHeight);
-  zeebulator::GlHle gl_hle(backend);
+  // Real texture uploads (GenTextures/TexImage2D/...) pass through this
+  // recorder transparently -- see TASKS_TOOLING.md Phase B, stage 2 --
+  // so a save state can later replay them against a fresh GL context
+  // and end up with the same real texture IDs/contents a loaded state's
+  // guest memory expects, which a cold, non-interactive boot never
+  // recreates on its own the way real gameplay would.
+  zeebulator::GlTextureRecordingBackend gl_recorder(backend);
+  zeebulator::GlHle gl_hle(gl_recorder);
   zeebulator::Mixer mixer(kAudioSampleRate);
   zeebulator::FileHle file_hle(cpu.GetMemory(), hle, vfs, /*object_region=*/0x80100000);
   // Real General MIDI wavetable synthesis (see CMakeLists.txt's own doc
@@ -1349,6 +1378,35 @@ int main(int argc, char** argv) {
   constexpr uint32_t kArena0x3dcBlock = 0x80050000;
   cpu.GetMemory().Write32(kFourthContextObject + 0x45000 + 0x3dc, kArena0x3dcBlock);
 
+  // Everything up to here is the same deterministic boot/setup sequence
+  // on every real run -- any real texture it created (menu graphics,
+  // ...) would be recreated identically by any other fresh launch too,
+  // so it doesn't belong in a save state's own recorded log (see
+  // GlTextureRecordingBackend::ClearLog's own doc comment on why
+  // replaying it would actually break things, not just be redundant).
+  // From here on, gl_recorder's log covers exactly the real texture
+  // history an F1 save needs to persist.
+  gl_recorder.ClearLog();
+
+  if (auto_load_state) {
+    std::ifstream state_in(save_state_path, std::ios::binary);
+    bool ok = state_in && zeebulator::LoadState(cpu, state_in);
+    // Continues reading the same stream right where LoadState left off
+    // (see F1's own comment on why this is written right after the
+    // CPU/memory data in the same file) -- replayed through gl_recorder,
+    // not backend directly, so its own log ends up populated too (a
+    // later F1 save after this load needs the replayed textures in its
+    // own recorded history, not just whatever real gameplay creates
+    // from here on).
+    std::vector<zeebulator::GlTextureLogEntry> gl_log;
+    bool gl_ok = ok && zeebulator::DeserializeGlTextureLog(state_in, gl_log) &&
+                 zeebulator::ReplayGlTextureLog(gl_log, gl_recorder);
+    std::printf("--load-state: %s %s (GL texture replay: %s)\n",
+                ok ? "loaded" : "FAILED to load", save_state_path.c_str(),
+                gl_ok ? "ok" : "FAILED");
+    backend.ShowStatusMessage(ok && gl_ok ? "STATE LOADED" : "LOAD FAILED");
+  }
+
   std::printf("Reached the event loop with no unhandled instruction! Window will stay open.\n");
   bool running = true;
   SDL_Event event;
@@ -1394,12 +1452,21 @@ int main(int argc, char** argv) {
           backend.ShowStatusMessage(is_fullscreen ? "WINDOWED" : "FULLSCREEN");
           continue;
         }
-        // Save states (TASKS_TOOLING.md Phase B, stage 1 -- CPU
-        // registers/CPSR + full guest memory only; see save_state.h's
-        // own doc comment on what this does NOT cover yet).
+        // Save states (TASKS_TOOLING.md Phase B). F1 writes CPU
+        // registers/CPSR + full guest memory (save_state.h), then the
+        // real GL texture upload log recorded so far (gl_texture_log.h)
+        // appended to the same file -- the latter is what lets
+        // `--load-state` (below main()'s own event loop, see its own
+        // comment) restore correctly from a *cold* launch, where the
+        // real gameplay that would normally recreate those textures
+        // never ran. F2 (same-session interactive load) only restores
+        // CPU/memory, deliberately -- the live session's own GL context
+        // already has the right textures, so replaying would just
+        // create redundant duplicates.
         if (event.key.keysym.sym == SDLK_F1) {
           std::ofstream out(save_state_path, std::ios::binary);
-          bool ok = out && zeebulator::SaveState(cpu, out);
+          bool ok = out && zeebulator::SaveState(cpu, out) &&
+                    zeebulator::SerializeGlTextureLog(gl_recorder.Log(), out);
           backend.ShowStatusMessage(ok ? "STATE SAVED" : "SAVE FAILED");
           continue;
         }
