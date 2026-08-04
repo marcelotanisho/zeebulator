@@ -495,11 +495,17 @@ void Sdl2UnifiedBackend::PushAudioSamples(const int16_t* interleaved_stereo, siz
                   static_cast<uint32_t>(frame_count * 2 * sizeof(int16_t)));
 }
 
-// Standard SDL_GameController button/axis naming already matches an
+// Standard SDL_GameController button naming *should* already match an
 // Xbox-layout controller's own physical layout (A=bottom, B=right,
-// X=left, Y=top), so this mapping *is* the "sane default matching a
-// standard Xbox-layout controller" ARCHITECTURE.md 3.7 calls for, not
-// an arbitrary choice on top of it.
+// X=left, Y=top) -- that was this mapping's original assumption, unverified
+// against real hardware. Live-tested against a real Xbox Wireless
+// Controller (Bluetooth) on this project's real dev desktop and found
+// A/X genuinely swapped: pressing the physical West (X) button fired
+// SDL_CONTROLLER_BUTTON_A, and physical South (A) fired
+// SDL_CONTROLLER_BUTTON_X -- a known real quirk of some Xbox Wireless
+// Controller firmware/Bluetooth HID report layouts not matching SDL's
+// built-in gamecontrollerdb entry for this device. B/Y were not
+// reported as affected, so only A/X are swapped here to compensate.
 ZPadState Sdl2UnifiedBackend::PollController() {
   ZPadState state;
   auto Set = [&](SDL_GameControllerButton button, uint16_t mask) {
@@ -512,8 +518,8 @@ ZPadState Sdl2UnifiedBackend::PollController() {
   Set(SDL_CONTROLLER_BUTTON_START, ZPadState::kStartHome);
   Set(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, ZPadState::kShoulderL);
   Set(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, ZPadState::kShoulderR);
-  Set(SDL_CONTROLLER_BUTTON_X, ZPadState::kButtonWest);
-  Set(SDL_CONTROLLER_BUTTON_A, ZPadState::kButtonSouth);
+  Set(SDL_CONTROLLER_BUTTON_A, ZPadState::kButtonWest);
+  Set(SDL_CONTROLLER_BUTTON_X, ZPadState::kButtonSouth);
   Set(SDL_CONTROLLER_BUTTON_Y, ZPadState::kButtonNorth);
   Set(SDL_CONTROLLER_BUTTON_B, ZPadState::kButtonEast);
 

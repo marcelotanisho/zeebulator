@@ -47,15 +47,22 @@ game-running tool), if no gamepad is connected:
 | Q / E | Left / right shoulder |
 
 A connected Xbox-style (XInput) gamepad works alongside the keyboard
-(not instead of it — both work at the same time), using the equivalent
-standard layout:
+(not instead of it — both work at the same time):
 
 | Button | Action |
 | --- | --- |
 | D-pad / left stick | D-pad |
-| A / B / X / Y | Face buttons South / East / West / North |
+| A / B / X / Y | Face buttons West / East / South / North (X is punch/attack in Double Dragon) |
 | Left / right shoulder | Left / right shoulder |
 | Start | Back (menu confirm / title progression) |
+
+A/X are swapped from what a "standard" Xbox layout would suggest --
+live-tested against a real Xbox Wireless Controller over Bluetooth on
+this project's own dev desktop, which genuinely reports A and X
+swapped (a real quirk of that device/driver/SDL combination, not a
+choice). If your controller doesn't have this quirk, A and X will feel
+swapped from what you'd expect; see `Sdl2UnifiedBackend::PollController`'s
+own doc comment.
 
 Frontend hotkeys (always active, independent of the game controls above):
 
