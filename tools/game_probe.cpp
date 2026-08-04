@@ -37,6 +37,7 @@
 #include "core/loader/pkg.h"
 #include "core/save_state.h"
 #include "frontends/standalone/sdl2_unified_backend.h"
+#include "frontends/standalone/zpad_edges.h"
 
 namespace {
 
@@ -312,31 +313,59 @@ uint32_t SdlKeyToAvk(SDL_Keycode key) {
 // (`Button_1`-`Button_4`). `Start` and both real thumbstick-click UIDs
 // are real, valid, and simply not in Double Dragon's own recognized
 // subset -- not a project gap.
+constexpr uint32_t kHidUidDPadUp = 0x0106c3fe;
+constexpr uint32_t kHidUidDPadLeft = 0x0106c3ff;
+constexpr uint32_t kHidUidDPadDown = 0x0106c400;
+constexpr uint32_t kHidUidDPadRight = 0x0106c401;
+constexpr uint32_t kHidUidBack = 0x0106c403;  // confirmed real: the title-progression button
+constexpr uint32_t kHidUidLeftShoulderUpper = 0x0106c406;
+constexpr uint32_t kHidUidRightShoulderUpper = 0x0106c408;
+constexpr uint32_t kHidUidButton1 = 0x0106c40a;
+constexpr uint32_t kHidUidButton2 = 0x0106c40b;
+constexpr uint32_t kHidUidButton3 = 0x0106c40c;
+constexpr uint32_t kHidUidButton4 = 0x0106c40d;
+
 uint32_t SdlKeyToHidButton(SDL_Keycode key) {
-  constexpr uint32_t kDPadUp = 0x0106c3fe;
-  constexpr uint32_t kDPadLeft = 0x0106c3ff;
-  constexpr uint32_t kDPadDown = 0x0106c400;
-  constexpr uint32_t kDPadRight = 0x0106c401;
-  constexpr uint32_t kBack = 0x0106c403;              // confirmed real: the title-progression button
-  constexpr uint32_t kLeftShoulderUpper = 0x0106c406;
-  constexpr uint32_t kRightShoulderUpper = 0x0106c408;
-  constexpr uint32_t kButton1 = 0x0106c40a;
-  constexpr uint32_t kButton2 = 0x0106c40b;
-  constexpr uint32_t kButton3 = 0x0106c40c;
-  constexpr uint32_t kButton4 = 0x0106c40d;
   switch (key) {
-    case SDLK_UP: return kDPadUp;
-    case SDLK_DOWN: return kDPadDown;
-    case SDLK_LEFT: return kDPadLeft;
-    case SDLK_RIGHT: return kDPadRight;
-    case SDLK_BACKSPACE: case SDLK_RETURN: return kBack;
-    case SDLK_q: return kLeftShoulderUpper;
-    case SDLK_e: return kRightShoulderUpper;
-    case SDLK_z: return kButton1;
-    case SDLK_x: return kButton2;
-    case SDLK_c: return kButton3;
-    case SDLK_v: return kButton4;
+    case SDLK_UP: return kHidUidDPadUp;
+    case SDLK_DOWN: return kHidUidDPadDown;
+    case SDLK_LEFT: return kHidUidDPadLeft;
+    case SDLK_RIGHT: return kHidUidDPadRight;
+    case SDLK_BACKSPACE: case SDLK_RETURN: return kHidUidBack;
+    case SDLK_q: return kHidUidLeftShoulderUpper;
+    case SDLK_e: return kHidUidRightShoulderUpper;
+    case SDLK_z: return kHidUidButton1;
+    case SDLK_x: return kHidUidButton2;
+    case SDLK_c: return kHidUidButton3;
+    case SDLK_v: return kHidUidButton4;
     default: return 0;  // 0 is not a real UID any real device would ever send
+  }
+}
+
+// A real ZPadState button -> real HID button UID mapping, mirroring
+// SdlKeyToHidButton's own mapping one-for-one (arrows -> D-pad,
+// Start/Home -> the confirmed real title-progression button, shoulders
+// -> the two real upper shoulder UIDs, the four face buttons -> Button_1
+// through Button_4 in ZPadState's own West/South/North/East order,
+// matching keyboard's Z/X/C/V order) so a real gamepad feeds the exact
+// same downstream injection as keyboard does, not a diverging mapping.
+// ZPadState's Select/thumbstick-click bits have no real ZPadState bit at
+// all (see core/backend.h) so there's nothing to map for them here.
+uint32_t ZPadButtonToHidUid(uint16_t button) {
+  using zeebulator::ZPadState;
+  switch (button) {
+    case ZPadState::kDpadUp: return kHidUidDPadUp;
+    case ZPadState::kDpadDown: return kHidUidDPadDown;
+    case ZPadState::kDpadLeft: return kHidUidDPadLeft;
+    case ZPadState::kDpadRight: return kHidUidDPadRight;
+    case ZPadState::kStartHome: return kHidUidBack;
+    case ZPadState::kShoulderL: return kHidUidLeftShoulderUpper;
+    case ZPadState::kShoulderR: return kHidUidRightShoulderUpper;
+    case ZPadState::kButtonWest: return kHidUidButton1;
+    case ZPadState::kButtonSouth: return kHidUidButton2;
+    case ZPadState::kButtonNorth: return kHidUidButton3;
+    case ZPadState::kButtonEast: return kHidUidButton4;
+    default: return 0;
   }
 }
 
@@ -1407,8 +1436,52 @@ int main(int argc, char** argv) {
     backend.ShowStatusMessage(ok && gl_ok ? "STATE LOADED" : "LOAD FAILED");
   }
 
+  // Shared tail of the real HID button-event injection path (see
+  // SdlKeyToHidButton's own doc comment) -- feeds `hid_button_uid`'s
+  // press/release into the real HID/gamepad mechanism the same way a
+  // real fired ISignal would, regardless of which real input source
+  // (keyboard event or, below, a polled ZPadState edge) it came from.
+  auto InjectHidButtonEvent = [&](uint32_t hid_button_uid, bool pressed) {
+    int state = pressed ? 1 : 0;
+    // nButtonID (first field) is a don't-care: the real callback's own
+    // translation function overwrites it from nButtonUID (see
+    // SdlKeyToHidButton's doc comment) before ever reading it back.
+    simulated_button_events->push_back({0, state, static_cast<int32_t>(hid_button_uid)});
+    // Real-evidenced re-arm, not optional: `*captured_button_context`
+    // (the real per-device struct real code passes as `pUser`) has its
+    // own first field (offset 0) read by the real translator function
+    // (`0x100740`) as a pointer back to the real device object (its
+    // vtable slot 9, byte offset 0x24, resolves to a real
+    // `GetNextButtonEvent`-shaped trap) -- and real code *clears that
+    // field to 0* as part of its own real cleanup once a full
+    // press+release cycle finishes (confirmed live via a temporary
+    // write-watch, PHASE8_LOG.md: real PCs `ddragonz.mod`
+    // 0x10ada4/0x10adb8, inside 0x100740 itself). Nothing re-populates
+    // it afterward, because on real hardware that's presumably
+    // firmware's job when delivering a genuine new signal -- a step
+    // this simulated injection has to do itself, or every button press
+    // after the very first press+release cycle null-pointer-crashes the
+    // real callback (confirmed live: this is what was happening, for
+    // *any* button, not one specific direction).
+    cpu.GetMemory().Write32(*captured_button_context, kHidDeviceObject);
+    try {
+      auto cb_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size,
+                                               *captured_button_callback, *captured_button_context,
+                                               0, 0, 0,
+                                               /*trace=*/false, /*hle_trace=*/false, &display,
+                                               &backend);
+      std::printf("HID button callback(uid=0x%x, state=%d) ran%s\n", hid_button_uid, state,
+                  cb_result.wandered_outside_module ? " (wandered!)" : "");
+    } catch (const std::exception& e) {
+      std::printf("HID button callback threw: %s (pc=0x%08x, offset 0x%08x from mod base)\n",
+                  e.what(), cpu.GetRegister(zeebulator::kPC),
+                  cpu.GetRegister(zeebulator::kPC) - kBase);
+    }
+  };
+
   std::printf("Reached the event loop with no unhandled instruction! Window will stay open.\n");
   bool running = true;
+  zeebulator::ZPadState previous_pad_state;
   SDL_Event event;
   constexpr uint32_t kTickMs = 16;
   uint64_t tick_count = 0;
@@ -1528,44 +1601,30 @@ int main(int argc, char** argv) {
         // by this callback's own real disassembly taking exactly one
         // incoming argument).
         if (hid_button_uid != 0 && *captured_button_callback != 0) {
-          int state = (event.type == SDL_KEYDOWN) ? 1 : 0;
-          // nButtonID (first field) is a don't-care: the real callback's
-          // own translation function overwrites it from nButtonUID (see
-          // SdlKeyToHidButton's doc comment) before ever reading it back.
-          simulated_button_events->push_back({0, state, static_cast<int32_t>(hid_button_uid)});
-          // Real-evidenced re-arm, not optional: `*captured_button_context`
-          // (the real per-device struct real code passes as `pUser`) has
-          // its own first field (offset 0) read by the real translator
-          // function (`0x100740`) as a pointer back to the real device
-          // object (its vtable slot 9, byte offset 0x24, resolves to a
-          // real `GetNextButtonEvent`-shaped trap) -- and real code
-          // *clears that field to 0* as part of its own real cleanup once
-          // a full press+release cycle finishes (confirmed live via a
-          // temporary write-watch, PHASE8_LOG.md: real PCs
-          // `ddragonz.mod` 0x10ada4/0x10adb8, inside 0x100740 itself).
-          // Nothing re-populates it afterward, because on real hardware
-          // that's presumably firmware's job when delivering a genuine
-          // new signal -- a step this simulated injection has to do
-          // itself, or every button press after the very first
-          // press+release cycle null-pointer-crashes the real callback
-          // (confirmed live: this is what was happening, for *any*
-          // button, not one specific direction).
-          cpu.GetMemory().Write32(*captured_button_context, kHidDeviceObject);
-          try {
-            auto cb_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size,
-                                                     *captured_button_callback,
-                                                     *captured_button_context, 0, 0, 0,
-                                                     /*trace=*/false, /*hle_trace=*/false, &display,
-                                                     &backend);
-            std::printf("HID button callback(uid=0x%x, state=%d) ran%s\n", hid_button_uid, state,
-                        cb_result.wandered_outside_module ? " (wandered!)" : "");
-          } catch (const std::exception& e) {
-            std::printf("HID button callback threw: %s (pc=0x%08x, offset 0x%08x from mod base)\n",
-                        e.what(), cpu.GetRegister(zeebulator::kPC),
-                        cpu.GetRegister(zeebulator::kPC) - kBase);
-          }
+          InjectHidButtonEvent(hid_button_uid, event.type == SDL_KEYDOWN);
         }
       }
+    }
+    // Real gamepad input (TASKS_TOOLING.md Phase C) -- polled once per
+    // tick (PollController's real SDL_GameController state is level-
+    // triggered, unlike the event-driven keyboard path above) and diffed
+    // against the previous tick's state to get the same shape of
+    // press/release edges, each fed into the exact same HID injection
+    // path keyboard uses via ZPadButtonToHidUid's mirrored mapping. Only
+    // runs with a real controller connected (HasController()) so it
+    // doesn't also pick up Sdl2UnifiedBackend::PollInput's own separate
+    // keyboard-fallback scheme (different keys than SdlKeyToHidButton's
+    // own) alongside the real keyboard handling above -- both a real
+    // keyboard and a real controller still work simultaneously this way,
+    // just never both driven off the same polled ZPadState.
+    if (backend.HasController() && *captured_button_callback != 0) {
+      zeebulator::ZPadState pad_state = zeebulator::NormalizeZPadState(backend.PollInput());
+      for (const zeebulator::ZPadButtonEdge& edge :
+           zeebulator::DiffZPadButtonEdges(previous_pad_state.buttons, pad_state.buttons)) {
+        uint32_t hid_button_uid = ZPadButtonToHidUid(edge.button);
+        if (hid_button_uid != 0) InjectHidButtonEvent(hid_button_uid, edge.pressed);
+      }
+      previous_pad_state = pad_state;
     }
     // Fires real MM_STATUS_DONE notifications for voices that finished
     // since the last tick -- see MediaHle::Tick's own doc comment; real

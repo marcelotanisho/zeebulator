@@ -24,6 +24,7 @@ if(ZEEBULATOR_BUILD_STANDALONE)
     game_probe.cpp
     ${PROJECT_SOURCE_DIR}/frontends/standalone/sdl2_unified_backend.cpp
     ${PROJECT_SOURCE_DIR}/frontends/standalone/letterbox.cpp
+    ${PROJECT_SOURCE_DIR}/frontends/standalone/zpad_edges.cpp
   )
   target_include_directories(zeebulator_game_probe PRIVATE ${PROJECT_SOURCE_DIR})
   target_link_libraries(zeebulator_game_probe PRIVATE zeebulator_core SDL2::SDL2 SDL2::SDL2main

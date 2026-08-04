@@ -53,6 +53,15 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
                          int sample_rate) override;
   ZPadState PollInput() override;
 
+  // True once a real SDL_GameController was found at construction --
+  // lets a caller choose to poll real controller edges (PollInput's own
+  // per-tick contract) only when there's a real controller to poll,
+  // rather than also picking up PollInput's own keyboard fallback (a
+  // separate, dev-only convenience key scheme -- see PollKeyboard's own
+  // doc comment) alongside a caller's own, possibly different, keyboard
+  // handling.
+  bool HasController() const { return controller_ != nullptr; }
+
   // True once the real app has called eglSwapBuffers (SwapBuffers()
   // below) at least once. Real Double Dragon disassembly (TASKS.md
   // Phase 8) confirmed the app stops calling IDISPLAY_Update entirely
@@ -201,7 +210,14 @@ class Sdl2UnifiedBackend : public Backend, public GlBackend {
   void* glDeleteRenderbuffers_ = nullptr;
 
   int window_scale_ = 1;
-  GLuint video_texture_ = 0;  // lazily created on first PushVideoFrame
+  // Created eagerly and unconditionally in the constructor, not lazily
+  // on first PushVideoFrame -- see sdl2_unified_backend.cpp's own
+  // constructor comment: a lazy real glGenTextures call tied to
+  // presentation timing rather than deterministic guest execution can
+  // consume a different texture ID slot across separate runs, permanently
+  // desyncing GlTextureRecordingBackend's own recorded IDs from a cold
+  // relaunch's real ones (see core/gl_texture_log.h).
+  GLuint video_texture_ = 0;
   bool gl_swap_seen_ = false;
 
   bool overlay_visible_ = true;

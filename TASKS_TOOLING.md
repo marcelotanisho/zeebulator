@@ -215,40 +215,49 @@ stage 2a landed too.
 
 Exit criterion: playing through `game_probe` with a real Xbox-style
 (XInput) controller works exactly as well as keyboard does today — same
-real HID button/AVK-key injection pipeline, driven by controller input
-instead of (or alongside) keyboard input.
+real HID button injection pipeline, driven by controller input instead of
+(or alongside) keyboard input.
 
-- [ ] Wire `Backend::PollInput()` (already implemented for real
-      `SDL_GameController` input, see Context above) into
-      `game_probe.cpp`'s main loop — currently never called there
-- [ ] Diff each tick's `ZPadState` against the previous tick's to get real
-      press/release edges per button (`PollController`'s
-      `SDL_GameController` state is level-triggered; the existing
-      keyboard path is edge-triggered off real `SDL_KEYDOWN`/`SDL_KEYUP`
-      events, so this needs to produce the same shape of edge events for
-      the shared injection code below to reuse)
-  - [ ] Include the two analog sticks — decide a real deadzone and a
-        direction threshold that maps stick tilt to the same real D-pad
-        HID UIDs `SdlKeyToHidButton` already uses for keyboard arrows,
-        since Double Dragon's own real input handling (confirmed earlier
-        in this investigation) only recognizes the D-pad UIDs, not analog
-        axes
-- [ ] A real `ZPadState` button -> (real HID button UID / real AVK code)
-      mapping table, mirroring `SdlKeyToHidButton`/`SdlKeyToAvk`'s
-      existing real-UID mappings — both keyboard and controller should
-      feed the exact same downstream injection call, not diverge into two
-      codepaths
-- [ ] Sensible default bindings (face buttons -> attack buttons, D-pad ->
-      D-pad, Start -> the confirmed real `kBack`/title-progression
-      button, shoulders -> the two real shoulder UIDs already mapped) —
-      reuses the real UID meanings `SdlKeyToHidButton`'s own doc comment
-      already established, not new guesses
-- [ ] Support keyboard and controller simultaneously (don't require
-      picking one) — both should just work, matching how most emulators
-      behave
-- [ ] Test: a fake/injected `ZPadState` sequence through the
-      edge-detection logic produces the expected press/release event
-      sequence (this part needs no real SDL controller hardware to test)
+- [x] Wired `Backend::PollInput()` into `game_probe.cpp`'s main loop —
+      polled once per tick, only while `Sdl2UnifiedBackend::HasController()`
+      is true (a real `SDL_GameController` is connected), so it never also
+      picks up `PollInput`'s own separate keyboard-fallback scheme
+      (different keys than `SdlKeyToHidButton`'s own) alongside real
+      keyboard handling
+- [x] New, independently testable module
+      (`frontends/standalone/zpad_edges.{h,cpp}`, mirrors `letterbox.{h,cpp}`'s
+      precedent of a pure-logic frontend file linked directly into
+      `zeebulator_tests` rather than through `zeebulator_core`):
+  - [x] `DiffZPadButtonEdges(previous_buttons, current_buttons)` diffs two
+        polled `ZPadState::buttons` snapshots into the same shape of
+        press/release edges the existing `SDL_KEYDOWN`/`SDL_KEYUP` keyboard
+        path already produces
+  - [x] `StickTiltToDpadBits`/`NormalizeZPadState` — left stick tilt past a
+        fixed deadzone (~24% of the real int16 range) quantizes down to the
+        same D-pad bits digital input already uses, since Double Dragon's
+        own recognized HID UID subset has no analog-axis UID at all, only
+        the digital D-pad. Right stick isn't mapped (only one real D-pad's
+        worth of directional HID input exists to feed).
+  - [x] Test: fake `ZPadState`/stick sequences through the edge-detection
+        and stick-quantization logic produce the expected press/release
+        edges and D-pad bits (`tests/zpad_edges_test.cpp`) — needed no real
+        SDL controller hardware
+- [x] `ZPadButtonToHidUid` (`game_probe.cpp`) mirrors `SdlKeyToHidButton`'s
+      mapping one-for-one (arrows -> D-pad, Start/Home -> the confirmed
+      real `kHidUidBack`/title-progression button, shoulders -> the two
+      real upper shoulder UIDs, face buttons -> Button_1-4 in ZPadState's
+      West/South/North/East order, matching keyboard's Z/X/C/V order) — no
+      AVK-code table: `SdlKeyToAvk` only covers number keys 0-9, which have
+      no real gamepad equivalent, so there's nothing for a controller to
+      feed into that path
+- [x] Both keyboard and controller feed the exact same shared injection
+      tail (`InjectHidButtonEvent`, extracted out of the old
+      keyboard-only inline block) — no diverging codepaths
+- [x] Keyboard and controller work simultaneously — the two input sources
+      are polled/handled independently and never gate each other
+- [ ] Live-verified against a real physical Xbox-style controller (only
+      built + unit-tested so far, no real hardware in this environment to
+      exercise `PollController`/`HasController` end to end)
 
 ## Phase D — Hotkeys + on-screen overlay (decided: no ImGui toolbar)
 

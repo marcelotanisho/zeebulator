@@ -46,8 +46,16 @@ game-running tool), if no gamepad is connected:
 | Z / X / C / V | Face buttons 1–4 (X is punch/attack in Double Dragon) |
 | Q / E | Left / right shoulder |
 
-A connected Xbox-style (XInput) gamepad is used automatically instead,
-with the equivalent standard layout (D-pad, A/B/X/Y, shoulders, Start).
+A connected Xbox-style (XInput) gamepad works alongside the keyboard
+(not instead of it — both work at the same time), using the equivalent
+standard layout:
+
+| Button | Action |
+| --- | --- |
+| D-pad / left stick | D-pad |
+| A / B / X / Y | Face buttons South / East / West / North |
+| Left / right shoulder | Left / right shoulder |
+| Start | Back (menu confirm / title progression) |
 
 Frontend hotkeys (always active, independent of the game controls above):
 

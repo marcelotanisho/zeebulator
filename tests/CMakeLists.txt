@@ -41,6 +41,8 @@ add_executable(zeebulator_tests
   ${PROJECT_SOURCE_DIR}/frontends/standalone/letterbox.cpp
   save_state_test.cpp
   gl_texture_log_test.cpp
+  zpad_edges_test.cpp
+  ${PROJECT_SOURCE_DIR}/frontends/standalone/zpad_edges.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)
