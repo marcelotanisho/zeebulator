@@ -3690,7 +3690,34 @@ playable start-to-finish at full speed, standalone build.
       wall: a `pc=0x00000000 left the loaded module's range` wander
       warning after 187 steps, then a timer callback throwing
       `Coprocessor instruction / SWI` at module offset `0x46e18` --
-      genuinely new territory, not investigated yet. All temporary
+      almost certainly downstream noise from the same wander (once
+      `pc` hits 0, everything after is garbage execution through
+      unmapped/zero memory), not a second, independent bug.
+
+      **Traced the wander to a specific, missing runtime helper table
+      slot**: `zeebotennis.mod` offset `0x1013f8`-`0x10140c` (reached
+      from the real per-frame tick path) calls the already-known
+      sprintf-family formatter (offset `0x13c`, slot #11 in this file's
+      own numbered list above) successfully, then immediately calls
+      **offset `0xc8`** on the *same* runtime helper table (the
+      `ldr r0,[r6,#-4]` context, not the separate IShell/IDisplay
+      context struct reached via offset `0xc0`) -- unclaimed by any
+      slot documented in this file so far. Real calling convention at
+      that site: `r0` = the outer function's own first argument
+      (likely a destination buffer), `r1` = the same local buffer the
+      sprintf call *just wrote into*, `r2` = (the outer function's own
+      second argument) `- 1` (likely a max-length, off-by-one for a
+      null terminator). That shape -- format into a scratch buffer,
+      then copy/append the result into a destination with a bounded
+      length -- is consistent with `strncat`/a bounded string-append,
+      but not confirmed; implementing it on a guess risks silent data
+      corruption instead of this investigation's own established
+      "clean, informative wander" fallback, so deliberately left
+      unimplemented this round rather than guessed at. Concrete next
+      step: find another real call site for offset `0xc8` (or the
+      twin, offset `0xc4`, immediately next to the well-established
+      `0xc0` slot, unchecked so far) to corroborate or refute the
+      `strncat` theory before implementing it. All temporary
       instrumentation reverted (three rounds now), 384/384 tests pass
       unchanged.
 
