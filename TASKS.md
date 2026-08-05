@@ -3519,6 +3519,42 @@ playable start-to-finish at full speed, standalone build.
       nothing here showed the *interpreter itself* as the bottleneck
       once actually compiled with optimizations on.
 
+- [ ] **Open bug, live-reported, not yet resolved**: total silence after
+      loading a save state, specifically reached via beating the game
+      (unlocking "Batalha Extra") then loading a save state made right
+      after the final boss. Root cause diagnosed with real evidence:
+      `core/save_state.h` documents (and always has) that a save state
+      only ever captured guest CPU/memory, never `MediaHle`'s own
+      `media_by_object_` map or `Mixer`'s own `voices_` -- purely
+      in-memory, host-side state keyed by a guest object address that's
+      meaningless to a freshly-constructed instance. A guest that reuses
+      an `IMedia` handle it created before the save was taken finds no
+      record of it after loading one, so every call against it fails
+      outright. Confirmed live: works from a cold boot, breaks
+      specifically after `--load-state`.
+      Added real `Serialize`/`Deserialize` to both `Mixer`
+      (`core/audio/mixer.{h,cpp}`) and `MediaHle`
+      (`core/brew/media_hle.{h,cpp}`), wired into `tools/game_probe.cpp`
+      the same way the existing GL texture log is (F1 appends it, a
+      cold `--load-state` restores it, a same-session F2 deliberately
+      doesn't -- see F1/F2's own comments there). 39 new tests
+      (`tests/mixer_test.cpp`, `tests/media_hle_test.cpp`), all passing,
+      confirming the round trip works in isolation.
+      **Live retest after the fix still reproduced total silence** --
+      not yet understood why. Prime suspect, not yet checked: the retest
+      reloaded from the *pre-fix* save state first (its own diagnostic
+      correctly printed "audio state: not present in this save file"),
+      then saved fresh (F1) *from that already-broken, empty
+      `media_by_object_` state* and reloaded that -- which would
+      faithfully round-trip the brokenness rather than fix it, not
+      exercise the fix's actual intended path at all. A clean retest
+      needs a genuinely cold boot (never touching the old save file)
+      played through to the same unlock, *then* F1, then reload --
+      hasn't been tried yet. If that also still reproduces the bug, the
+      diagnosis above needs revisiting; some other piece of host-side
+      state this investigation hasn't identified yet may also be
+      involved.
+
 - [ ] Validate the HLE against a fourth real game (Zeebo Sports Tênis),
       started after Peggle's own investigation stalled for three rounds
       in a row without converging (TASKS.md's own Peggle entries;
@@ -3586,27 +3622,49 @@ playable start-to-finish at full speed, standalone build.
       "cmp against a literal ClsId" shape and found something
       different: an early real check compares `r0` (this harness's own
       `module_ptr`, i.e. whatever address `AEEMod_Load` wrote into
-      `*ppMod`) against a real, fixed literal (`0x0108eff9`) that falls
-      *inside the module's own address range* (`kBase` + `0x8eff9`) --
-      not a ClsId at all, and unrelated to the `cls_id` argument, which
-      only gets threaded through *unused* further down (into a generic,
-      unconditional `AEEApplet_New`-shaped constructor helper,
-      `0x100dfc`, that never compares it against anything either, at
-      least in the portion traced so far). Real compiled code appears
-      to expect `po` (the `IModule*` `CreateInstance` receives) to
-      *equal* a specific, fixed, module-embedded address -- i.e. real
-      `AEEMod_Load` on real hardware returns a pointer to a static,
-      compile-time-fixed singleton embedded in the module's own data,
-      not a harness-assigned/malloc'd address like the `0x80300000`
-      this project's own `AEEMod_Load` trap produces. Three prior
-      titles apparently never hit this specific check (or their own
-      version of it tolerated a harness-assigned address). **Left
-      unresolved this round** -- concrete next step is tracing whether
-      `AEEMod_Load`'s own real body ever *reads back* what it wrote to
-      `*ppMod` in a way that would reveal the real expected value more
-      directly, rather than continuing to reverse-engineer
+      `*ppMod`, `0x80300000` -- this project's own established, shared
+      heap-region convention, see `tools/game_probe.cpp`'s
+      `ModRuntime` construction) against a real, fixed literal
+      (`0x0108eff9`) -- not a ClsId at all, and unrelated to the
+      `cls_id` argument, which only gets threaded through *unused*
+      further down (into a generic, unconditional `AEEApplet_New`-
+      shaped constructor helper, `0x100dfc`, that never compares it
+      against anything either, at least in the portion traced so far).
+      **Correction to an earlier round of this same entry**: it
+      previously claimed `0x0108eff9` "falls inside the module's own
+      address range" and built a theory on that (a static,
+      compile-time-fixed singleton embedded in the module's own data).
+      That arithmetic was wrong -- `0x0108eff9 - kBase` is `0xF8EFF9`
+      (~16.3MB), not `0x8EFF9` (~585KB) as miscalculated, and either
+      way is far past the real module's actual ~305KB size. The
+      "embedded singleton" theory doesn't hold; what `0x0108eff9`
+      actually corresponds to isn't known. What *is* solid: this
+      harness's own `module_ptr` (`0x80300000`) can never equal that
+      literal without changing what `AEEMod_Load`'s own trap hands
+      back, which is a project-wide, cross-title convention (not
+      something to change for one title without risking the three
+      already-working ones) -- so this specific check, as currently
+      understood, would never pass regardless of `cls_id`.
+      **Follow-up round: the vtable-slot-2-is-CreateInstance assumption
+      itself, checked and confirmed correct, not the culprit.** Dumped
+      all four real vtable slots live (module_vtable turned out to live
+      inside the malloc'd heap object itself, `0x80300014` -- built/
+      relocated into guest memory at `AEEMod_Load` runtime, which is
+      also why grepping the static `.mod` file for the raw pointer
+      value earlier found nothing). Slot 0 (`0x1010bc`) is a textbook
+      AddRef (`refcount++`), slot 1 (`0x1010fc`) a textbook Release
+      (`refcount--`), slot 3 (`0x1010f8`) a trivial `bx lr` no-op (a
+      real BREW module's `FreeResources` is often exactly this) --
+      slot 2 really is `CreateInstance`, confirmed, not a
+      misidentification. The `cmp r0` block is a real, deliberate check
+      this title's `CreateInstance` genuinely does.
+      **Left unresolved this round** -- concrete next step is tracing
+      whether `AEEMod_Load`'s own real body ever *reads back* what it
+      wrote to `*ppMod` in a way that would reveal the real expected
+      value more directly, rather than continuing to reverse-engineer
       `CreateInstance`'s own consumer side. All temporary
-      instrumentation reverted, 374/374 tests pass unchanged.
+      instrumentation reverted (twice now, across both rounds),
+      384/384 tests pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

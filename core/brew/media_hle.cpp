@@ -131,6 +131,18 @@ std::optional<WavAudio> DecodeAudioFile(const std::string& name, const std::vect
   return std::nullopt;
 }
 
+template <typename T>
+bool WritePod(std::ostream& out, const T& v) {
+  out.write(reinterpret_cast<const char*>(&v), sizeof(v));
+  return out.good();
+}
+
+template <typename T>
+bool ReadPod(std::istream& in, T& v) {
+  in.read(reinterpret_cast<char*>(&v), sizeof(v));
+  return in.good();
+}
+
 }  // namespace
 
 MediaHle::MediaHle(Memory& memory, HleRuntime& hle, const VirtualFilesystem& vfs, Mixer& mixer,
@@ -425,6 +437,71 @@ void MediaHle::Build(uint32_t vtable_address) {
     uint32_t sentinel = hle_.Register(methods[i]);
     memory_.Write32(vtable_address + static_cast<uint32_t>(i) * 4, sentinel);
   }
+}
+
+bool MediaHle::Serialize(std::ostream& out) const {
+  if (!WritePod(out, next_object_address_)) return false;
+  if (!WritePod(out, static_cast<uint32_t>(media_by_object_.size()))) return false;
+  for (const auto& [object_addr, media] : media_by_object_) {
+    if (!WritePod(out, object_addr)) return false;
+    if (!WritePod(out, media.has_data)) return false;
+    if (!WritePod(out, media.channels)) return false;
+    if (!WritePod(out, media.sample_rate)) return false;
+    const std::vector<int16_t>& samples = media.samples ? *media.samples : std::vector<int16_t>{};
+    if (!WritePod(out, static_cast<uint32_t>(samples.size()))) return false;
+    if (!samples.empty()) {
+      out.write(reinterpret_cast<const char*>(samples.data()),
+                static_cast<std::streamsize>(samples.size() * sizeof(int16_t)));
+      if (!out.good()) return false;
+    }
+    if (!WritePod(out, media.voice)) return false;
+    if (!WritePod(out, media.has_voice)) return false;
+    if (!WritePod(out, media.loop)) return false;
+    if (!WritePod(out, media.volume)) return false;
+    if (!WritePod(out, media.state)) return false;
+    if (!WritePod(out, media.notify_fn)) return false;
+    if (!WritePod(out, media.notify_user)) return false;
+  }
+  return true;
+}
+
+bool MediaHle::Deserialize(std::istream& in) {
+  uint32_t next_object_address = 0;
+  if (!ReadPod(in, next_object_address)) return false;
+  uint32_t count = 0;
+  if (!ReadPod(in, count)) return false;
+
+  std::unordered_map<uint32_t, Media> loaded;
+  loaded.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t object_addr = 0;
+    if (!ReadPod(in, object_addr)) return false;
+    Media media;
+    if (!ReadPod(in, media.has_data)) return false;
+    if (!ReadPod(in, media.channels)) return false;
+    if (!ReadPod(in, media.sample_rate)) return false;
+    uint32_t sample_count = 0;
+    if (!ReadPod(in, sample_count)) return false;
+    auto samples = std::make_shared<std::vector<int16_t>>(sample_count);
+    if (sample_count != 0) {
+      in.read(reinterpret_cast<char*>(samples->data()),
+              static_cast<std::streamsize>(sample_count * sizeof(int16_t)));
+      if (!in.good()) return false;
+    }
+    media.samples = std::move(samples);
+    if (!ReadPod(in, media.voice)) return false;
+    if (!ReadPod(in, media.has_voice)) return false;
+    if (!ReadPod(in, media.loop)) return false;
+    if (!ReadPod(in, media.volume)) return false;
+    if (!ReadPod(in, media.state)) return false;
+    if (!ReadPod(in, media.notify_fn)) return false;
+    if (!ReadPod(in, media.notify_user)) return false;
+    loaded.emplace(object_addr, std::move(media));
+  }
+
+  next_object_address_ = next_object_address;
+  media_by_object_ = std::move(loaded);
+  return true;
 }
 
 }  // namespace zeebulator

@@ -2,6 +2,8 @@
 
 #include <zlib.h>
 
+#include <sstream>
+
 #include <gtest/gtest.h>
 
 #include "core/audio/mixer.h"
@@ -595,4 +597,48 @@ TEST(MediaHle, TickWithNoRegisteredNotifyDoesNotCrash) {
 
   uint32_t pb_addr = kScratch + 0x200;
   EXPECT_EQ(f.hle.CallArmFunction(f.Slot(kGetState), obj, pb_addr), 2u) << "MM_STATE_READY";
+}
+
+// --- Real state persistence past this process's own lifetime ---
+// (see Mixer::Serialize's own doc comment for the real bug this fixes
+// together with it: a guest reusing an IMedia handle it created before
+// a save state was taken found no record of it at all after loading
+// one, since this class's own media_by_object_ was purely in-memory --
+// real, live-reproduced total silence after a save-state load, not a
+// transient glitch).
+
+TEST(MediaHle, SerializeThenDeserializeRoundTripsAPlayableMediaObject) {
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaData("tone.wav");
+  f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+  f.hle.CallArmFunction(f.Slot(kPlay), obj);
+
+  std::stringstream mixer_stream;
+  std::stringstream media_stream;
+  ASSERT_TRUE(f.mixer.Serialize(mixer_stream));
+  ASSERT_TRUE(f.media_hle.Serialize(media_stream));
+
+  // A completely fresh instance, matching a real cold `--load-state`.
+  Fixture f2;
+  ASSERT_TRUE(f2.mixer.Deserialize(mixer_stream));
+  ASSERT_TRUE(f2.media_hle.Deserialize(media_stream));
+
+  // Same guest object address, but f2 never itself called
+  // CreateMediaObject/SetMediaParm/Play on it -- matching how a real
+  // guest reuses a handle it already had from before the save state.
+  uint32_t pb_addr = kScratch + 0x200;
+  uint32_t state = f2.hle.CallArmFunction(f2.Slot(kGetState), obj, pb_addr);
+  EXPECT_EQ(state, 3u) << "MM_STATE_PLAY, restored";
+
+  RecordingBackend backend;
+  f2.mixer.Mix(backend, 1);
+  EXPECT_NE(backend.last_frames[0], 0) << "restored voice should keep producing real audio";
+}
+
+TEST(MediaHle, DeserializeOnATruncatedStreamFailsWithoutCrashing) {
+  Fixture f;
+  std::stringstream stream;
+  stream.write("\x00\x00\x09\x00", 4);  // next_object_address_, then nothing else
+  EXPECT_FALSE(f.media_hle.Deserialize(stream));
 }

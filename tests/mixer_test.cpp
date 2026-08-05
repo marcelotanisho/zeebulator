@@ -1,6 +1,7 @@
 #include "core/audio/mixer.h"
 
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -210,4 +211,51 @@ TEST(Mixer, MixWithNoActiveVoicesPushesSilence) {
   ASSERT_EQ(backend.push_count, 1);
   std::vector<int16_t> expected(8, 0);
   EXPECT_EQ(backend.last_frames, expected);
+}
+
+// --- Real state persistence past this process's own lifetime ---
+// (see Mixer::Serialize's own doc comment for the real bug this fixes:
+// a save state used to only capture guest CPU/memory, so every voice
+// already playing before the save was taken was just gone after
+// loading one -- real, live-reproduced total silence, not a transient
+// glitch).
+
+TEST(Mixer, SerializeThenDeserializeRoundTripsAnActiveVoice) {
+  Mixer mixer(22050);
+  Mixer::VoiceId id =
+      mixer.Play(MakeMono({100, 200, 300, 400}), /*channels=*/1, /*sample_rate=*/22050,
+                 /*loop=*/true, /*volume=*/50);
+  RecordingBackend backend;
+  mixer.Mix(backend, 2);  // advance position_frames partway through
+
+  std::stringstream stream;
+  ASSERT_TRUE(mixer.Serialize(stream));
+
+  Mixer mixer2(22050);
+  ASSERT_TRUE(mixer2.Deserialize(stream));
+  EXPECT_TRUE(mixer2.IsPlaying(id)) << "same voice id should survive the round trip";
+
+  RecordingBackend backend2;
+  mixer2.Mix(backend2, 2);
+  EXPECT_NE(backend2.last_frames[0], 0) << "restored voice should keep producing real audio";
+}
+
+TEST(Mixer, DeserializeRestoresNextIdSoNewVoicesDoNotCollide) {
+  Mixer mixer(22050);
+  Mixer::VoiceId id1 = mixer.Play(MakeMono({1, 2}), 1, 22050, false);
+
+  std::stringstream stream;
+  ASSERT_TRUE(mixer.Serialize(stream));
+
+  Mixer mixer2(22050);
+  ASSERT_TRUE(mixer2.Deserialize(stream));
+  Mixer::VoiceId id2 = mixer2.Play(MakeMono({3, 4}), 1, 22050, false);
+  EXPECT_NE(id1, id2);
+}
+
+TEST(Mixer, DeserializeOnATruncatedStreamFailsWithoutCrashing) {
+  Mixer mixer(22050);
+  std::stringstream stream;
+  stream.write("\x01\x00\x00\x00", 4);  // claims next_id_=1, then nothing else
+  EXPECT_FALSE(mixer.Deserialize(stream));
 }

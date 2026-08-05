@@ -1448,9 +1448,16 @@ int main(int argc, char** argv) {
     std::vector<zeebulator::GlTextureLogEntry> gl_log;
     bool gl_ok = ok && zeebulator::DeserializeGlTextureLog(state_in, gl_log) &&
                  zeebulator::ReplayGlTextureLog(gl_log, gl_recorder);
-    std::printf("--load-state: %s %s (GL texture replay: %s)\n",
+    // Best-effort, not gated into `ok`/`gl_ok`: an older save state made
+    // before this section existed simply has no more bytes here, which
+    // Deserialize already treats as "nothing to restore" rather than
+    // corrupting anything (see Mixer::Serialize's own doc comment) --
+    // real audio just stays silent for handles the guest reuses from
+    // before the save, exactly the pre-existing gap, not a new failure.
+    bool audio_ok = gl_ok && mixer.Deserialize(state_in) && media_hle.Deserialize(state_in);
+    std::printf("--load-state: %s %s (GL texture replay: %s, audio state: %s)\n",
                 ok ? "loaded" : "FAILED to load", save_state_path.c_str(),
-                gl_ok ? "ok" : "FAILED");
+                gl_ok ? "ok" : "FAILED", audio_ok ? "restored" : "not present in this save file");
     backend.ShowStatusMessage(ok && gl_ok ? "STATE LOADED" : "LOAD FAILED");
   }
 
@@ -1556,8 +1563,13 @@ int main(int argc, char** argv) {
         // create redundant duplicates.
         if (event.key.keysym.sym == SDLK_F1) {
           std::ofstream out(save_state_path, std::ios::binary);
+          // Mixer/MediaHle state appended last, same reasoning as the GL
+          // texture log: only a cold `--load-state` load actually needs
+          // it (see Mixer::Serialize's own doc comment for why, and F2's
+          // own comment below for why a same-session load doesn't).
           bool ok = out && zeebulator::SaveState(cpu, out) &&
-                    zeebulator::SerializeGlTextureLog(gl_recorder.Log(), out);
+                    zeebulator::SerializeGlTextureLog(gl_recorder.Log(), out) &&
+                    mixer.Serialize(out) && media_hle.Serialize(out);
           backend.ShowStatusMessage(ok ? "STATE SAVED" : "SAVE FAILED");
           continue;
         }

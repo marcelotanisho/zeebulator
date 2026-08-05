@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <istream>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -134,6 +136,29 @@ class MediaHle {
   // notification would still need a live app to be pumping its event
   // loop to receive it.
   void Tick();
+
+  // Persists media_by_object_ (every IMedia object the guest has
+  // created, its decoded PCM, and its current playback bookkeeping) so
+  // it survives past this process -- see Mixer::Serialize's own doc
+  // comment for the real bug this fixes together with it: without this,
+  // a guest that reuses an IMedia handle it created before a save state
+  // was taken finds no record of it at all after loading one (this
+  // class's own map is purely in-memory, keyed by a guest object
+  // address that's meaningless to a freshly-constructed instance), so
+  // every call against it -- RegisterNotify, SetMediaParm, Play --
+  // fails outright rather than glitching transiently. Must be called
+  // (in either direction) together with the same Mixer's own
+  // Serialize/Deserialize -- Deserialize restores raw Mixer::VoiceId
+  // values that only mean anything once that Mixer's own voices_ has
+  // been restored to match.
+  //
+  // Format: uint32 LE next_object_address_, then uint32 LE entry count,
+  // then per entry: uint32 LE object address (the map key), has_data(1
+  // byte), channels, sample_rate, sample count + raw int16 samples (if
+  // has_data), voice id, has_voice(1 byte), loop(1 byte), volume,
+  // state, notify_fn, notify_user.
+  bool Serialize(std::ostream& out) const;
+  bool Deserialize(std::istream& in);
 
  private:
   enum MediaState {

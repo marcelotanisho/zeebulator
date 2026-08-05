@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <istream>
 #include <memory>
 #include <mutex>
+#include <ostream>
 #include <vector>
 
 #include "core/backend.h"
@@ -68,6 +70,23 @@ class Mixer {
   // voice and pushes the result to `backend` at this Mixer's fixed
   // output rate. Safe to call with zero active voices (pushes silence).
   void Mix(Backend& backend, size_t frame_count);
+
+  // Real, live-reproduced bug this fixes: a save state only ever
+  // captured guest CPU/memory (see core/save_state.h's own doc
+  // comment), never this class's own voices_ -- so after loading one,
+  // every voice already playing before the save was taken (including
+  // ones MediaHle would otherwise resume once the guest's own,
+  // correctly-restored code drives playback again) was just gone,
+  // producing real, total, silent audio from that point on. Confirmed
+  // live: works from a cold boot, breaks specifically after
+  // `--load-state`.
+  //
+  // Format: uint32 LE next_id_, then uint32 LE voice count, then per
+  // voice: id, channels, sample_rate, loop(1 byte), volume, paused(1
+  // byte), position_frames(double), finished(1 byte), then the sample
+  // count and the raw int16 samples themselves.
+  bool Serialize(std::ostream& out) const;
+  bool Deserialize(std::istream& in);
 
  private:
   struct Voice {

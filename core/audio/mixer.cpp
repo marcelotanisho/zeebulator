@@ -6,6 +6,22 @@
 
 namespace zeebulator {
 
+namespace {
+
+template <typename T>
+bool WritePod(std::ostream& out, const T& v) {
+  out.write(reinterpret_cast<const char*>(&v), sizeof(v));
+  return out.good();
+}
+
+template <typename T>
+bool ReadPod(std::istream& in, T& v) {
+  in.read(reinterpret_cast<char*>(&v), sizeof(v));
+  return in.good();
+}
+
+}  // namespace
+
 Mixer::Mixer(int output_sample_rate) : output_sample_rate_(output_sample_rate) {}
 
 Mixer::VoiceId Mixer::Play(std::shared_ptr<const std::vector<int16_t>> samples, int channels,
@@ -120,6 +136,66 @@ void Mixer::Mix(Backend& backend, size_t frame_count) {
     out[i] = static_cast<int16_t>(std::clamp<int32_t>(accum[i], -32768, 32767));
   }
   backend.PushAudioSamples(out.data(), frame_count, output_sample_rate_);
+}
+
+bool Mixer::Serialize(std::ostream& out) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!WritePod(out, next_id_)) return false;
+  if (!WritePod(out, static_cast<uint32_t>(voices_.size()))) return false;
+  for (const Voice& v : voices_) {
+    if (!WritePod(out, v.id)) return false;
+    if (!WritePod(out, v.channels)) return false;
+    if (!WritePod(out, v.sample_rate)) return false;
+    if (!WritePod(out, v.loop)) return false;
+    if (!WritePod(out, v.volume)) return false;
+    if (!WritePod(out, v.paused)) return false;
+    if (!WritePod(out, v.position_frames)) return false;
+    if (!WritePod(out, v.finished)) return false;
+    const std::vector<int16_t>& samples = v.samples ? *v.samples : std::vector<int16_t>{};
+    if (!WritePod(out, static_cast<uint32_t>(samples.size()))) return false;
+    if (!samples.empty()) {
+      out.write(reinterpret_cast<const char*>(samples.data()),
+                static_cast<std::streamsize>(samples.size() * sizeof(int16_t)));
+      if (!out.good()) return false;
+    }
+  }
+  return true;
+}
+
+bool Mixer::Deserialize(std::istream& in) {
+  VoiceId next_id = 0;
+  if (!ReadPod(in, next_id)) return false;
+  uint32_t voice_count = 0;
+  if (!ReadPod(in, voice_count)) return false;
+
+  std::vector<Voice> voices;
+  voices.reserve(voice_count);
+  for (uint32_t i = 0; i < voice_count; ++i) {
+    Voice v;
+    if (!ReadPod(in, v.id)) return false;
+    if (!ReadPod(in, v.channels)) return false;
+    if (!ReadPod(in, v.sample_rate)) return false;
+    if (!ReadPod(in, v.loop)) return false;
+    if (!ReadPod(in, v.volume)) return false;
+    if (!ReadPod(in, v.paused)) return false;
+    if (!ReadPod(in, v.position_frames)) return false;
+    if (!ReadPod(in, v.finished)) return false;
+    uint32_t sample_count = 0;
+    if (!ReadPod(in, sample_count)) return false;
+    auto samples = std::make_shared<std::vector<int16_t>>(sample_count);
+    if (sample_count != 0) {
+      in.read(reinterpret_cast<char*>(samples->data()),
+              static_cast<std::streamsize>(sample_count * sizeof(int16_t)));
+      if (!in.good()) return false;
+    }
+    v.samples = std::move(samples);
+    voices.push_back(std::move(v));
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  next_id_ = next_id;
+  voices_ = std::move(voices);
+  return true;
 }
 
 }  // namespace zeebulator
