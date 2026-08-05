@@ -541,6 +541,47 @@ TEST(MediaHle, TickFiresRegisteredNotifyWithDoneStatusOnceAVoiceFinishes) {
   EXPECT_EQ(notify_calls, 1);
 }
 
+// Real per-character sound channels are a small shared pool: a new,
+// higher-priority sound reclaims an already-playing channel by calling
+// Play() again on the same IMedia object mid-playback, not by
+// Stop()ping it first (see MediaHle's own class doc comment) -- so the
+// interrupted voice never finishes naturally and Tick() alone would
+// never notice it once Play() overwrites media.voice. Without PlayImpl
+// itself firing an ABORT notification for the old voice first, that
+// channel's real priority-stamp reset never happens -- the same "sound
+// effects stop firing" bug class Tick()'s own DONE-on-finish fix
+// covers, just for the "interrupted" case instead of "finished".
+TEST(MediaHle, PlayReclaimingAnAlreadyPlayingVoiceFiresAbortNotificationFirst) {
+  Fixture f;
+  uint32_t obj = f.media_hle.CreateMediaObject();
+  uint32_t md = f.WriteMediaData("tone.wav");
+  f.hle.CallArmFunction(f.Slot(kSetMediaParm), obj, kParmMediaData, md, 0);
+
+  int notify_calls = 0;
+  uint32_t notify_status_seen = 0;
+  uint32_t notify_fn = f.hle.Register([&](IArmCore& core) {
+    ++notify_calls;
+    uint32_t notify_struct = core.GetRegister(kR1);
+    notify_status_seen = f.cpu.GetMemory().Read32(notify_struct + 16);
+    core.SetRegister(kR0, 0);
+  });
+  f.hle.CallArmFunction(f.Slot(kRegisterNotify), obj, notify_fn, 0);
+
+  f.hle.CallArmFunction(f.Slot(kPlay), obj);
+  EXPECT_EQ(notify_calls, 0) << "starting the first play shouldn't notify anything";
+
+  // Reclaim the same channel for a new sound before the first one had
+  // any chance to finish naturally.
+  f.hle.CallArmFunction(f.Slot(kPlay), obj);
+  EXPECT_EQ(notify_calls, 1);
+  EXPECT_EQ(notify_status_seen, 3u) << "MM_STATUS_ABORT";
+
+  // The new voice is genuinely playing -- Tick() shouldn't immediately
+  // fire a second, spurious notification for it.
+  f.media_hle.Tick();
+  EXPECT_EQ(notify_calls, 1);
+}
+
 TEST(MediaHle, TickWithNoRegisteredNotifyDoesNotCrash) {
   Fixture f;
   uint32_t obj = f.media_hle.CreateMediaObject();

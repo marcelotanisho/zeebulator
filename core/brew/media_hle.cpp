@@ -274,7 +274,35 @@ void MediaHle::PlayImpl(IArmCore& core) {
     return;
   }
   Media& media = it->second;
-  if (media.has_voice) mixer_.Stop(media.voice);
+  if (media.has_voice) {
+    // Real per-character sound channels are a small shared pool -- a new,
+    // higher-priority sound reclaims an already-playing channel by
+    // calling Play() again on the same IMedia object, not by Stop()ping
+    // it first (see this class's own doc comment). The old voice never
+    // gets to finish naturally, so Tick()'s own "voice finished"
+    // detection would never notice it once media.voice below gets
+    // overwritten -- silently dropping exactly the notification the real
+    // per-character channel's own priority-stamp reset depends on, which
+    // permanently locks that logical invocation's priority claim. This
+    // is the same real bug class Tick()'s own DONE-on-finish fix already
+    // covers, just for the "interrupted, not finished" case instead of
+    // the "finished naturally" one -- confirmed live-reproduced the same
+    // way (TASKS.md/PHASE8_LOG.md), recurring later into a real playthrough
+    // once channel reclaims start happening (busier stages, more
+    // simultaneous real attackers). Real MM_STATUS_ABORT (3) is the
+    // documented status for exactly this case; the real registered
+    // callback routes it to the same handler as MM_STATUS_DONE (2)
+    // either way (see class doc comment), so this is a real, not just
+    // convenient, status value.
+    mixer_.Stop(media.voice);
+    if (media.notify_fn != 0) {
+      constexpr uint32_t kMmCmdPlay = 4;
+      constexpr uint32_t kMmStatusAbort = 3;
+      memory_.Write32(notify_scratch_address_ + 8, kMmCmdPlay);
+      memory_.Write32(notify_scratch_address_ + 16, kMmStatusAbort);
+      hle_.CallArmFunction(media.notify_fn, media.notify_user, notify_scratch_address_);
+    }
+  }
   media.voice =
       mixer_.Play(media.samples, media.channels, media.sample_rate, media.loop, media.volume);
   media.has_voice = true;

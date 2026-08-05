@@ -65,21 +65,31 @@ namespace zeebulator {
 // not needed by it, so they're not implemented; ParseWav already
 // rejects non-PCM `fmt ` tags explicitly rather than mis-decoding them.
 //
-// RegisterNotify stores the callback and Tick() fires it (MM_CMD_PLAY,
-// MM_STATUS_DONE) once a voice finishes playing naturally -- real
-// Double Dragon code depends on this, not just a nice-to-have. Traced
-// live (PHASE8_LOG.md, the sound investigation's final round): every
-// sound-media object the game creates registers the same real callback
-// (`ddragonz.mod` 0x11d020 -> 0x11f4dc), and the real per-attack sound
-// system uses a small pool of shared "channels" per character, each
-// gated by a stored priority stamp that only a request of equal-or-
-// higher priority may reclaim. The DONE notification's own real
-// callback body is what resets a channel's stored stamp (or re-arms a
-// looping one via Resume) once its sound actually finishes -- without
-// ever firing it, a channel a high-priority sound once claimed stays
-// permanently unusable by anything lower-priority, which is exactly
-// the real, live-reproduced "sound effects stop firing the longer you
-// play" symptom this was chasing. The real callback only reads two
+// RegisterNotify stores the callback, and it fires (MM_CMD_PLAY,
+// MM_STATUS_DONE/MM_STATUS_ABORT) in two real, distinct situations --
+// real Double Dragon code depends on both, not just a nice-to-have.
+// Traced live (PHASE8_LOG.md, the sound investigation's final round):
+// every sound-media object the game creates registers the same real
+// callback (`ddragonz.mod` 0x11d020 -> 0x11f4dc), and the real per-
+// attack sound system uses a small pool of shared "channels" per
+// character, each gated by a stored priority stamp that only a request
+// of equal-or-higher priority may reclaim. The callback body is what
+// resets a channel's stored stamp (or re-arms a looping one via
+// Resume) -- without ever firing it, a channel a high-priority sound
+// once claimed stays permanently unusable by anything lower-priority.
+// (1) Tick() fires MM_STATUS_DONE once a voice finishes playing
+// naturally -- fixes the "sound effects stop firing the longer you
+// play" symptom for a channel's sound that ran to completion.
+// (2) PlayImpl fires MM_STATUS_ABORT for whatever voice was already
+// playing on the same IMedia object, before replacing it -- real
+// channel reclaims happen by calling Play() again on the same object
+// mid-playback, not by Stop()ping it first, so without this the old
+// voice's notification would be silently dropped the moment
+// `media.voice` gets overwritten, and Tick() would never notice it was
+// ever playing at all. This is the same symptom recurring later into a
+// real playthrough, once channel reclaims start actually happening
+// (busier stages, more simultaneous real attackers) -- confirmed
+// live-reproduced the same way. The real callback only reads two
 // fields of its `AEEMediaCmdNotify`-shaped second argument (confirmed
 // via that same disassembly, not guessed): `+8` must equal 4
 // (MM_CMD_PLAY) and `+16` is the status (2 = MM_STATUS_DONE, 3 =
