@@ -70,6 +70,36 @@ endif()
 # available), but both are real GM-standard engines using the same
 # real program-number instrument assignments, so the *instrument
 # choice* matches even though the exact *timbre* isn't byte-identical.
+# Real Zeebo Sports Tênis/Peteca/Volei, Zeeboids, and one kids'-activity
+# title's own shared `resources.pakz` asset container (see
+# core/loader/pakz.h) stores each entry as a standard classic-".lzma"
+# ("LZMA_ALONE") compressed stream -- confirmed directly against the real
+# file (5-byte properties/dict header, 8-byte size, real decompressed
+# content starting with a real, legible "...Crazyball Engine. Copyright"
+# string). liblzma's own `lzma_alone_decoder` is the real, standard way to
+# read that container -- runtime-installed on this dev machine but with
+# no dev headers/pkg-config file, so vendored the same way zlib already
+# is above rather than depending on a system install this project can't
+# assume elsewhere.
+FetchContent_Declare(
+  liblzma
+  GIT_REPOSITORY https://github.com/tukaani-project/xz.git
+  GIT_TAG v5.6.3
+)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(XZ_TOOL_LZMAINFO OFF CACHE BOOL "" FORCE)
+set(XZ_TOOL_XZ OFF CACHE BOOL "" FORCE)
+set(XZ_TOOL_XZDEC OFF CACHE BOOL "" FORCE)
+set(XZ_TOOL_LZMADEC OFF CACHE BOOL "" FORCE)
+set(XZ_TOOL_SYMLINKS OFF CACHE BOOL "" FORCE)
+set(XZ_NLS OFF CACHE BOOL "" FORCE)
+set(XZ_DOC OFF CACHE BOOL "" FORCE)
+# Without this, xz's own internal self-tests (test_stream_flags, test_vli,
+# ...) register as CTest tests inside *this* project's own test run,
+# noisy and unrelated to anything this project's own test suite checks.
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(liblzma)
+
 FetchContent_Declare(
   tinysoundfont
   GIT_REPOSITORY https://github.com/schellingb/TinySoundFont.git

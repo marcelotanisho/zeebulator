@@ -284,6 +284,33 @@ TEST(Cpu, LdrshSignExtendsNegativeHalfword) {
   EXPECT_EQ(cpu.GetRegister(kR4), 0xFFFF8000u);
 }
 
+TEST(Cpu, LdrdLoadsTwoConsecutiveRegisters) {
+  // LDRD shares the halfword-transfer store opcode space (L=0), with
+  // SH=10 marking it as the real paired-register load instead -- real
+  // encoding confirmed by assembling `ldrd r8, [sp, #32]` and reading
+  // the actual bytes back (0xE1CD82D0), not guessed. Found live: real
+  // Zeebo Sports Tênis code uses this exact shape.
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x2000);
+  cpu.GetMemory().Write32(0x2008, 0x11111111);
+  cpu.GetMemory().Write32(0x200C, 0x22222222);
+  cpu.GetMemory().Write32(0, 0xE1C020D8);  // LDRD R2, [R0, #8]
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0x11111111u);
+  EXPECT_EQ(cpu.GetRegister(kR3), 0x22222222u);
+}
+
+TEST(Cpu, StrdStoresTwoConsecutiveRegisters) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR0, 0x2000);
+  cpu.SetRegister(kR2, 0x33333333);
+  cpu.SetRegister(kR3, 0x44444444);
+  cpu.GetMemory().Write32(0, 0xE1C020F8);  // STRD R2, [R0, #8]
+  cpu.Step();
+  EXPECT_EQ(cpu.GetMemory().Read32(0x2008), 0x33333333u);
+  EXPECT_EQ(cpu.GetMemory().Read32(0x200C), 0x44444444u);
+}
+
 // --- Unimplemented instruction classes are rejected, not mis-executed ---
 
 TEST(Cpu, SwapInstructionIsUnimplemented) {

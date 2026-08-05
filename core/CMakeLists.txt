@@ -29,6 +29,8 @@ add_library(zeebulator_core STATIC
   loader/obm1.h
   loader/pkg.cpp
   loader/pkg.h
+  loader/pakz.cpp
+  loader/pakz.h
   loader/wav.cpp
   loader/wav.h
   loader/midi.cpp
@@ -71,7 +73,12 @@ target_include_directories(zeebulator_core PUBLIC ${PROJECT_SOURCE_DIR})
 # zlib's CMakeLists predates modern usage-requirement propagation, so its
 # generated zconf.h (in the binary dir) needs to be added explicitly.
 target_include_directories(zeebulator_core PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
-target_link_libraries(zeebulator_core PRIVATE zlibstatic)
+target_link_libraries(zeebulator_core PRIVATE zlibstatic liblzma)
+# liblzma's own CMakeLists doesn't propagate its public API header dir as
+# a usage requirement (unlike a `find_package(LibLZMA)`-found install
+# would via pkg-config), so add it explicitly, the same way zlib's own
+# generated zconf.h needs to be above.
+target_include_directories(zeebulator_core PRIVATE ${liblzma_SOURCE_DIR}/src/liblzma/api)
 # TinySoundFont is header-only (no CMakeLists of its own to depend on);
 # the generated/ dir holds this build's own configure_file output
 # (soundfont_path.h, the real fetched .sf2's real absolute path).

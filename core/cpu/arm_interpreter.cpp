@@ -443,13 +443,21 @@ void ArmInterpreter::ExecuteHalfwordTransfer(uint32_t instr) {
     } else {
       regs_[rd] = value;
     }
-  } else {
-    if (sh != 1) {
-      throw UnimplementedInstruction(
-          "Halfword transfer store with SH != 01 (not a valid encoding)");
-    }
+  } else if (sh == 1) {  // STRH
     memory_.Write16(transfer_address,
                      static_cast<uint16_t>(ReadOperandRegister(rd)));
+  } else if (sh == 2) {
+    // LDRD: despite L=0 (this whole branch is normally "store"), SH=10
+    // in the store-opcode space real-encodes the paired-register load
+    // -- confirmed against real assembled output (`ldrd r8, [sp, #32]`
+    // -> `e1cd82d0`, matching this exact L=0/SH=2 shape), not guessed.
+    // Rd/Rd+1 real ABI convention requires Rd even; real compiled code
+    // always respects that, so it's not re-validated here.
+    regs_[rd] = memory_.Read32(transfer_address);
+    regs_[rd + 1] = memory_.Read32(transfer_address + 4);
+  } else {  // sh == 3: STRD
+    memory_.Write32(transfer_address, ReadOperandRegister(rd));
+    memory_.Write32(transfer_address + 4, ReadOperandRegister(rd + 1));
   }
 
   if (!pre_indexed) {

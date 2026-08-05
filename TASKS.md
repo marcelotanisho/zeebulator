@@ -1775,7 +1775,361 @@ playable start-to-finish at full speed, standalone build.
       unfixed, precisely documented instead. Investigation only, all
       temporary instrumentation reverted, 292/292 tests pass unchanged.
       See PHASE8_LOG.md.
-      **Pivoted to Double Dragon's own new gap (the side effect noted
+      **Picked back up (2026-08-04) and found this project *does* have a
+      real BREW MP `IShell` header after all** —
+      `research/docs/sdk_installer_extract/brew_sdk_headers_reference/
+      brew_mp_7.12.5_sdk/AEEIShell.h` — previously overlooked by this
+      exact thread. Its `INHERIT_IShell` macro lists 50 total vtable
+      methods (AddRef/Release + 48 IShell-specific, extending past the
+      pre-BREW-MP 40-method count this project's own `ishell.cpp`
+      already implements through `LoadResDataEx`=slot 41) in a fixed
+      order: slot 42 = `RegisterSystemCallback`, **slot 43 =
+      `DetectType(cpBuf, pdwSize, cpszName, pcpszMIME)`** — byte offset
+      math checks out exactly (`0xac / 4 = 43`). Added a temporary live
+      register trace at slot 43 (reverted after) and ran real Peggle
+      again: the real call site passes `r1=0` (`cpBuf`), `r2` a valid
+      pointer (`pdwSize`), `r3=0` (`cpszName`), and stack arg 0 = `0`
+      (`pcpszMIME`) — every pointer `DetectType` would need to actually
+      detect or report anything is null. **Hypothesis not confirmed**:
+      a real `DetectType` call with nothing to sniff and nowhere to
+      write a MIME string back is a plausible edge case but doesn't
+      inspire confidence this is really `DetectType`, especially given
+      this reference header is BREW MP 7.12.5 — a substantially later
+      SDK revision than Zeebo's real 2009-era BREW 4.0.2, which may not
+      share BREW MP's own slot 42+ ordering at all. **Also tested
+      empirically or the earlier `35`-suffices theory**: patched the
+      slot 43 stub to unconditionally return `35` (still investigation-
+      only, reverted) and reran — execution still crashes at the exact
+      same real gap, 3 steps later (`peggle.mod` last in-module
+      pc≈`0x105b70`, lr≈`0x108ba8`, same as the `return 0` baseline).
+      **Confirms the original assessment rather than overturning it**:
+      a bare correct return value alone doesn't unblock real progress,
+      so the real construction path genuinely does need more than a
+      scalar fix — consistent with "a multi-branch state machine"
+      above, not a quick win. Left unfixed. The newly-found header is a
+      real, concrete lead for whoever picks this up next with an actual
+      ARM disassembler (not just live register traces) to check the
+      real caller's exact instruction sequence against `DetectType`'s
+      documented contract instruction-by-instruction, rather than
+      guessing from argument shape alone. Investigation only, all
+      temporary instrumentation reverted, 292/292 tests pass unchanged.
+      **Separately confirmed**: this project's real gamepad/HID
+      injection pipeline (`tools/game_probe.cpp`'s `AEECLSID_HID`
+      registration, `InjectHidButtonEvent`, `ZPadButtonToHidUid`, and
+      `Sdl2UnifiedBackend`'s controller polling incl. the real Xbox
+      Wireless Controller A/X-swap fix) is wired unconditionally in
+      `main()`, before any game-specific ClsId is used — not Double-
+      Dragon-specific — so it needs zero additional per-game work once
+      Peggle (or any other title) actually reaches the point of calling
+      `ISHELL_CreateInstance(shell, AEECLSID_HID, ...)`. Peggle's own
+      execution doesn't get remotely that far yet (crashes at the slot-
+      43 gap above, well before any input-handling code would run), so
+      this is confirmed-ready-and-waiting, not yet exercised.
+      **Same round, continued: got a real ARM disassembly of the crash
+      site** — `arm-none-eabi-objdump -D -b binary -marm
+      --adjust-vma=0x00100000`, a tool already installed in this
+      environment and apparently never used by this project before
+      (every prior round relied on live register traces alone). Static
+      disassembly of `peggle.mod` around the crash (`0x108a90`-
+      `0x108ba8`, `0x102078`, `0x102148`) fully explains the shape:
+      `0x105b5c` is one of many tiny ROPI relative-vtable thunks
+      (`ldr r2,[r0]; ldr ip,[r2,#N]; bx ip`, matching the same real ABI
+      `BuildGenericRelativeVtableStubObject` was built for) — the crash
+      is this thunk's `this` (`r0`) being a still-zero array slot,
+      dereferenced unconditionally. That slot (`peggle.mod`
+      `this_obj+12` array, indexed by the same "resource ID"-shaped
+      value threaded through the whole call chain) only gets populated
+      if `0x102148` — the function directly containing the slot-43 call
+      — succeeds. **Its exact contract, read straight from the
+      instructions**: calls slot 43 with `(this=IShell*, r1=0, r2=&local
+      uint32 on 0x102148's own stack)`; `r3` and any stack args are
+      genuinely never set (confirms the earlier live trace wasn't
+      missing real arguments — there simply aren't more real ones here,
+      weakening the `DetectType` 5-argument-signature hypothesis further
+      rather than supporting it). **Refines the earlier "returns 35"
+      finding**: success needs *both* `r0 == 35` *and* a nonzero value
+      written through that `r2` out-pointer — the earlier round's
+      `return 35`-only patch never touched `*r2`, which is why it
+      changed nothing. Patched the temporary stub to satisfy both
+      (write `1` through `r2`, return `35`) and reran against real
+      Peggle: **confirmed real further progress** — a second, real
+      slot-43 call site fires this time (`r1=0x8038ecd0`, a real pointer,
+      not null) and total steps before the crash rises from 551/554 to
+      588 — but execution still ends at the exact same crash site. Read
+      the next real gate directly from the disassembly rather than
+      guessing further: after slot 43 "succeeds", `0x102078` calls
+      through *another* unconfirmed relative-vtable slot at byte offset
+      `+8` (== this project's own slot-2 numbering, i.e. shaped exactly
+      like a second, nested `CreateInstance` call) on a *different* real
+      object (`(*(outer_this->field_0))->field_12`, not the global
+      `IShell*` the DBGPRINTF calls use) — and only if *that* call
+      succeeds (returns 0 and writes a nonzero object pointer through
+      its own out-param) does a further offset-`+16` call on the
+      resulting object run, which finally writes the real constructed
+      object into the array slot `0x105b5c` later dereferences. **Left
+      unfixed** — this is now a concretely-scoped next step (identify
+      what real object `this_obj->field_0->field_12` is and what
+      ClsId/args its own offset-`+8`/`+16` calls need), not an open-
+      ended unknown, but still two more unconfirmed real interfaces deep
+      and not safe to guess blindly in one more round. All temporary
+      instrumentation reverted, 363/363 tests pass unchanged (this
+      project's test count moved since the last Peggle-specific entry
+      due to unrelated tooling work — see the Phase C/gamepad and save-
+      state entries elsewhere in this log).
+      **Picked back up again (2026-08-04, later the same day) and traced
+      `0x102148` in full** — it's much larger than the earlier partial
+      read suggested (~1.2KB, `0x102148`-`0x1025ec`), a genuine "get or
+      load a cached resource by ID" state machine, not just a thin
+      gate. Concrete new findings, all read straight from the real
+      instructions (`arm-none-eabi-objdump`), not guessed:
+      - **The `this` slot 43 is called on is genuinely the app's own
+        real `IShell*`, not some other unidentified sub-object.**
+        Confirmed by co-location: the same `r5`/`this` value later
+        (`0x1025ac`) makes a call through byte offset `0x80` (128
+        decimal, `128 / 4 = 32`) — this project's own already-
+        implemented, already-*confirmed* real slot 32, `GetHandler`
+        (`core/brew/ishell.cpp`) — with `r1` loaded from a literal pool
+        constant at `0x1025f0` whose raw bytes (`00 55 00 01` LE) are
+        **exactly `0x01005500`**, i.e. this project's own already-
+        implemented `kAudioMediaCls` constant in `GetHandlerImpl`,
+        called with the identical real shape (`this, cls, pszMIME`)
+        Double Dragon's own audio system already uses successfully.
+        Real Zeebo code sharing one real interface-object shape (and one
+        real ClsId constant) across two completely different real games
+        is about as strong a cross-title confirmation as this project
+        gets.
+      - **The function's actual shape**: caches a resource-ID range
+        (`[r6+4]`, `[r6+8]`, `r6` threading back to the same "resource
+        ID" value the whole outer call chain carries) — a fast path if
+        the requested ID falls inside the cached range, a slow path
+        (calling slot 43 a *second* time with a different real argument
+        shape) if not, and, only if that second slot-43 call itself
+        returns 0 ("not found"), a `GetHandler(AEECLSID_MEDIA)` fallback
+        whose result gets conditionally written into the caller's own
+        out-param (`*r8`, `strne r0,[r8]` at `0x1025c4`) — matching the
+        second, empirically-observed live slot-43 call from the last
+        round's `return 35` experiment (`r1=0x8038ecd0`, a real pointer)
+        exactly: that second call's *argument*, not just its return
+        value, is real, live-observed data flowing through this same
+        traced path.
+      - **Still not enough to safely implement.** The final write to the
+        array slot `0x105b5c` later dereferences depends on the *whole*
+        state machine's outcome (which of the three paths — cache hit,
+        second slot-43 lookup, or `GetHandler` fallback — actually runs
+        for the real resource ID Peggle asks for at this point), not a
+        single scalar. Getting this wrong would write a plausible-
+        looking but incorrect object into a slot real code then calls
+        through unconditionally — worse than leaving it a loud crash.
+      **Net assessment after two full rounds on this specific gap**: the
+      "no real BREW MP `IShell` header" framing from the original
+      investigation was accurate in spirit even though a header was
+      found — the real blocker was never the header, it's that slot
+      43's real behavior is entangled with a genuine, substantial
+      resource-caching state machine specific to this call site, not a
+      one-line lookup a header alone would resolve. Next concrete step
+      for whoever picks this up: instrument `[r6+4]`/`[r6+8]` and the
+      real resource ID live to see which of the three paths actually
+      fires for Peggle's real first call, then implement only that path
+      first rather than the whole state machine at once. All temporary
+      instrumentation reverted, 364/364 tests pass unchanged.
+      **Followed that exact next step immediately and it paid off --
+      real further progress, confirmed live.** Traced what `r4` (malloc'd
+      pointer, source of the empirically-observed real second-call
+      argument from two rounds ago) actually was: `context->offset 0x6c`
+      -- this project's own already-implemented, already-confirmed
+      `kMallocSlotOffset` (`core/brew/mod_runtime.cpp`). That's the
+      missing piece: slot 43 is called in a real **two-phase query/fetch
+      pattern**, same shape `LoadResDataEx`'s own `-1`-sentinel size-only
+      query already uses, just with a `NULL`-buffer sentinel instead of
+      `-1`: call 1 `(this, cpBuf=NULL, pdwSize=&out)` asks for a size;
+      real code `malloc`s exactly that much; call 2
+      `(this, cpBuf=<malloc'd buffer>, pdwSize=&out)` asks it to fill
+      that buffer. **Also corrected a real misreading from the last
+      round**: the earlier "returns exactly 35" finding is call 1's own
+      *internal* gate value (`peggle.mod 0x102190`, `cmp r0,#35`), not
+      what the whole enclosing function (`0x102148`) returns to *its own*
+      caller (`0x102078`, which only treats a literal `0` as success) --
+      conflating those two was exactly why the previous round's "return
+      `35` from both calls" experiment still crashed at the same place,
+      only 3 steps later, and looked like it hadn't worked. Patched the
+      stub properly this round (call 1: write a placeholder size,
+      return `35`; call 2: return `0`, ignoring buffer contents -- real
+      code frees this buffer immediately after call 2 without this
+      specific function ever reading it back, so contents didn't matter
+      for getting *this* far) and reran against real Peggle:
+      **substantial genuine progress** -- two full real construction
+      cycles now succeed end to end, each correctly chaining into the
+      already-implemented, already-working real
+      `GetHandler(AEECLSID_MEDIA)` -> `CreateInstance` pair, and beyond
+      that into **two brand-new real trap addresses never reached in
+      this title's investigation before** (fresh HLE call shapes, not
+      yet identified) -- real step count before the next gap rises from
+      588 to 631, and the crash itself moves to a different, later
+      real invocation of the same construction path (a third resource
+      ID, not yet unblocked by this generic placeholder). **Still not
+      committed as a real fix** -- the placeholder size/contents are
+      arbitrary, not evidence-grounded, so this stays investigation-only
+      until the two new real trap call shapes are identified and the
+      real size/content contract (not just the control-flow shape) is
+      confirmed; shipping the placeholder as-is risks quietly wrong
+      behavior look like progress. Concrete next step: identify the two
+      new real trap call shapes just reached (first time this title's
+      investigation has seen them) -- that's very likely the real
+      `IMedia`/audio bring-up path, given the `AEECLSID_MEDIA` ClsId
+      immediately preceding them. All temporary instrumentation
+      reverted, 364/364 tests pass unchanged.
+      **Immediate follow-up, same day: identified both new calls, and
+      it's genuinely exciting.** Instrumented `MediaHle`'s own
+      `RegisterNotifyImpl`/`SetMediaParmImpl`/`PlayImpl` plus slot 43
+      itself and reran with the two-phase fix from the previous entry
+      still applied. Trap `0xf0000a24` is real `SetMediaParm` (fired with
+      `paramId=1`/`MM_PARM_MEDIA_DATA`, confirmed by the print firing);
+      trap `0xf0000a18` (one MediaHle vtable slot before it) is
+      `Release` -- a real, already-correctly-handled no-op in this
+      project's stub convention, not a gap. **The real result: this
+      exact real `GetHandler(AEECLSID_MEDIA)` -> `CreateInstance` ->
+      `SetMediaParm` -> `Release` cycle -- already-working machinery
+      this project built for Double Dragon -- now runs successfully for
+      Peggle too, eight full times in a row** (`MediaHle` objects
+      `0x80200000` through `0x8020001c`, each getting a real
+      `SetMediaParm(paramId=MEDIA_DATA)` call with no failure). Eight is
+      a real, meaningful number here, not incidental -- matches this
+      project's own established "small pool of shared per-character
+      sound channels" finding from the very first sound investigation.
+      **The remaining crash is provably a different gap, not a ninth
+      audio channel**: no ninth slot-43 call or `SetMediaParm` call ever
+      fires: the same `0x105b70`/`0x108ba8` crash happens immediately
+      after the eighth cycle's `Release`, preceded only by the same two
+      `DBGPRINTF`-shaped calls that open every `0x108a90` invocation --
+      i.e. whatever comes right after the 8-channel construction loop
+      finishes hits the identical vtable-relative-thunk-on-a-zero-slot
+      crash shape again, for something that isn't audio-channel-shaped
+      at all (it never reaches slot 43). Not pursued further this round
+      -- a good, natural stopping point: real audio-channel bring-up for
+      a second title is a substantial, concrete win on its own, and
+      whatever's immediately after it is a distinct next investigation,
+      not a continuation of this one. All temporary instrumentation
+      (including the two-phase slot-43 stub, still not a real committed
+      fix -- see the previous entry's own caveat) reverted, 364/364
+      tests pass unchanged.
+      **Same day, continued: traced the crash's own caller chain
+      statically** (`arm-none-eabi-objdump` again, no live run this
+      round -- exactly one real call site targets `0x108a90` in the
+      whole binary, found by grepping the full disassembly for real
+      `bl` targets, so this is exhaustive, not a guess). Real caller
+      `0x106d34(index)` routes to `0x108860(...)` for `index < 7` or
+      `0x108a90(..., index - 7, ...)` for `index >= 7` -- i.e. this
+      project's own observed `0x108a90` "`arg1`" values (`0..7` across
+      the eight successful channel builds) are real indices `7..14`,
+      one-rebased. `0x106d34` itself is called from exactly one real
+      site too (`0x12aca4`), inside a loop whose real termination check
+      compares a 64-bit accumulator (`[r4+20]`, incremented by a
+      register-loaded step each pass) against a stored target pair --
+      not a simple bounded counter visible from static disassembly
+      alone, so the real "how many channels" answer depends on a live
+      runtime value this round didn't capture. **Best current read**:
+      the ninth call (real index 15) hits `0x102078`'s own early-exit
+      guard (`r4==0` or `[r5+4]==0` or `r6==0` -> return `14` without
+      ever touching slot 43 or `*r6`, see this function's disassembly
+      in the entry above) -- consistent with either a real, correct
+      8-channel bound this generic placeholder stub doesn't respect
+      (most likely: real slot-43 data would encode the real channel
+      count somewhere this project's arbitrary `size=64` answer doesn't
+      provide, and the accumulator loop reads that back from further
+      real state this round didn't trace), or a genuine off-by-some
+      real bound unrelated to slot 43 at all. Not resolved -- the next
+      step needs a live trace of `0x106d34`'s own accumulator, not more
+      static reading. No temporary instrumentation was added this round
+      (static analysis only); 364/364 tests unchanged.
+      **Cross-referenced Zuma's Revenge again (same technique that
+      cracked the `0x0101eb0b` gap originally) and it changed the
+      picture on slot 43.** Extracted `zumar.mod` (not previously done
+      this round; it's only ever been used for the one earlier shared-
+      helper cross-reference) and searched its full disassembly for a
+      real call through the same vtable byte offset `0xac`. Peggle's own
+      `0x102078`/`0x102148` functions are **not** byte-shared with Zuma's
+      Revenge (an exact-prefix search of Peggle's own call chain came up
+      empty in `zumar.mod`) -- unlike the earlier `0x0101eb0b` find,
+      this part is genuinely per-title game logic, not shared SDK
+      boilerplate. But Zuma's Revenge has its *own*, independent real
+      call through offset `0xac` (`zumar.mod 0x177fa8`), and its calling
+      convention is a much cleaner, more legible fit for real
+      `DetectType(cpBuf, pdwSize, cpszName, pcpszMIME)`: `r0` (this),
+      `r1` = a real, non-null computed buffer address (`streamBase +
+      cursor`, from a stream/buffer descriptor struct read at the call
+      site), `r2` = `&remaining_capacity` (pre-populated with a real
+      computed value, `capacity - cursor`, *before* the call -- an
+      actual in/out size, not a zeroed placeholder), `r3 = 0`. The
+      caller branches on the *return value* being `0` (falls through to
+      a `GetHandler`-based media-subtype fallback checking for exactly
+      `AEECLSID_MEDIA+1`/`+2`/`+10` -- two of which,
+      `0x01005501`/`0x0100550a`, are this project's own already-
+      registered real ClsIds from the Double Dragon investigation) vs.
+      nonzero (parses further via a 3-byte compare). This is a real,
+      coherent "sniff this buffer, tell me what's in it" shape -- unlike
+      Peggle's own call, which always passes `cpBuf=NULL`/`cpszName=NULL`
+      (nothing to sniff at all). **Net read**: slot 43 probably is
+      really `DetectType` after all (reversing round one's skepticism),
+      but Peggle's own specific call site is a degenerate "detect
+      nothing, just want a placeholder/default answer" invocation whose
+      real expected behavior (given genuinely nothing to detect from)
+      isn't obviously "return 35" from `DetectType`'s own documented
+      contract -- a real, honest `DetectType` given null everything most
+      plausibly returns `0` (nothing detected), which is exactly what
+      the current safe `Stub` already does, meaning **slot 43 acting
+      like a real, honest `DetectType` doesn't explain what Peggle's own
+      caller wants at all**. Left this thread here rather than force
+      another guess on top of an already-uncertain foundation. No code
+      changes; investigation and cross-referencing only. 364/364 tests
+      unchanged.
+      **Went back for two more rounds and corrected a real mistake in
+      this thread's own mental model, via live ground truth instead of
+      more static guessing.** First, added a live diagnostic reading a
+      specific arena address (`0x80050000`, this project's own
+      documented placeholder for the still-unidentified
+      `context[0x24]+0x45000+0x3dc` field, see `tools/game_probe.cpp`)
+      alongside every slot-43 call, expecting it to explain the earlier
+      "8 successful channels" finding -- it stayed flat zero across all
+      eight, disproving that theory outright rather than confirming it.
+      Followed up with a real, targeted register trace (temporary,
+      reverted -- printing r0/r1/r2/r4/r5/r6 for every step in
+      `peggle.mod`'s `0x108a90`-`0x108bb0` range, cheap because it's a
+      narrow PC window, not a full instruction trace) and got the actual
+      ground truth: **`0x108a90` is entered exactly once** for this
+      whole run, with a real, non-arena heap pointer as `this`
+      (`0x803454f0`) and `arg1=0` -- not eight separate invocations for
+      eight channel indices, as every earlier round in this thread
+      assumed from the outer step-count/object-address evidence alone.
+      All eight real `SetMediaParm`/`Release` cycles happen **inside
+      the single call to `0x102078`/`0x102148`** this one `0x108a90`
+      invocation makes -- i.e. `0x102148`'s own "state machine" has an
+      internal loop processing multiple real sub-resources for one
+      logical channel, not a construction attempt per channel index.
+      **And critically**: right before the crash, the trace shows
+      `array[0].field4` (the exact address `0x102078` was supposed to
+      populate) is **still zero** after all eight sub-resource cycles
+      apparently succeeded -- meaning this project's own placeholder
+      slot-43 answers are letting `0x102148`'s internal loop *run*
+      (eight full passes) without ever satisfying whatever real
+      condition would make it actually write the expected result. The
+      generic "always succeed" stub isn't just incomplete, it's
+      actively producing a different, misleading shape of "success"
+      than what real data would. **This overturns the "eight real
+      channels, ninth is a different gap" framing from three rounds
+      ago** -- there's only one channel/index in play here, and the
+      real gap is entirely inside `0x102148`'s own loop termination
+      condition, not a separate upstream guard. TASKS.md's own prior
+      entries in this thread are left as-written (accurate reports of
+      what was observed at the time) rather than rewritten, but this
+      correction supersedes their interpretation. All temporary
+      instrumentation reverted, 364/364 tests pass unchanged. **Given
+      three rounds now (the DetectType cross-reference, the arena
+      diagnostic, and this register trace) without a real fix landing,
+      and each new round revealing the previous round's model was
+      wrong in some way** -- this is a strong signal that guessing at
+      `0x102148`'s real per-sub-resource termination condition without
+      real resource-format knowledge is not converging. Recommending a
+      pause on this specific thread rather than a fourth round.
       above) and closed it: a twentieth real static-base table slot,
       `0x1b4`.** Real call shape `(dest, count, cap=4, ctor_fn)` matches
       a compiler-generated "construct N array elements" RVCT/EABI
@@ -3164,6 +3518,95 @@ playable start-to-finish at full speed, standalone build.
       evidence rather than guesswork. JIT integration stays deferred:
       nothing here showed the *interpreter itself* as the bottleneck
       once actually compiled with optimizations on.
+
+- [ ] Validate the HLE against a fourth real game (Zeebo Sports Tênis),
+      started after Peggle's own investigation stalled for three rounds
+      in a row without converging (TASKS.md's own Peggle entries;
+      "0x102148"'s real per-sub-resource condition) and Super
+      BurgerTime's own wall turned out to need real, separate,
+      copyrighted Neo Geo arcade ROM chip dumps (`zupa_p1.rom` etc. --
+      real SNK hardware ROMs, not Zeebo application data, confirmed via
+      the real embedded string table: `NEOGEO_MEMORY`/`NEOGEO_SOUND`/
+      the real MVS cartridge-ROM naming convention) this project
+      doesn't have and isn't the right kind of asset to go looking for.
+      Picked for having no separate exotic asset container risk *and*
+      no embedded-legacy-CPU-core risk — genuinely a different class of
+      title from both prior investigations.
+      **Cracked `resources.pakz` (shared by this title plus Zeebo
+      Sports Peteca/Volei, Zeeboids, and one kids'-activity title's own
+      downloads, all independently confirmed to use the identical byte
+      layout) in a single pass.** Real header: `"PACK"` magic + trailing
+      64-byte-record table offset/size (12 bytes total); each entry's
+      compressed data is a **standard classic `.lzma`/`LZMA_ALONE`
+      stream** (5-byte properties/dict header + 8-byte size + payload)
+      — a real, standard algorithm, not a proprietary scheme, decoding
+      cleanly via liblzma's own `lzma_alone_decoder` on the very first
+      real entry tried (`athlete_types.m3g`, decompressing to real,
+      legible content: `"...Crazyball Engine. Copyright..."`, a real,
+      identifiable third-party middleware). Implemented as permanent,
+      tested code following the established `GgzArchive`/`PkgArchive`
+      pattern: `core/loader/pakz.{h,cpp}`, `tests/pakz_test.cpp`
+      (synthetic fixtures only, built with liblzma's own real encoder),
+      and `tools/zeebulator_pakz_inspector`. **Verified against the
+      real file**: all 298 real entries extract cleanly, zero failures
+      — audio (`.wav`/`.mp3`), textures (`.atitc`, a format this
+      project's own `core/loader/atitc.h` already supports from earlier
+      work), and 3D models (`.m3g`, JSR-184-shaped, not yet needed).
+      Pulled in `liblzma` (real xz-utils, upstream
+      `tukaani-project/xz`) via CMake `FetchContent`, the same pattern
+      already used for zlib -- runtime-installed on this dev machine
+      but with no dev headers/pkg-config file, so vendoring was the
+      only reliable option. 374/374 tests pass (10 new: 8 PAKZ, 2
+      CPU).
+      **Then hit, and fixed, a real, foundational CPU gap while trying
+      to boot the title**: `AEEMod_Load` threw `UnimplementedInstruction`
+      almost immediately (module offset `0x1198`) on `ldrd r8,
+      [sp, #32]`. Real ARM encoding quirk confirmed by assembling that
+      exact mnemonic and reading the real bytes back (`0xE1CD82D0`):
+      `LDRD`/`STRD` share the halfword-transfer *store* opcode space
+      (`L=0`) with `SH=10`/`SH=11` marking the real paired-register
+      load/store instead of a plain store, a case this project's
+      `ExecuteHalfwordTransfer` didn't handle (only `SH=01`/`STRH` was
+      implemented on the store side). **Fixed** in
+      `core/cpu/arm_interpreter.cpp` (2 new tests). **Verified**: real
+      `AEEMod_Load` now completes successfully end to end for this
+      title (previously never got past the first few thousand real
+      instructions) — the fourth title, after Double Dragon, Peggle,
+      and Super BurgerTime, to reach this milestone, and the same
+      instruction-family-gap shape as Super BurgerTime's own earlier
+      "Extend" family fix, not a one-off. 374/374 tests pass (this
+      count already includes the PAKZ tests above).
+      **Real ClsId not found yet — genuinely a different shape of
+      problem than Double Dragon/Peggle/Super BurgerTime's own ClsId
+      searches.** The download-folder number (277534) predictably
+      failed (`CreateInstance` returned `1`/EFAILED, matching the
+      established "folder number usually isn't the real ClsId"
+      pattern). Traced `CreateInstance`'s real body
+      (`zeebotennis.mod 0x1010d0` -> `0x100fb4`) looking for the usual
+      "cmp against a literal ClsId" shape and found something
+      different: an early real check compares `r0` (this harness's own
+      `module_ptr`, i.e. whatever address `AEEMod_Load` wrote into
+      `*ppMod`) against a real, fixed literal (`0x0108eff9`) that falls
+      *inside the module's own address range* (`kBase` + `0x8eff9`) --
+      not a ClsId at all, and unrelated to the `cls_id` argument, which
+      only gets threaded through *unused* further down (into a generic,
+      unconditional `AEEApplet_New`-shaped constructor helper,
+      `0x100dfc`, that never compares it against anything either, at
+      least in the portion traced so far). Real compiled code appears
+      to expect `po` (the `IModule*` `CreateInstance` receives) to
+      *equal* a specific, fixed, module-embedded address -- i.e. real
+      `AEEMod_Load` on real hardware returns a pointer to a static,
+      compile-time-fixed singleton embedded in the module's own data,
+      not a harness-assigned/malloc'd address like the `0x80300000`
+      this project's own `AEEMod_Load` trap produces. Three prior
+      titles apparently never hit this specific check (or their own
+      version of it tolerated a harness-assigned address). **Left
+      unresolved this round** -- concrete next step is tracing whether
+      `AEEMod_Load`'s own real body ever *reads back* what it wrote to
+      `*ppMod` in a way that would reveal the real expected value more
+      directly, rather than continuing to reverse-engineer
+      `CreateInstance`'s own consumer side. All temporary
+      instrumentation reverted, 374/374 tests pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

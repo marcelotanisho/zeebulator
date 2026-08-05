@@ -20,6 +20,7 @@ add_executable(zeebulator_tests
   mod_test.cpp
   obm1_test.cpp
   pkg_test.cpp
+  pakz_test.cpp
   hle_runtime_test.cpp
   brew_test.cpp
   brew_lifecycle_test.cpp
@@ -45,7 +46,9 @@ add_executable(zeebulator_tests
   ${PROJECT_SOURCE_DIR}/frontends/standalone/zpad_edges.cpp
 )
 target_include_directories(zeebulator_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
-target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic)
+target_link_libraries(zeebulator_tests PRIVATE zeebulator_core GTest::gtest_main zlibstatic
+                                                liblzma)
+target_include_directories(zeebulator_tests PRIVATE ${liblzma_SOURCE_DIR}/src/liblzma/api)
 target_compile_definitions(zeebulator_tests PRIVATE FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 include(GoogleTest)
