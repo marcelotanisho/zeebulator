@@ -1,5 +1,7 @@
 #include "core/brew/file_hle.h"
 
+#include <sstream>
+
 #include <gtest/gtest.h>
 
 #include "core/brew/hle_runtime.h"
@@ -361,4 +363,87 @@ TEST(FileHle, LastOpenedFileProxyReturnsZeroWhenNothingHasBeenOpenedYet) {
 
   uint32_t dest = kScratch + 0x100;
   EXPECT_EQ(f.hle.CallArmFunction(proxy_read, proxy, dest, 1), 0u);
+}
+
+// --- Real save-game persistence past this process's own lifetime ---
+// (see FileHle::Serialize's own doc comment for the real bug this
+// fixes: writable_files_ silently vanishing on every cold relaunch,
+// indistinguishable from the game "not saving" at all).
+
+TEST(FileHle, HasUnsavedWritesIsFalseUntilARealWriteHappens) {
+  Fixture f;
+  EXPECT_FALSE(f.file_hle.HasUnsavedWrites());
+
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  constexpr uint32_t kOfmCreate = 4;
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  ASSERT_NE(handle, 0u);
+  EXPECT_FALSE(f.file_hle.HasUnsavedWrites()) << "creating a file alone isn't a write";
+
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileWrite), handle, kScratch, 1);
+  EXPECT_TRUE(f.file_hle.HasUnsavedWrites());
+}
+
+TEST(FileHle, SerializeClearsHasUnsavedWrites) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  constexpr uint32_t kOfmCreate = 4;
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  f.hle.CallArmFunction(f.FileSlotAddr(kFileWrite), handle, kScratch, 1);
+  ASSERT_TRUE(f.file_hle.HasUnsavedWrites());
+
+  std::stringstream out;
+  ASSERT_TRUE(f.file_hle.Serialize(out));
+  EXPECT_FALSE(f.file_hle.HasUnsavedWrites());
+}
+
+TEST(FileHle, SerializeThenDeserializeRoundTripsRealSaveData) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "./udata/save.dat");
+  constexpr uint32_t kOfmCreate = 4;
+  uint32_t handle = f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, kOfmCreate);
+  uint32_t payload_addr = kScratch + 0x100;
+  const uint8_t payload[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+  for (int i = 0; i < 4; ++i) f.cpu.GetMemory().Write8(payload_addr + i, payload[i]);
+  ASSERT_EQ(f.hle.CallArmFunction(f.FileSlotAddr(kFileWrite), handle, payload_addr, 4), 4u);
+
+  std::stringstream stream;
+  ASSERT_TRUE(f.file_hle.Serialize(stream));
+
+  // A completely fresh instance, matching a real cold relaunch.
+  ArmInterpreter cpu2;
+  HleRuntime hle2(cpu2, kTrapBase, kTrapSize);
+  VirtualFilesystem vfs2;
+  FileHle file_hle2(cpu2.GetMemory(), hle2, vfs2, kFileObjectRegion);
+  uint32_t mgr2 = file_hle2.Build(kMgrVtable, kMgrObject, kFileVtable);
+  ASSERT_TRUE(file_hle2.Deserialize(stream));
+
+  WriteCString(cpu2.GetMemory(), kScratch, "./udata/save.dat");
+  uint32_t handle2 = hle2.CallArmFunction(cpu2.GetMemory().Read32(kMgrVtable + kMgrOpenFile * 4),
+                                           mgr2, kScratch, 0);
+  ASSERT_NE(handle2, 0u) << "real save data should already exist after Deserialize";
+  uint32_t read_addr = kScratch + 0x200;
+  uint32_t file_read2 = cpu2.GetMemory().Read32(kFileVtable + kFileRead * 4);
+  EXPECT_EQ(hle2.CallArmFunction(file_read2, handle2, read_addr, 4), 4u);
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_EQ(cpu2.GetMemory().Read8(read_addr + i), payload[i]) << "byte " << i;
+  }
+}
+
+TEST(FileHle, DeserializeOnATruncatedStreamFailsWithoutCrashing) {
+  Fixture f;
+  std::stringstream stream;
+  stream.write("\x05\x00\x00\x00", 4);  // claims 5 entries, then nothing else
+  EXPECT_FALSE(f.file_hle.Deserialize(stream));
+}
+
+TEST(FileHle, DeserializeRefusesWhenFilesAreAlreadyOpen) {
+  Fixture f;
+  WriteCString(f.cpu.GetMemory(), kScratch, "foo.txt");
+  ASSERT_NE(f.hle.CallArmFunction(f.MgrSlot(kMgrOpenFile), f.mgr, kScratch, 0), 0u);
+
+  std::stringstream stream;
+  ASSERT_TRUE(f.file_hle.Serialize(stream));
+  EXPECT_FALSE(f.file_hle.Deserialize(stream))
+      << "an already-open file handle would be left dangling";
 }

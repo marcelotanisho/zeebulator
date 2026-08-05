@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <istream>
+#include <ostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -29,7 +31,14 @@ namespace zeebulator {
 // `IFILEMGR_GetFreeSpace()` (checked against a minimum), then
 // `IFILEMGR_OpenFile(..., _OFM_CREATE)` -- a real "load save, or create
 // a fresh one" pattern this class needs to actually satisfy, not just
-// avoid crashing on. The filesystem is flat (GGZ has no directory
+// avoid crashing on. See Serialize/Deserialize for real persistence of
+// that in-memory store past this process's own lifetime -- without it,
+// every cold relaunch starts from a genuinely empty store, which is
+// exactly the real, live-reported "the game doesn't save" bug this was
+// chasing (confirmed: Double Dragon's own save routine faithfully
+// wrote its unlock/progress flags into `writable_files_` every time,
+// they just never survived process exit). The filesystem is flat (GGZ
+// has no directory
 // structure), so EnumInit ignores its directory argument and always
 // enumerates everything (only the read-only GGZ-backed files, not
 // writable ones -- nothing exercised so far enumerates a save
@@ -71,6 +80,39 @@ class FileHle {
   // explicitly through its own storage.
   uint32_t BuildLastOpenedFileProxy(uint32_t vtable_address, uint32_t object_address);
 
+  // Persists `writable_files_` -- real save-game data (see class doc
+  // comment) -- so it survives past this process, not just this class's
+  // own in-memory lifetime. Confirmed the real, live-reproduced bug this
+  // fixes: without ever writing this back to a real host file, every
+  // cold relaunch starts from a genuinely empty writable_files_, so
+  // real save-game progress (Double Dragon's own "./udata/ddz.sav")
+  // silently vanishes the moment the process exits -- indistinguishable
+  // from the game "not saving" at all, which is exactly the real,
+  // reported symptom this was chasing. Deliberately a separate
+  // mechanism from core/save_state.h's own CPU/memory snapshot (which
+  // captures a single live moment to resume from) -- this instead
+  // mirrors what a real device's own persistent flash storage does:
+  // survives across every cold launch, save-state loads and all,
+  // regardless of which moment a save state itself was taken at.
+  //
+  // Format: uint32 LE entry count, then per entry: uint32 LE name
+  // length, the name's own raw bytes, uint32 LE data length, the data's
+  // own raw bytes.
+  bool Serialize(std::ostream& out) const;
+  // Returns false (leaving `writable_files_` untouched) on a malformed
+  // stream -- matches core/save_state.h's own "don't half-apply a
+  // corrupt load" convention. An absent/empty file (a first-ever launch,
+  // no save yet) is the caller's own concern, not this function's --
+  // see tools/game_probe.cpp for how a missing file is tolerated there.
+  bool Deserialize(std::istream& in);
+
+  // True once `writable_files_` has changed since the last successful
+  // Serialize() call (or construction, if never serialized) -- lets a
+  // caller persist real save-game writes to a real host file only when
+  // there's actually something new, rather than rewriting an unchanged
+  // file every single tick regardless.
+  bool HasUnsavedWrites() const { return dirty_; }
+
  private:
   struct OpenFile {
     std::string name;
@@ -110,11 +152,17 @@ class FileHle {
   size_t enum_cursor_ = 0;
   std::unordered_map<uint32_t, OpenFile> open_files_;
   // Runtime-created/written files (e.g. save games) -- separate from
-  // the read-only GGZ-backed vfs_, never persisted past this process.
+  // the read-only GGZ-backed vfs_. Optionally persisted past this
+  // process via Serialize/Deserialize -- see their own doc comments.
   std::unordered_map<std::string, std::vector<uint8_t>> writable_files_;
   // The handle OpenFileImpl most recently returned successfully (0 if
   // none yet) -- see BuildLastOpenedFileProxy.
   uint32_t last_opened_handle_ = 0;
+  // See HasUnsavedWrites()'s own doc comment. mutable: Serialize() is
+  // logically read-only (writable_files_ itself never changes), but
+  // still needs to clear this once it's successfully persisted the
+  // current state.
+  mutable bool dirty_ = false;
 };
 
 }  // namespace zeebulator

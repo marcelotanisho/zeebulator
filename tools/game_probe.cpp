@@ -440,6 +440,15 @@ int main(int argc, char** argv) {
   // (this file is real tooling output, not research material, but
   // colocating it is the simplest place a player would look for it).
   const std::string save_state_path = std::string(argv[1]) + ".savestate";
+  // Real save-game data (Double Dragon's own "./udata/ddz.sav", written
+  // through FileHle's writable_files_ -- see file_hle.h) is a genuinely
+  // separate concern from the save STATE above: a player's actual
+  // in-game progress/unlocks, meant to survive every cold relaunch
+  // unconditionally, not just resumed from a chosen moment. Without
+  // this, writable_files_ was purely in-memory and silently reset to
+  // empty on every process exit -- indistinguishable from the game "not
+  // saving" at all (a real, live-reported bug this fixes).
+  const std::string userdata_path = std::string(argv[1]) + ".userdata";
 
   zeebulator::VirtualFilesystem vfs;
   MergeGgzInto(vfs, argv[2]);
@@ -495,6 +504,15 @@ int main(int argc, char** argv) {
   zeebulator::GlHle gl_hle(gl_recorder);
   zeebulator::Mixer mixer(kAudioSampleRate);
   zeebulator::FileHle file_hle(cpu.GetMemory(), hle, vfs, /*object_region=*/0x80100000);
+  {
+    std::ifstream userdata_in(userdata_path, std::ios::binary);
+    if (userdata_in && file_hle.Deserialize(userdata_in)) {
+      std::printf("loaded real save-game data from %s\n", userdata_path.c_str());
+    }
+    // Anything else (no file yet, or a stream that failed to parse)
+    // just leaves writable_files_ empty -- the same real "no save yet"
+    // state a genuinely first-ever launch has, not an error.
+  }
   // Real General MIDI wavetable synthesis (see CMakeLists.txt's own doc
   // comment) instead of MediaHle's hand-rolled fallback -- real, not
   // guessed: loading a real ~32MB soundfont once here, not per-clip.
@@ -1625,6 +1643,15 @@ int main(int argc, char** argv) {
         if (hid_button_uid != 0) InjectHidButtonEvent(hid_button_uid, edge.pressed);
       }
       previous_pad_state = pad_state;
+    }
+    // Flushes real save-game writes (see userdata_path's own doc
+    // comment above) to a real host file as soon as they happen, not
+    // just on a clean exit -- matches how real flash storage commits a
+    // real IFILE_Write immediately, and survives this tool being killed
+    // rather than closed normally.
+    if (file_hle.HasUnsavedWrites()) {
+      std::ofstream userdata_out(userdata_path, std::ios::binary);
+      if (userdata_out) file_hle.Serialize(userdata_out);
     }
     // Fires real MM_STATUS_DONE notifications for voices that finished
     // since the last tick -- see MediaHle::Tick's own doc comment; real

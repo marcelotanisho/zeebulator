@@ -174,6 +174,7 @@ void FileHle::WriteImpl(IArmCore& core) {
     (*f.mutable_data)[f.position + i] = memory_.Read8(src + i);
   }
   f.position += want;
+  dirty_ = true;
   core.SetRegister(kR0, want);
 }
 
@@ -285,6 +286,73 @@ uint32_t FileHle::Build(uint32_t file_mgr_vtable_address, uint32_t file_mgr_obje
   };
   return BuildInterfaceObject(memory_, hle_, file_mgr_vtable_address,
                                file_mgr_object_address, mgr_methods);
+}
+
+namespace {
+
+bool WriteU32(std::ostream& out, uint32_t v) {
+  out.write(reinterpret_cast<const char*>(&v), sizeof(v));
+  return out.good();
+}
+
+bool ReadU32(std::istream& in, uint32_t& v) {
+  in.read(reinterpret_cast<char*>(&v), sizeof(v));
+  return in.good();
+}
+
+}  // namespace
+
+bool FileHle::Serialize(std::ostream& out) const {
+  if (!WriteU32(out, static_cast<uint32_t>(writable_files_.size()))) return false;
+  for (const auto& [name, data] : writable_files_) {
+    if (!WriteU32(out, static_cast<uint32_t>(name.size()))) return false;
+    out.write(name.data(), static_cast<std::streamsize>(name.size()));
+    if (!out.good()) return false;
+    if (!WriteU32(out, static_cast<uint32_t>(data.size()))) return false;
+    if (!data.empty()) {
+      out.write(reinterpret_cast<const char*>(data.data()),
+                static_cast<std::streamsize>(data.size()));
+      if (!out.good()) return false;
+    }
+  }
+  dirty_ = false;
+  return true;
+}
+
+bool FileHle::Deserialize(std::istream& in) {
+  uint32_t count = 0;
+  if (!ReadU32(in, count)) return false;
+
+  std::unordered_map<std::string, std::vector<uint8_t>> loaded;
+  loaded.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t name_len = 0;
+    if (!ReadU32(in, name_len)) return false;
+    std::string name(name_len, '\0');
+    if (name_len != 0) {
+      in.read(name.data(), name_len);
+      if (!in.good()) return false;
+    }
+    uint32_t data_len = 0;
+    if (!ReadU32(in, data_len)) return false;
+    std::vector<uint8_t> data(data_len);
+    if (data_len != 0) {
+      in.read(reinterpret_cast<char*>(data.data()), data_len);
+      if (!in.good()) return false;
+    }
+    loaded.emplace(std::move(name), std::move(data));
+  }
+
+  // Open files reference writable_files_ entries by address
+  // (mutable_data), so swapping the whole map out from under any
+  // currently-open handle would leave a dangling pointer -- not a real
+  // concern in practice (this is only ever called once, before the
+  // guest has opened anything), but guard it explicitly rather than
+  // silently risk it.
+  if (!open_files_.empty()) return false;
+  writable_files_ = std::move(loaded);
+  dirty_ = false;
+  return true;
 }
 
 uint32_t FileHle::BuildLastOpenedFileProxy(uint32_t vtable_address, uint32_t object_address) {
