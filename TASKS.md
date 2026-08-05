@@ -3658,13 +3658,41 @@ playable start-to-finish at full speed, standalone build.
       slot 2 really is `CreateInstance`, confirmed, not a
       misidentification. The `cmp r0` block is a real, deliberate check
       this title's `CreateInstance` genuinely does.
-      **Left unresolved this round** -- concrete next step is tracing
-      whether `AEEMod_Load`'s own real body ever *reads back* what it
-      wrote to `*ppMod` in a way that would reveal the real expected
-      value more directly, rather than continuing to reverse-engineer
-      `CreateInstance`'s own consumer side. All temporary
-      instrumentation reverted (twice now, across both rounds),
-      384/384 tests pass unchanged.
+
+      **Resolved, third round: real ClsId found, `CreateInstance`
+      succeeds, real per-frame ticking reached.** The `cmp r0` block
+      was never checking `po` at all -- a live register trace (enabled
+      instruction-by-instruction tracing for this one call, not more
+      static disassembly) caught the actual bug in this investigation's
+      own earlier reading: the thin wrapper at `0x1010d0` does `mov
+      r4,r2` (saving the *original* `r2`, i.e. `cls_id`) then later
+      `mov r0,r4`, clobbering `r0` (which held `po`) with `cls_id`
+      before falling through to the `0x100fb4` block. So the real
+      comparison there is `cmp cls_id, 0x0108eff9`, not `cmp po,
+      <literal>` -- the two prior rounds' entire "static, module-
+      embedded singleton" and "module_ptr convention" theories were
+      chasing the wrong operand. **The real ClsId is `0x0108eff9`**
+      (`17362937` decimal, the CLI's expected base). A side quest while
+      tracing this also turned up something worth keeping for its own
+      sake: the module's own internal bootstrap calls
+      `ISHELL_CreateInstance(shell, 0x01001001 /* AEECLSID_DISPLAY */,
+      &object[20])` partway through -- i.e. real Double Dragon-shaped
+      evidence that `0x01001001` really is `AEECLSID_DISPLAY`, already
+      registered that way in this project's own `ishell.cpp` on
+      independent grounds, now cross-confirmed by a second title.
+      Verified live end to end with the real ClsId: `CreateInstance OK,
+      applet=0x80300024 HandleEvent=0x00100df4`, `HandleEvent
+      (EVT_APP_START)` runs, and **"Reached the event loop with no
+      unhandled instruction"** -- the same milestone Double
+      Dragon/Peggle/Super BurgerTime each reached, now hit by a fourth,
+      genuinely different title. Real per-frame ticking then runs for a
+      bit (real HLE calls firing) before hitting the next real, distinct
+      wall: a `pc=0x00000000 left the loaded module's range` wander
+      warning after 187 steps, then a timer callback throwing
+      `Coprocessor instruction / SWI` at module offset `0x46e18` --
+      genuinely new territory, not investigated yet. All temporary
+      instrumentation reverted (three rounds now), 384/384 tests pass
+      unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
