@@ -4120,6 +4120,39 @@ playable start-to-finish at full speed, standalone build.
       does. All temporary instrumentation reverted, 393/393 tests pass
       unchanged.
 
+- [ ] **Picked a sixth title, Zeebo Sports Volei**, sequentially
+      numbered right next to Tênis's own real ClsId
+      (`0x0108ff15` vs. Tênis's `0x0108ff1a`, five apart -- both found
+      the same way, the thin-wrapper `r0`/`cls_id` clobber). Extracted
+      into `research/games/Zeebo Sports Volei/`; `resources.pakz`
+      decodes cleanly (323/323 entries).
+      **Verified live, and it changes the read on the `0x0103d8ec`
+      chain from the entry above.** Volei hits the *exact same* call
+      sequence as Zeeboids -- same trap addresses (`0xf0000668`,
+      `0xf000009c`, `0xf0000284`, **`0xf0000670`**, `0xf0000230`,
+      `0xf0000280`), the same real `0x0103d8ec`-family ClsId references
+      (`0x0103d8dd`/`0x0103d8ea` alongside it), and the same eventual
+      `pc=0x00090024` jump symptom -- at a different final address
+      (`zeebovolley.mod` 0x1172f0, reached after 9,173 real steps, vs.
+      Zeeboids' 13,182), but unmistakably the same mechanism. **Three
+      independently-compiled titles (Tênis's own related loop,
+      Zeeboids, now Volei) hitting the identical wall is real evidence
+      against last entry's own "the null result is probably correct,
+      expected behavior" read** -- real, shipped, playable games
+      wouldn't all fail identically at this exact point. More likely:
+      something *earlier* in real execution -- on real hardware,
+      naturally satisfied by the normal passage of real gameplay time/
+      events -- is supposed to run before this chain does, and this
+      harness's own immediate, synthetic tick-forcing reaches it
+      prematurely, before whatever real precondition would normally be
+      met. Reopens the investigation the previous entry had tentatively
+      closed; concrete next step is checking what real state changes
+      between "just booted" and "this chain would naturally succeed"
+      on titles that already reach further (Double Dragon, Peggle) to
+      find the real missing precondition, rather than continuing to
+      treat `0x0103d8ec` itself as the answer. 393/393 tests pass
+      (investigation only, no code changes this round).
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
