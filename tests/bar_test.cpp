@@ -123,14 +123,32 @@ TEST(Bar, MismatchedDataSizeHeaderFieldIsRejected) {
   EXPECT_THROW(BarArchive::Parse(blob), std::runtime_error);
 }
 
-TEST(Bar, NonIncreasingOffsetTableIsRejected) {
+TEST(Bar, DecreasingOffsetTableIsRejected) {
   auto blob = BuildBar({{1, 2, 3, 4}, {5, 6, 7, 8}});
-  // Overwrite the second offset-table entry with a copy of the first,
-  // so it no longer strictly increases (table starts right after the
-  // 32-byte header + 16-byte table1).
+  // Overwrite the second offset-table entry with something smaller
+  // than the first, so it actually goes backwards (table starts right
+  // after the 32-byte header + 16-byte table1). Equal (not smaller) is
+  // legitimate -- see ZeroLengthEntryFromEqualConsecutiveOffsetsIsAccepted.
   size_t table_start = 32 + 16;
-  std::memcpy(blob.data() + table_start + 4, blob.data() + table_start, 4);
+  uint32_t first_offset;
+  std::memcpy(&first_offset, blob.data() + table_start, 4);
+  uint32_t smaller = first_offset - 1;
+  std::memcpy(blob.data() + table_start + 4, &smaller, 4);
   EXPECT_THROW(BarArchive::Parse(blob), std::runtime_error);
+}
+
+TEST(Bar, ZeroLengthEntryFromEqualConsecutiveOffsetsIsAccepted) {
+  // Real, shipped title evidence, not a synthetic edge case: Alien
+  // Breaker Deluxe's own real `data.bar` has a genuine zero-length
+  // resource entry (two consecutive real offset-table values equal,
+  // confirmed live against the actual file) -- rejecting this as
+  // "corrupt" was this project's own bug, not a real file's fault.
+  auto blob = BuildBar({{1, 2, 3, 4}, {}, {5, 6, 7, 8}});
+  auto archive = BarArchive::Parse(blob);
+
+  ASSERT_EQ(archive.Entries().size(), 3u);
+  EXPECT_EQ(archive.Entries()[1].size, 0u);
+  EXPECT_TRUE(archive.Extract(archive.Entries()[1]).empty());
 }
 
 TEST(Bar, FindResolvesARealTypeIdPairToTheCorrectEntry) {

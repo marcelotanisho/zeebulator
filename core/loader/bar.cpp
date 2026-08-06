@@ -57,8 +57,13 @@ BarArchive BarArchive::Parse(std::vector<uint8_t> data) {
   std::vector<uint32_t> offsets(entry_count + 1);
   for (uint32_t i = 0; i <= entry_count; ++i) {
     offsets[i] = ReadU32LE(d + table_start + i * 4);
-    if (i > 0 && offsets[i] <= offsets[i - 1]) {
-      throw std::runtime_error("BAR: offset table is not strictly increasing");
+    // Monotonically non-decreasing, not strictly increasing: a real,
+    // shipped title (Alien Breaker Deluxe's own data.bar) has a
+    // genuine zero-length resource entry (two consecutive offsets
+    // equal, confirmed live -- not file corruption), which Extract()
+    // already handles fine (an empty byte range, begin == end).
+    if (i > 0 && offsets[i] < offsets[i - 1]) {
+      throw std::runtime_error("BAR: offset table is not monotonically non-decreasing");
     }
   }
   if (offsets[0] != data_start) {
