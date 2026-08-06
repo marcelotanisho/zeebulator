@@ -610,7 +610,21 @@ int main(int argc, char** argv) {
   // core/brew/ishell.h) need the real file's own bytes registered
   // under its own real name to serve anything beyond a blind stub.
   if (argc >= 7) {
-    shell_hle.RegisterResourceFile(BaseName(argv[6]), ReadFile(argv[6]));
+    std::vector<uint8_t> bar_bytes = ReadFile(argv[6]);
+    // Also expose the same raw bytes as a plain, directly-openable VFS
+    // file under its own basename -- the same real "the archive's own
+    // raw bytes need to be a VFS entry too" shape MergeGgzInto's own
+    // doc comment already documents for `sound.ggz` (Double Dragon
+    // opens it directly, bypassing the ID-based lookup, to stream
+    // entries its own resource-ID directory doesn't cover). Found
+    // live bringing up Alien Breaker Deluxe: its own real `data.bar`
+    // resource-ID directory has exactly one entry, yet real code
+    // requests dozens of sequential IDs via `LoadResDataEx` that
+    // directory can never resolve -- real code almost certainly falls
+    // back to opening the file directly for those, the same real
+    // pattern already confirmed for `sound.ggz`.
+    vfs.AddFile(BaseName(argv[6]), bar_bytes);
+    shell_hle.RegisterResourceFile(BaseName(argv[6]), std::move(bar_bytes));
   }
   shell_hle.RegisterInstance(/*AEECLSID_DISPLAY=*/0x01001001, display_obj);
   // ClsId 0x01002001: a real BREW class Double Dragon's own graphics-init
