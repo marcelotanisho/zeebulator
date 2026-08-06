@@ -4058,11 +4058,35 @@ playable start-to-finish at full speed, standalone build.
       that would actually populate it with a *real* value either fails
       inside the still-unexplored `0x1a7918`/`0x198bbc` pair, or writes
       somewhere this specific watch address didn't catch (e.g. a
-      different field on the same result). Two more real, nested,
-      unexplored functions deep -- genuinely a job for a fresh round
-      with a clear head, not further hand-tracing this late in an
-      already very long session. All temporary instrumentation
-      reverted, 393/393 tests pass unchanged.
+      different field on the same result).
+
+      **Resolved the mystery, same round -- reframes the real bug
+      entirely.** Live-traced both real sub-calls' own inputs/outputs
+      directly: `0x1a7918`'s own lookup key is `r0=0x80003000` -- this
+      project's own real `IDisplay` object address -- and it genuinely
+      returns `0` (a real miss, not a bug in the lookup itself).
+      `0x198bbc`, traced statically once its real behavior became the
+      obvious next question, turned out to be **another instance of the
+      same sprintf-then-dbgprintf debug-log wrapper pattern already
+      found throughout this whole investigation** -- it never
+      constructs anything, never touches `r7` (the register that ends
+      up cached), and **unconditionally returns `1`** regardless of
+      what it logged. So the entire observed chain -- lookup misses,
+      log the miss, return "handled" anyway, cache the miss (`0`) so
+      it's not retried -- is real, intentional "resource not found,
+      log and move on" behavior baked into the compiled game, not a
+      bug in anything reverse-engineered so far. **This reframes the
+      real remaining question**: something *earlier* in real
+      execution is supposed to register whatever real resource/cache
+      entry `0x1a7918` searches for, keyed by the real `IDisplay`
+      object -- and that real registration call never runs in this
+      harness. Concrete next step for a fresh round: find what writes
+      to whatever real data structure `0x1a7918` reads from (the same
+      live-tracing-first approach used throughout this round, not
+      static disassembly alone) to identify the missing real
+      registration/interface this harness hasn't implemented yet. All
+      temporary instrumentation reverted, 393/393 tests pass
+      unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
