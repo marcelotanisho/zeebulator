@@ -4442,6 +4442,38 @@ playable start-to-finish at full speed, standalone build.
       exposure, order-based signal capture) committed as real,
       permanent, tested changes -- nothing reverted this round.
 
+      **Traced that one successful load's own real consumer, same
+      session -- found the real root cause of the black screen.** Live-
+      traced the caller of the one `LoadResDataEx(id=0x234e)` call that
+      can ever succeed (`abd.mod` 0x10ee58-0x10eeb0, found via the
+      real `lr` at the call site, not guessed): this is a generic
+      "load a resource into a fresh buffer" wrapper -- gets the real
+      size via a sibling helper, `malloc`s that many bytes, calls
+      `LoadResDataEx` to fill it, then **returns the malloc'd buffer
+      pointer completely unconditionally, never checking the real
+      call's own success/failure return value at all**. So the 48
+      other, failing lookups don't error out from the caller's own
+      point of view -- they silently hand back a real, non-null,
+      but entirely zeroed buffer (this project's own bump allocator's
+      real zero-init behavior), indistinguishable from "loaded, but
+      genuinely empty." That's a real, direct explanation for the
+      black screen: from the game's own perspective every one of these
+      loads "succeeds," just with empty content for 48 of 49, so it
+      correctly has nothing to draw -- not a crash, not a stuck retry,
+      real code doing exactly what its own (evidently not real-
+      hardware-exercised, or at least not on this exact path) logic
+      says to do with data that isn't there.
+      **Concrete next step**: this is now a real, scoped, title-
+      specific reverse-engineering question, not a further engine gap
+      -- find what real data the one successful load (id `0x234e`,
+      entry 37) actually contains and how the game's own code uses it
+      (very plausibly a manifest/index the other 48 IDs are meant to
+      be resolved through some other real mechanism, or a sign this
+      project's own `data.bar` dump is itself incomplete/mismatched
+      relative to what real hardware would have received). Not chased
+      further this round; no code changes past the already-committed
+      four fixes above.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
