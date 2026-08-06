@@ -399,7 +399,26 @@ namespace zeebulator {
 // guessed at, unblocking real execution past this call site without
 // claiming to know what it does.
 //
-// Only these twenty-three table slots are confirmed by real disassembly
+// A twenty-fourth slot, offset 0x138 (immediately before the sprintf-
+// family slot at 0x13c), was found picking a new, architecturally
+// different title (Alien Breaker Deluxe) to try after Zeeboids/Zebo
+// Sports Volei/Tênis all converged on the same interpreter-throughput
+// wall -- this title's own real per-tick code calls it once, right
+// after a real `malloc(48)`, with `(dest=a stack buffer, src=an
+// adjacent stack buffer)` and a small, per-tick-incrementing third
+// register value (23, then 25 one tick later) left over from loading
+// the callee's own address into it, not confirmed as a real third
+// argument. Left unregistered, this was a real, confirmed null
+// function pointer (`blx` through a never-written table slot,
+// producing the exact "pc=0" wander this project's own tooling
+// already catches). Only one real call site found so far, and its
+// own result isn't visibly consumed by the immediately-following real
+// code -- not enough evidence to guess a real identity, so this is a
+// safe no-op (matching the fifteenth/twenty-third slots' own
+// precedent) rather than a guess, just to unblock real execution past
+// this specific call site.
+//
+// Only these twenty-four table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report

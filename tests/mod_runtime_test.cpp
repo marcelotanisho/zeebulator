@@ -32,6 +32,7 @@ constexpr uint32_t kMemcpyAliasSlotOffset = 0x44;
 constexpr uint32_t kReallocSlotOffset = 0x74;
 constexpr uint32_t kUnknownSlotOffset0x1b4 = 0x1b4;
 constexpr uint32_t kUnknownSlotOffset0xdc = 0xdc;
+constexpr uint32_t kUnknownSlotOffset0x138 = 0x138;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
@@ -951,4 +952,21 @@ TEST(ModRuntime, DecompressGzipInPlaceSlotHandlesInputLargerThanOneChunk) {
     ASSERT_EQ(cpu.GetMemory().Read8(kBufAddr + static_cast<uint32_t>(i)), original[i])
         << "byte " << i;
   }
+}
+
+TEST(ModRuntime, UnknownSlot0x138IsWiredAndSafelyReturnsZero) {
+  // Found in Alien Breaker Deluxe (TASKS.md): left unregistered, real
+  // code's own `blx` through this table slot jumped through a null
+  // function pointer. Only one real call site found so far, and its
+  // own real identity isn't confirmed -- registered as a safe no-op
+  // (matching the fifteenth/twenty-third slots' own precedent), not
+  // guessed at.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x138);
+
+  EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
+  EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
 }
