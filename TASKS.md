@@ -3743,14 +3743,48 @@ playable start-to-finish at full speed, standalone build.
       like a genuine, repeating polling pattern (the same couple of
       HLE trap addresses called over and over with a small, cycling set
       of arguments) until this project's own step-budget guard aborts
-      the call. This reads as "waiting for some condition this harness
-      never satisfies" (a real async-load-style poll loop, most likely)
-      rather than a crash -- which specific condition, and which real
-      HLE call it's polling, isn't identified yet. **Left unresolved
-      this round** -- concrete next step is identifying the specific
-      trap(s) being polled (by registration order or a temporary
-      per-trap name-printing diagnostic) and what real state would need
-      to change for the poll to naturally exit. 391/391 tests pass.
+      the call.
+
+      **Identified the loop precisely (fifth round).** Added a
+      temporary per-registration index/trap diagnostic to `HleRuntime::
+      Register` (not guessed at from static disassembly alone) to map
+      the three repeating trap addresses to real functions: they're
+      `sprintf` (already real), and two of this file's own still-
+      unidentified stub slots -- `dbgprintf` (offset `0x9c`) and the
+      offset-`0x184` slot first found in Super BurgerTime with too thin
+      a call shape to identify there. Both are hardcoded no-ops
+      (`SetRegister(kR0, 0)`), which is why nothing about the loop's
+      own state ever changes.
+      Ruled out malloc exhaustion as the cause (a live allocation trace
+      showed zero real `Allocate()` calls happening anywhere in the
+      loop). The real debug strings sprintf/dbgprintf are formatting
+      turned out to be highly informative on their own:
+      `"TTDMM ASSERT: [Condition | Line @ File]"` with a `.\source\
+      TTDMemoryManager.cpp` argument -- a real, custom assert macro
+      from the game's own memory manager, not a generic log. Tracing
+      the calling function (`zeebotennis.mod` 0x1047dc onward) shows
+      it's a real hash-table slot computation (`umull`/`rsb`/shift
+      sequence matching a load-factor-style index calc) that branches
+      into the assert-log-then-`sleep(50)`-then-retry sequence when two
+      computed table fields compare equal -- reads as a real collision/
+      already-occupied-slot check in a resource or string hash table,
+      firing every single retry with no state ever changing to make it
+      stop. Whether this is a real bug in the title itself (unlikely to
+      matter if so -- it would presumably also hang on real hardware)
+      or specific to something this harness lays out differently
+      (memory layout, resource load order/count, or a hash input that
+      happens to differ) isn't determined yet -- the offset-`0x184`
+      slot's own real semantics (called with a single `ms`-shaped
+      argument, `50`, return value unchecked at this call site -- a
+      different shape than Super BurgerTime's own `(flag=1, 0, table)`
+      call) are also still unidentified, and could plausibly matter
+      here despite looking like fire-and-forget. **Left unresolved this
+      round** -- concrete next step is identifying the real hash
+      function/table this code is indexing into (starting from
+      `zeebotennis.mod` 0x1047f0's own field reads) to see whether it's
+      fed by something this harness's own resource/memory layout
+      controls. All temporary instrumentation reverted, 391/391 tests
+      pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
