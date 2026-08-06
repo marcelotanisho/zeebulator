@@ -3813,6 +3813,56 @@ playable start-to-finish at full speed, standalone build.
       close safely yet, not a bug in anything implemented so far. All
       temporary instrumentation reverted, 391/391 tests pass unchanged.
 
+- [ ] Picked a fifth title, **Zeeboids**, to test whether the fixes made
+      chasing Zeebo Sports Tênis generalize -- deliberately *not* one of
+      the "Zeebo Sports" template siblings (Peteca/Volei), which are
+      near-certain to hit the exact same wall given their near-identical
+      `.mod` size and naming; Zeeboids is architecturally different (a
+      1.1MB `.mod`, not a ~330KB sports-template one), giving it real
+      odds of taking a different code path. (Zuma's Revenge, also
+      considered, turned out to use a completely different, uncracked
+      PopCap-proprietary `PPCPRCON` container instead of
+      `resources.pakz` -- a much bigger lift, set aside.) Extracted into
+      `research/games/Zeeboids/` (persistent, matching the established
+      layout); `resources.pakz` decodes cleanly (1048/1048 entries).
+      **Found the real ClsId the same way as Tênis's own round**
+      (the thin `CreateInstance` wrapper clobbers `r0`/`po` with
+      `r2`/`cls_id` before the real literal comparison): `0x0108ff1a`
+      (17366810). Confirmed live: `CreateInstance` succeeds.
+      **Verified the fixes generalize**: hit a wander during
+      `CreateInstance` itself (not just the tick loop) at
+      `zeeboids.mod` 0x15d1bc -- the same runtime helper table
+      mechanism, a new, previously-unclaimed offset `0x140`. Traced its
+      one real call site: sits immediately before a real `dbgprintf`
+      call whose own arguments reference the exact same real
+      `TTDMemoryManager.cpp` string Tênis's own investigation found --
+      **confirms this is genuinely shared engine code across titles**,
+      not a coincidence. Since `dbgprintf` itself already discards its
+      message entirely, whatever this slot computes never affects
+      anything downstream -- registered as a safe no-op (the file's
+      23rd confirmed slot, `core/brew/mod_runtime.{h,cpp}`), matching
+      the established precedent for single-call-site, low-risk gaps.
+      **Verified live: real progress past Tênis's own exact wall** --
+      the identical `TTDMM ASSERT`/`sleep(50)` loop this round's own
+      earlier entry documented for Tênis fires here too (same shared
+      code, confirming that diagnosis independently), but this time
+      execution escapes it and reaches a **new, different** crash: a
+      timer callback throws `Miscellaneous instruction space` at
+      `pc=0x00090024` -- confirmed (by checking that the raw `cls_id`
+      value decodes into exactly that instruction-encoding space) this
+      is a literal jump to `tools/game_probe.cpp`'s own
+      `kAppStartAddr+4` scratch address (the `AEEAppStart.clsApp`
+      field), not real module code. Reads as a scratch-memory address
+      collision in this harness's own layout -- the same *class* of bug
+      already found and fixed once before in this project's Peggle
+      investigation (two unrelated dynamic-object-address counters
+      colliding). Not yet confirmed which two harness-assigned regions
+      are colliding here. **Left unresolved this round** -- concrete
+      next step is a live watchpoint on `kAppStartAddr+4` (or a broader
+      scan of `tools/game_probe.cpp`'s own fixed scratch addresses for
+      anything landing in the same range) to find what's really being
+      called instead. 391/391 tests pass.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.

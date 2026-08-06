@@ -381,7 +381,25 @@ namespace zeebulator {
 // byte separately re-read right after that -- exactly real, standard
 // **`strchr(s, c)`** semantics: implemented as `StrchrImpl`.
 //
-// Only these twenty-two table slots are confirmed by real disassembly
+// A twenty-third slot, offset 0x140, was found in Zeeboids (TASKS.md
+// Phase 8, picked as a Zeebo Sports Tênis "sibling" sharing the same
+// real `TTDMemoryManager.cpp` engine code -- confirmed live: the one
+// real call site found so far sits immediately before a real
+// `dbgprintf` (offset 0x9c) call whose own arguments reference that
+// exact real source file string). Real calling convention: `(dest=a
+// 64-byte local buffer, size=64, arg2=<a caller-supplied value>,
+// arg3=<a pointer to a small local struct>)` -- a shape consistent
+// with a sprintf-family formatter (feeding `dbgprintf`'s own `%s`
+// argument), but only one real call site, not enough independent
+// corroboration the way offset `0xc8`'s `strncpy` identification had.
+// Since `dbgprintf` is itself already a complete no-op that discards
+// its message entirely, whatever this slot actually computes never
+// affects anything downstream regardless -- registered as a safe
+// no-op (matching the fifteenth slot's own precedent) rather than
+// guessed at, unblocking real execution past this call site without
+// claiming to know what it does.
+//
+// Only these twenty-three table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
