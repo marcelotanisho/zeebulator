@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -403,11 +404,32 @@ int main(int argc, char** argv) {
   // of the positional-argument parsing below, so it can appear anywhere
   // on the command line without shifting the fixed positional slots.
   bool auto_load_state = false;
+  // `--persistent-log` (same appear-anywhere/strip-before-positional-
+  // parsing convention as `--load-state`) redirects stdout/stderr to a
+  // durable, append-mode `<rom>.playlog` file (opened below, once
+  // argv[1] is known) instead of wherever the launcher happened to
+  // point them -- added specifically because this project's own
+  // player-facing worktree launches game_probe detached from any
+  // terminal (stdout ends up on /dev/null, confirmed via
+  // `/proc/<pid>/fd` on a real frozen instance), so a real, live-
+  // reported bug (a "LOAD ERROR" screen the game's own code drew,
+  // found from a screenshot, not this tool's own output) left zero
+  // record behind to investigate afterward. Deliberately opt-in, not
+  // the default for every invocation: this project's own dev-testing
+  // workflow already redirects `game_probe`'s stdout via the shell
+  // (`> file 2>&1`) throughout TASKS.md's own history, and an
+  // unconditional internal redirect would silently steal that output
+  // out from under it.
+  bool persistent_log = false;
   {
     int write_i = 1;
     for (int read_i = 1; read_i < argc; ++read_i) {
       if (std::string(argv[read_i]) == "--load-state") {
         auto_load_state = true;
+        continue;
+      }
+      if (std::string(argv[read_i]) == "--persistent-log") {
+        persistent_log = true;
         continue;
       }
       argv[write_i++] = argv[read_i];
@@ -429,9 +451,29 @@ int main(int argc, char** argv) {
     // PHASE8_LOG.md for how this was found.
     std::fprintf(stderr,
                   "usage: %s <game.mod> <data.ggz> <sound.ggz> <cls_id_decimal> [boot.pkg] "
-                  "[resources.bar] [--load-state]\n",
+                  "[resources.bar] [--load-state] [--persistent-log]\n",
                   argv[0]);
     return 1;
+  }
+  if (persistent_log) {
+    // Append mode: successive real play sessions accumulate in the
+    // same file rather than overwriting each other, since the whole
+    // point is having a record of whichever session hit the bug --
+    // not knowable in advance which one that'll be. A header line per
+    // session (wall-clock time, PID, full argv) makes it possible to
+    // find where a given session starts/ends when reading the file
+    // back later, without needing to parse timestamps out of every
+    // line.
+    std::string playlog_path = std::string(argv[1]) + ".playlog";
+    if (std::freopen(playlog_path.c_str(), "a", stdout) == nullptr ||
+        std::freopen(playlog_path.c_str(), "a", stderr) == nullptr) {
+      std::exit(1);
+    }
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    std::time_t now = std::time(nullptr);
+    std::printf("\n===== session start %s argv:", std::ctime(&now));
+    for (int i = 0; i < argc; ++i) std::printf(" %s", argv[i]);
+    std::printf(" =====\n");
   }
   auto mod_data = ReadFile(argv[1]);
   auto cls_id = static_cast<uint32_t>(std::strtoul(argv[4], nullptr, 10));
@@ -1799,7 +1841,7 @@ int main(int argc, char** argv) {
     // infrastructure for whoever picks up real controller-driven
     // navigation next.
     for (const auto& timer : shell_hle.Tick(kTickMs)) {
-      bool trace_this_tick = tick_count < 10;
+      bool trace_this_tick = tick_count < 10 || persistent_log;
       if (trace_this_tick) std::printf("--- tick %llu ---\n", static_cast<unsigned long long>(tick_count));
       try {
         // Plain ISHELL_SetTimer-registered timers use the real,
