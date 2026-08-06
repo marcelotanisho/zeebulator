@@ -3955,8 +3955,29 @@ playable start-to-finish at full speed, standalone build.
       wander after only 6 real steps, `zeebotennis.mod` 0x101bec-
       0x101c00 / `zeeboids.mod` 0x10b8e0 -- different addresses, same
       `ldr r0,[r1,#96]; ldr r1,[r0]; ldr r1,[r1]; blx r1` shape) --
-      genuinely new territory for both, not investigated yet. All
-      temporary instrumentation reverted, 391/391 tests pass unchanged.
+      genuinely new territory for both, not investigated yet.
+
+      **Took one more look at the new tick-1 gap, same round.** Real
+      entry-point register state at `zeebotennis.mod` 0x101bec (the
+      registered timer callback itself -- confirmed via `lr==trap_base`,
+      i.e. this was reached directly from `tools/game_probe.cpp`'s own
+      top-level tick-timer call, not a nested one): `r0=0x80300024`
+      (the real applet pointer, correctly delivered as `pUser` per the
+      real, already-established `PFNNOTIFY pfnNotify)(void *pUser)`
+      contract this project's own `SetTimerImpl` implements), but the
+      function itself reads its "self" from **`r1`** (`0` at this
+      call), not `r0` -- the field it then dereferences at `[r1+96]` is
+      necessarily reading near address `96`, not a real object. Either
+      the real registered timer callback expects more than the one
+      documented `pUser` argument (a real OS-level dispatch convention
+      passing extra implicit context this harness's own direct
+      function-pointer call doesn't supply), or `0x101bec` isn't really
+      being reached as a raw `PFNNOTIFY` in the way `SetTimer`'s own
+      already-validated 3-titles-strong convention assumes. Not
+      resolved -- a real ABI/calling-convention question, not a quick
+      trace, and deserves its own dedicated round rather than a rushed
+      guess this late in an already long one. All temporary
+      instrumentation reverted, 391/391 tests pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
