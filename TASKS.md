@@ -3919,10 +3919,44 @@ playable start-to-finish at full speed, standalone build.
       supposed to do on real hardware -- most plausibly something that
       eventually flips this exact flag -- is the one missing piece this
       investigation would need to resolve to unblock *both* titles at
-      once, not two separate problems. Real system-service semantics,
-      not guessed at further this round for the same reason noted
-      above. All temporary instrumentation reverted, 391/391 tests pass
-      unchanged.
+      once, not two separate problems.
+
+      **Found and fixed the real root cause, same round -- not a
+      missing system call after all.** Added a live allocation trace
+      (temporary) to `ModRuntime::Allocate` and watched what actually
+      happens leading up to the gate write: the gate field genuinely is
+      just a real `MALLOC` return value (`ldr r1,[r1,#0x68]` -- the
+      already-known malloc slot -- immediately followed by `blx r1` and
+      a `str r0` into the exact gate address), reached from a real
+      lazy-singleton-init function (checks the same field at its own
+      entry, returns a real error code immediately if already
+      non-null). The live trace caught the real request:
+      `MALLOC(size=23068672)` -- exactly 22 MiB, matching a real static
+      constant (`0x01600000`) embedded in both titles' own shared
+      TTDMemoryManager.cpp-derived engine code (misread as a plausible
+      ClsId in an earlier round of this same investigation -- it's a
+      size). This project's own emulated heap was only 16 MiB
+      (`tools/game_probe.cpp`, bumped there once already for Double
+      Dragon's own real needs) -- a single real allocation this large
+      could never succeed, so the gate could never become non-null, so
+      every dependent code path fell back to the same real
+      assert-log-then-retry sequence forever. **Not a missing or
+      misunderstood real system service at all** -- the three prior
+      rounds' own "offset 0x184" and "scratch collision" theories were
+      chasing symptoms of an ordinary undersized heap. **Fixed**:
+      bumped the heap to 64 MiB (`tools/game_probe.cpp`; nothing else
+      in that file claims any address at or above the heap's own
+      `0x80300000` base, confirmed by grep, so extending it upward is
+      safe). **Verified live against both titles**: the stuck
+      assert-retry loop is completely gone from both -- Zeebo Sports
+      Tênis and Zeeboids both now run cleanly through `CreateInstance`,
+      `HandleEvent(EVT_APP_START)`, and tick 0, reaching a **new**,
+      shared-shape gap early in tick 1 (a null-object virtual-dispatch
+      wander after only 6 real steps, `zeebotennis.mod` 0x101bec-
+      0x101c00 / `zeeboids.mod` 0x10b8e0 -- different addresses, same
+      `ldr r0,[r1,#96]; ldr r1,[r0]; ldr r1,[r1]; blx r1` shape) --
+      genuinely new territory for both, not investigated yet. All
+      temporary instrumentation reverted, 391/391 tests pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

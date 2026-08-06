@@ -541,8 +541,20 @@ int main(int argc, char** argv) {
   // just too small a heap for this real game's real needs. Bumped to
   // 16 MiB, a generous but not unreasonable amount of app heap for a
   // 2009-era dedicated gaming device.
+  // Bumped again to 64 MiB (TASKS.md Phase 8, the Zeebo Sports Tênis/
+  // Zeeboids investigation): a live allocation trace caught the real
+  // root cause behind BOTH titles' remaining walls at once -- a single
+  // real MALLOC(size=23068672) call (~22 MiB, matching a real static
+  // constant, `0x01600000`, embedded in both titles' own shared
+  // TTDMemoryManager.cpp-derived engine code) that 16 MiB could never
+  // satisfy. Not a missing system call or a scratch-address collision
+  // as earlier rounds of that investigation suspected -- a real,
+  // measured heap need this harness's own fixed size hadn't grown to
+  // cover, the same *shape* of gap the original 1 MiB->16 MiB bump
+  // above already was. Nothing else in this file claims any address at
+  // or above `0x80300000`, so extending the heap upward is safe.
   zeebulator::ModRuntime mod_runtime(cpu.GetMemory(), hle, /*heap_region=*/0x80300000,
-                                      /*heap_size=*/0x01000000, /*context_address=*/0x80280200);
+                                      /*heap_size=*/0x04000000, /*context_address=*/0x80280200);
   mod_runtime.Install(kBase, /*table_address=*/0x80280000);
 
   uint32_t display_obj =
