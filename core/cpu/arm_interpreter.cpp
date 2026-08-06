@@ -1,5 +1,7 @@
 #include "core/cpu/arm_interpreter.h"
 
+#include <bit>
+
 namespace zeebulator {
 
 namespace {
@@ -1090,6 +1092,15 @@ void ArmInterpreter::Step() {
         // everything else in this space stays unimplemented.
         if ((instr & 0x0FFFFFD0) == 0x012FFF10) {
           ExecuteBranchExchange(instr);
+        } else if ((instr & 0x0FFF0FF0) == 0x016F0F10) {
+          // CLZ Rd, Rm: cond 0001 0110 1111 Rd 1111 0001 Rm -- real
+          // ARMv5T+ instruction sharing this same "miscellaneous"
+          // encoding space with MRS/MSR/BX/BLX. Found live in Zeebo
+          // Sports Tênis (soft-float normalization code): counts
+          // leading zero bits, 32 if the input is zero.
+          uint32_t rd = (instr >> 12) & 0xF;
+          uint32_t rm = instr & 0xF;
+          regs_[rd] = static_cast<uint32_t>(std::countl_zero(ReadOperandRegister(rm)));
         } else {
           throw UnimplementedInstruction(
               "Miscellaneous instruction space (MRS/MSR/etc.)");

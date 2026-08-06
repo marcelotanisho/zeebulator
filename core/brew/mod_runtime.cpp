@@ -33,6 +33,8 @@ constexpr uint32_t kUnknownSlotOffset0xd0 = 0xd0;
 constexpr uint32_t kUnknownSlotOffset0xdc = 0xdc;
 constexpr uint32_t kUnknownSlotOffset0x184 = 0x184;
 constexpr uint32_t kUnknownSlotOffset0x1b4 = 0x1b4;
+constexpr uint32_t kStrncpySlotOffset = 0xc8;
+constexpr uint32_t kStrchrSlotOffset = 0x18;
 // Offsets within the "app context" struct GetAppContext returns where
 // real call sites read the current app's IShell/IDisplay pointers.
 constexpr uint32_t kAppContextShellOffset = 12;
@@ -336,6 +338,44 @@ void ModRuntime::BoundedStrcpyImpl(IArmCore& core) {
   core.SetRegister(kR0, dest);
 }
 
+void ModRuntime::StrncpyImpl(IArmCore& core) {
+  // char *strncpy(char *dest, const char *src, size_t maxlen) -- real
+  // standard semantics (see kStrncpySlotOffset's own doc comment):
+  // copies up to maxlen bytes from src, padding the remainder of dest
+  // with nulls if src is shorter, and does NOT null-terminate if src is
+  // maxlen bytes or longer.
+  uint32_t dest = core.GetRegister(kR0);
+  uint32_t src = core.GetRegister(kR1);
+  uint32_t maxlen = core.GetRegister(kR2);
+  bool src_ended = false;
+  for (uint32_t i = 0; i < maxlen; ++i) {
+    uint8_t byte = src_ended ? 0 : memory_.Read8(src + i);
+    if (byte == 0) src_ended = true;
+    memory_.Write8(dest + i, byte);
+  }
+  core.SetRegister(kR0, dest);  // strncpy returns its first argument
+}
+
+void ModRuntime::StrchrImpl(IArmCore& core) {
+  // char *strchr(const char *s, int c) -- real standard semantics:
+  // scans s for the first occurrence of c (c==0 matches the string's
+  // own null terminator itself), returning a pointer to it or NULL if
+  // not found before the terminator.
+  uint32_t s = core.GetRegister(kR0);
+  auto c = static_cast<uint8_t>(core.GetRegister(kR1));
+  for (uint32_t i = 0;; ++i) {
+    uint8_t byte = memory_.Read8(s + i);
+    if (byte == c) {
+      core.SetRegister(kR0, s + i);
+      return;
+    }
+    if (byte == 0) {
+      core.SetRegister(kR0, 0);
+      return;
+    }
+  }
+}
+
 void ModRuntime::StrstrImpl(IArmCore& core) {
   // char *strstr(const char *haystack, const char *needle)
   uint32_t haystack = core.GetRegister(kR0);
@@ -552,6 +592,8 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t unknown_0x184_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0x1b4_fn =
       hle_.Register([this](IArmCore& core) { SortPointerArrayImpl(core); });
+  uint32_t strncpy_fn = hle_.Register([this](IArmCore& core) { StrncpyImpl(core); });
+  uint32_t strchr_fn = hle_.Register([this](IArmCore& core) { StrchrImpl(core); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemcpyAliasSlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
@@ -572,6 +614,8 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   memory_.Write32(table_address + kUnknownSlotOffset0xdc, unknown_0xdc_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x184, unknown_0x184_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x1b4, unknown_0x1b4_fn);
+  memory_.Write32(table_address + kStrncpySlotOffset, strncpy_fn);
+  memory_.Write32(table_address + kStrchrSlotOffset, strchr_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 

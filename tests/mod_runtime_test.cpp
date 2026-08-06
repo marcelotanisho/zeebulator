@@ -19,6 +19,8 @@ constexpr uint32_t kMemsetSlotOffset = 0x4;
 constexpr uint32_t kStrlenSlotOffset = 0x14;
 constexpr uint32_t kStrcpySlotOffset = 0x8;
 constexpr uint32_t kBoundedStrcpySlotOffset = 0xe4;
+constexpr uint32_t kStrncpySlotOffset = 0xc8;
+constexpr uint32_t kStrchrSlotOffset = 0x18;
 constexpr uint32_t kStrstrSlotOffset = 0xe8;
 constexpr uint32_t kSprintfSlotOffset = 0x13c;
 constexpr uint32_t kMallocSlotOffset = 0x68;
@@ -611,6 +613,101 @@ TEST(ModRuntime, StrcpyCopiesThroughTheNullTerminatorAndReturnsDest) {
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 1), static_cast<uint8_t>(text[1]));
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 2), 0u) << "null terminator copied";
   EXPECT_EQ(cpu.GetMemory().Read8(kDest + 3), 0xAAu) << "didn't write past the terminator";
+}
+
+TEST(ModRuntime, StrncpyPadsWithNullsWhenSrcIsShorterThanMaxlen) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strncpy_fn = cpu.GetMemory().Read32(kTableAddress + kStrncpySlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  constexpr uint32_t kDest = 0x80300200;
+  cpu.GetMemory().Write8(kSrc + 0, 'h');
+  cpu.GetMemory().Write8(kSrc + 1, 'i');
+  cpu.GetMemory().Write8(kSrc + 2, 0);
+  for (uint32_t i = 0; i < 8; ++i) cpu.GetMemory().Write8(kDest + i, 0xAA);
+
+  EXPECT_EQ(hle.CallArmFunction(strncpy_fn, kDest, kSrc, 5), kDest);
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 0), 'h');
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 1), 'i');
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 2), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 3), 0u) << "real strncpy pads the remainder with nulls";
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 4), 0u);
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 5), 0xAAu) << "didn't write past maxlen";
+}
+
+TEST(ModRuntime, StrncpyTruncatesWithoutNullTerminatingWhenSrcReachesMaxlen) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strncpy_fn = cpu.GetMemory().Read32(kTableAddress + kStrncpySlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  constexpr uint32_t kDest = 0x80300200;
+  const char* text = "helloworld";
+  for (size_t i = 0; text[i] != '\0'; ++i) {
+    cpu.GetMemory().Write8(kSrc + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
+  }
+  cpu.GetMemory().Write8(kDest + 4, 0xAA);  // sentinel just past maxlen
+
+  EXPECT_EQ(hle.CallArmFunction(strncpy_fn, kDest, kSrc, 4), kDest);
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 0), 'h');
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 1), 'e');
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 2), 'l');
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 3), 'l')
+      << "real strncpy doesn't null-terminate when src reaches maxlen";
+  EXPECT_EQ(cpu.GetMemory().Read8(kDest + 4), 0xAAu) << "didn't write past maxlen";
+}
+
+TEST(ModRuntime, StrchrFindsAPresentCharacter) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strchr_fn = cpu.GetMemory().Read32(kTableAddress + kStrchrSlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  const char* text = "a+b";
+  for (size_t i = 0; text[i] != '\0'; ++i) {
+    cpu.GetMemory().Write8(kSrc + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
+  }
+  cpu.GetMemory().Write8(kSrc + 3, 0);
+
+  EXPECT_EQ(hle.CallArmFunction(strchr_fn, kSrc, '+'), kSrc + 1);
+}
+
+TEST(ModRuntime, StrchrReturnsNullWhenCharacterIsAbsent) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strchr_fn = cpu.GetMemory().Read32(kTableAddress + kStrchrSlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  const char* text = "abc";
+  for (size_t i = 0; text[i] != '\0'; ++i) {
+    cpu.GetMemory().Write8(kSrc + static_cast<uint32_t>(i), static_cast<uint8_t>(text[i]));
+  }
+  cpu.GetMemory().Write8(kSrc + 3, 0);
+
+  EXPECT_EQ(hle.CallArmFunction(strchr_fn, kSrc, '+'), 0u);
+}
+
+TEST(ModRuntime, StrchrOfNullCharacterFindsTheTerminatorItself) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t strchr_fn = cpu.GetMemory().Read32(kTableAddress + kStrchrSlotOffset);
+
+  constexpr uint32_t kSrc = 0x80300100;
+  cpu.GetMemory().Write8(kSrc + 0, 'x');
+  cpu.GetMemory().Write8(kSrc + 1, 0);
+
+  EXPECT_EQ(hle.CallArmFunction(strchr_fn, kSrc, 0), kSrc + 1);
 }
 
 namespace {

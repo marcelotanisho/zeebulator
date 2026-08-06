@@ -3695,31 +3695,62 @@ playable start-to-finish at full speed, standalone build.
       unmapped/zero memory), not a second, independent bug.
 
       **Traced the wander to a specific, missing runtime helper table
-      slot**: `zeebotennis.mod` offset `0x1013f8`-`0x10140c` (reached
-      from the real per-frame tick path) calls the already-known
-      sprintf-family formatter (offset `0x13c`, slot #11 in this file's
-      own numbered list above) successfully, then immediately calls
-      **offset `0xc8`** on the *same* runtime helper table (the
-      `ldr r0,[r6,#-4]` context, not the separate IShell/IDisplay
-      context struct reached via offset `0xc0`) -- unclaimed by any
-      slot documented in this file so far. Real calling convention at
-      that site: `r0` = the outer function's own first argument
-      (likely a destination buffer), `r1` = the same local buffer the
-      sprintf call *just wrote into*, `r2` = (the outer function's own
-      second argument) `- 1` (likely a max-length, off-by-one for a
-      null terminator). That shape -- format into a scratch buffer,
-      then copy/append the result into a destination with a bounded
-      length -- is consistent with `strncat`/a bounded string-append,
-      but not confirmed; implementing it on a guess risks silent data
-      corruption instead of this investigation's own established
-      "clean, informative wander" fallback, so deliberately left
-      unimplemented this round rather than guessed at. Concrete next
-      step: find another real call site for offset `0xc8` (or the
-      twin, offset `0xc4`, immediately next to the well-established
-      `0xc0` slot, unchecked so far) to corroborate or refute the
-      `strncat` theory before implementing it. All temporary
-      instrumentation reverted (three rounds now), 384/384 tests pass
-      unchanged.
+      slot, then identified and implemented it (fourth round).**
+      `zeebotennis.mod` offset `0x1013f8`-`0x10140c` (reached from the
+      real per-frame tick path) calls the already-known sprintf-family
+      formatter (offset `0x13c`, slot #11 in this file's own numbered
+      list above) successfully, then immediately calls **offset
+      `0xc8`** on the *same* runtime helper table -- unclaimed by any
+      slot documented so far. First reading of the calling convention
+      there (`strncat`-shaped) turned out to be only half the picture:
+      three more real call sites (found by scanning the whole binary
+      for the `ldr r0,[r6,#-4]` context-fetch immediately followed by
+      `ldr r3,[r0,#0xc8]`) included one unambiguous one
+      (`zeebotennis.mod` 0x136bf0: `dest=<a fixed offset inside a
+      freshly-constructed object>, src=<a plain string>, maxlen=32` --
+      a plain constant, not a computed length), ruling out concat and
+      confirming real, standard **`strncpy(dest, src, maxlen)`**
+      semantics instead. Implemented as `ModRuntime::StrncpyImpl`
+      (`core/brew/mod_runtime.{h,cpp}`, offset `0xc8`, the file's own
+      21st confirmed slot), 2 new tests.
+      **Verified live**: the wander is gone; execution advances well
+      past where it previously stopped (226 real steps vs. 187 before,
+      through a real `ISHELL_CreateInstance` call for
+      `AEECLSID_FILEMGR`), then hits a **new, different** wander at
+      `zeebotennis.mod` 0x104320 -- traced the same way, real call site
+      `(s=<a string pointer>, c=43 /* '+' */)` with the return value
+      null-checked immediately after: real, standard **`strchr(s, c)`**
+      semantics. Implemented as `StrncpyImpl`'s neighbor
+      `StrchrImpl` (offset `0x18`, the file's 22nd confirmed slot), 3
+      new tests.
+      **Verified live again**: no more wander at all -- execution now
+      runs through many real per-tick HLE calls (a real, repeating
+      resource-lookup-shaped pattern) before hitting a **different
+      class of gap**: a timer callback throwing `Miscellaneous
+      instruction space (MRS/MSR/etc.)` at module offset `0x44b38`.
+      Disassembled: `clz r1, r0` -- real **CLZ** (Count Leading Zeros,
+      ARMv5T+), sitting inside real IEEE-754 soft-float normalization
+      code, sharing the same "miscellaneous instructions" encoding
+      space as MRS/MSR/BX/BLX that this project's interpreter only
+      partially implemented (BX/BLX only) -- the same bug *shape* as
+      this same investigation's own earlier LDRD/STRD fix, a real CPU
+      gap, not a guess. **Fixed** in `core/cpu/arm_interpreter.cpp`
+      (`std::countl_zero`, C++20's own standard-library equivalent, not
+      a compiler builtin), 2 new tests. Regression-checked against
+      Double Dragon (still reaches the event loop clean).
+      **Verified live a third time**: no more crash or wander at all --
+      real per-tick execution now runs indefinitely through what looks
+      like a genuine, repeating polling pattern (the same couple of
+      HLE trap addresses called over and over with a small, cycling set
+      of arguments) until this project's own step-budget guard aborts
+      the call. This reads as "waiting for some condition this harness
+      never satisfies" (a real async-load-style poll loop, most likely)
+      rather than a crash -- which specific condition, and which real
+      HLE call it's polling, isn't identified yet. **Left unresolved
+      this round** -- concrete next step is identifying the specific
+      trap(s) being polled (by registration order or a temporary
+      per-trap name-printing diagnostic) and what real state would need
+      to change for the poll to naturally exit. 391/391 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

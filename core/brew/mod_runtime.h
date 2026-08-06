@@ -360,7 +360,28 @@ namespace zeebulator {
 // deferring entirely to the real game's own comparison logic rather
 // than reimplementing whatever `+0x7c`/`+0x50` actually mean.
 //
-// Only these twenty table slots are confirmed by real disassembly
+// A twenty-first slot, offset 0xc8, was found in Zeebo Sports Tênis
+// (TASKS.md Phase 8, the ClsId-discovery investigation's follow-up
+// round) tracing the wander hit immediately after first reaching that
+// title's own event loop. Real call site (`zeebotennis.mod` 0x1013f8)
+// calls it right after the already-known sprintf-family formatter
+// (offset 0x13c) with `(dest, sprintf's-own-scratch-buffer,
+// maxlen-1)`; a second, unambiguous real call site (0x136bf0) shows
+// `(dest=<a fixed offset inside a freshly-constructed object>,
+// src=<a plain string>, maxlen=32)` -- a plain constant, not a
+// computed length, ruling out a concat/append interpretation. Both are
+// consistent with real, standard **`strncpy(dest, src, maxlen)`**
+// semantics: implemented as `StrncpyImpl`.
+//
+// A twenty-second slot, offset 0x18, was found continuing the same
+// Zeebo Sports Tênis round, immediately past where the `strncpy` fix
+// let real execution advance to (`zeebotennis.mod` 0x104320). Real
+// call site: `(s=<a string pointer>, c=43 /* '+' */)`, with the return
+// value checked for null immediately after and the string's own first
+// byte separately re-read right after that -- exactly real, standard
+// **`strchr(s, c)`** semantics: implemented as `StrchrImpl`.
+//
+// Only these twenty-two table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
@@ -450,6 +471,8 @@ class ModRuntime {
   void StrlenImpl(IArmCore& core);
   void StrcpyImpl(IArmCore& core);
   void BoundedStrcpyImpl(IArmCore& core);
+  void StrncpyImpl(IArmCore& core);
+  void StrchrImpl(IArmCore& core);
   void StrstrImpl(IArmCore& core);
   void SprintfImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);

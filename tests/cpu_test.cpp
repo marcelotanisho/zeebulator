@@ -427,6 +427,26 @@ TEST(Cpu, BranchExchangeToThumbTargetSwitchesState) {
   EXPECT_TRUE(Flag(cpu, zeebulator::kCpsrT));
 }
 
+TEST(Cpu, ClzCountsLeadingZeroBits) {
+  // CLZ shares the same "miscellaneous instructions" encoding space as
+  // MRS/MSR/BX/BLX (cond 0001 0110 1111 Rd 1111 0001 Rm) -- real
+  // ARMv5T+ instruction, found live in Zeebo Sports Tênis soft-float
+  // normalization code.
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR3, 0x00010000);  // highest set bit at position 16
+  cpu.GetMemory().Write32(0, 0xE16F2F13);  // CLZ R2, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 15u);
+}
+
+TEST(Cpu, ClzOfZeroReturnsThirtyTwo) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR3, 0);
+  cpu.GetMemory().Write32(0, 0xE16F2F13);  // CLZ R2, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 32u);
+}
+
 TEST(Cpu, BranchWithLinkExchangeSetsLrAndJumps) {
   ArmInterpreter cpu;
   cpu.SetRegister(kPC, 0x1000);
