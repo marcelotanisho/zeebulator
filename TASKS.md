@@ -4039,12 +4039,30 @@ playable start-to-finish at full speed, standalone build.
       genuinely deep, multi-object, Zeeboids-specific territory (at
       least 3 nested real functions: `0x1783cc`, `0x17e50c`,
       `0x182800`'s own caller) that would benefit from its own focused
-      round (most promisingly, a live write watchpoint on
-      `[outer_r4+132]` itself, mirroring the technique that
-      successfully found the TTDMM gate flag's own real writer earlier
-      in this same investigation) rather than continuing to trace by
-      hand this late in an already long session. All temporary
-      instrumentation reverted, 393/393 tests pass unchanged.
+      round.
+
+      **Ran that watchpoint, same round.** Real watch address
+      `0x81993ab0` (`[outer_r4+132]` at runtime), found live via a
+      targeted diagnostic at the real caller (`zeeboids.mod` 0x182818)
+      first, then a whole-run write watchpoint on that exact address.
+      Two real writes total, **both value `0`**: `zeeboids.mod`
+      0x183b54 turned out to be part of a real object *constructor*
+      (five sibling fields -- offsets `8`/`12`/`132`/`136`/`140` --
+      zeroed together in one real init pass), and 0x191714 is inside a
+      real lookup-or-create routine (`bl 0x1a7918`, a lookup; on
+      failure, `bl 0x198bbc`, a construct, then a store) that also only
+      ever writes zero at this exact address in the traced run. So this
+      field really is a legitimate lazy-cache slot with a real, intact
+      "check cache, else look-up-or-create, then cache the result"
+      shape in the compiled code -- not a missing initializer. The step
+      that would actually populate it with a *real* value either fails
+      inside the still-unexplored `0x1a7918`/`0x198bbc` pair, or writes
+      somewhere this specific watch address didn't catch (e.g. a
+      different field on the same result). Two more real, nested,
+      unexplored functions deep -- genuinely a job for a fresh round
+      with a clear head, not further hand-tracing this late in an
+      already very long session. All temporary instrumentation
+      reverted, 393/393 tests pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
