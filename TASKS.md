@@ -4006,6 +4006,18 @@ playable start-to-finish at full speed, standalone build.
       before its own next gap (previously 6), reaching an entirely new,
       later crash location. No regression on Double Dragon (still
       reaches the event loop cleanly). 393/393 tests pass.
+      **Quick follow-up check (not committed -- exploratory only)**:
+      tried a temporary 20x larger step budget (100M) against Tênis's
+      own remaining step-budget wall. Didn't finish even at that size,
+      but the real trap sequence *did* eventually move into genuinely
+      new territory partway through (new trap addresses appearing near
+      the 100M mark) -- confirms this isn't a dead infinite loop, just
+      real, legitimately long-running work (very plausibly a large
+      resource decompression/load, matching this interpreter's own
+      much-slower-than-real-hardware instruction throughput), not a bug
+      to chase further right now. Reverted; the real step budget stays
+      at its existing 5M default rather than permanently slowing every
+      run for one title's own long pole.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
