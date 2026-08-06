@@ -4084,8 +4084,40 @@ playable start-to-finish at full speed, standalone build.
       to whatever real data structure `0x1a7918` reads from (the same
       live-tracing-first approach used throughout this round, not
       static disassembly alone) to identify the missing real
-      registration/interface this harness hasn't implemented yet. All
-      temporary instrumentation reverted, 393/393 tests pass
+      registration/interface this harness hasn't implemented yet.
+
+      **Found it, and it reframes the bug again -- same round.** Traced
+      the real multi-call chain live (a full instruction-level capture
+      of every real `blx` in `zeeboids.mod` 0x1a7980-0x1a7a04, not
+      guessed from static disassembly): the specific call whose own
+      out-parameter feeds the eventually-null field is
+      `trap=0xf0000670`. Identified precisely which real registered
+      method that is using the same registration-index technique from
+      the Tênis round (temporary markers before every major `Build()`/
+      scaffold registration in `tools/game_probe.cpp`): it falls inside
+      **`unknown_0x0103d8ec_obj`'s own registration** -- a *already-
+      documented*, `BuildGenericStubObject`-backed placeholder for a
+      real ClsId (`0x0103d8ec`) found and explained during the Peggle
+      investigation (this file's own existing comment there, not new
+      information): a real "try the newer class, fall back to this
+      older one" SDK-emitted pattern, confirmed byte-identical across
+      two independently-compiled titles, where `0x0103d8ec` is
+      documented as *itself* "an always-succeeding stub" real code is
+      designed to tolerate.
+      **This means the null result flowing out of this specific call
+      is very likely the real, correct, expected behavior here too** --
+      not a missing implementation this harness owes the game. The
+      actual remaining bug is much more likely a missing null/empty-
+      result check somewhere in `zeeboids.mod`'s own calling code (the
+      `0x1783e8`/`0x17e50c`/`0x182800` chain from earlier in this
+      entry) that real hardware handles gracefully in some way this
+      harness doesn't yet reproduce, rather than "implement
+      `0x0103d8ec` for real." Concrete next step for a fresh round:
+      check whether real per-entity code elsewhere skips this whole
+      lookup-and-use sequence when the earlier lookup step
+      (`0x1a7748`/`0x1a7918`-shaped) reports empty, rather than
+      assuming success unconditionally the way the traced call site
+      does. All temporary instrumentation reverted, 393/393 tests pass
       unchanged.
 
 ## Phase 9 — Libretro Core
