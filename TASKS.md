@@ -3877,12 +3877,52 @@ playable start-to-finish at full speed, standalone build.
       Peggle precedent (not two fixed regions overlapping in guest
       memory -- more likely something computes an offset from a base
       that isn't where real hardware would put it, or a real vtable
-      slot this harness leaves zeroed/wrong). **Left unresolved this
-      round** -- concrete next step is picking one of the three real
-      call sites (the clean virtual-dispatch one at `0x1a0648` is the
-      best-evidenced starting point) and tracing backward to find where
-      its own vtable pointer field actually comes from. All temporary
-      instrumentation reverted, 391/391 tests pass unchanged.
+      slot this harness leaves zeroed/wrong).
+
+      **Traced the clean virtual-dispatch call site (`0x1a0648`) all
+      the way back to its real root cause, same round.** A full,
+      unfiltered step trace through that function (not just two
+      snapshot points -- the earlier ones misled: `blx r1` with `r1==0`
+      doesn't crash, it decodes as a harmless no-op and *wanders*
+      through zero-mapped low memory, matching this project's own
+      already-documented "made-up AVK code" wander pattern, until it
+      eventually resurfaces near real code again -- there's no actual
+      third independent computation of `0x90024`, just one wander
+      surfacing at different points) confirmed `self` (`r0`) is `0` at
+      entry, with the real caller's own `lr` pointing at
+      `zeeboids.mod` 0x1771b4. Traced the caller: `r0` going into that
+      call is whatever `bl 0x1a0990` (a real per-entity field
+      initializer -- `640`/`480` visible in its own stored constants, a
+      real screen/viewport-shaped object) returned *unchanged* (it
+      always just returns its own `r0` argument via `bx lr`, never
+      allocates), which is itself whatever `bl 0x15d440` (a real
+      object-constructor call, `size=52`) returned.
+      **And `0x15d440` turned out to be the exact same shared
+      constructor shape this round's own earlier Tênis entries already
+      reverse-engineered in depth** (`zeebotennis.mod` 0x100dfc/
+      0x10520c): the identical `cmp r0,#0; bne <success>` gate on a
+      static context field this investigation already proved (via a
+      whole-run write watchpoint, see the Tênis entries above) is
+      written exactly once, at init, to `0`, and never touched again by
+      any code in the entire module. When that gate reads zero -- which
+      it always does -- this constructor runs the identical assert-log-
+      then-`sleep(50)`-then-**return-0** sequence instead of
+      succeeding, propagating a real `NULL` all the way out to the
+      per-entity update call that then crashes.
+      **This unifies both this round's remaining walls into one single
+      root cause**: Tênis's own stuck `TTDMM ASSERT` retry loop and
+      Zeeboids' `self=0` crash both trace back to the exact same
+      never-set static gate flag, almost certainly tied to the real
+      semantics of the still-unidentified offset-`0x184` system call
+      (called every time this gate reads zero, argument `50`, an
+      `ms`-shaped yield/poll/sleep). Whatever that real call is
+      supposed to do on real hardware -- most plausibly something that
+      eventually flips this exact flag -- is the one missing piece this
+      investigation would need to resolve to unblock *both* titles at
+      once, not two separate problems. Real system-service semantics,
+      not guessed at further this round for the same reason noted
+      above. All temporary instrumentation reverted, 391/391 tests pass
+      unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
