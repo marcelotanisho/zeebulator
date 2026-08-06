@@ -4275,6 +4275,38 @@ playable start-to-finish at full speed, standalone build.
       tick work exceeding the interpreter's step budget, a
       performance/tooling question, not a correctness bug.
 
+      **Measured the size of that remaining wall, same session
+      (exploratory only, not committed).** Tênis's own precedent
+      tested a 20x step budget (100M) and found real, if incomplete,
+      progress. Zeeboids' own real tick 1 (the very first tick after
+      reaching the event loop -- tick 0 is cheap and returns almost
+      immediately) is dramatically larger: still hadn't returned at
+      **2,000,000,000 steps** (400x the 5M default, 41 real seconds of
+      interpreting -- confirming this interpreter's own raw throughput,
+      not slowness, isn't the bottleneck here). Sampled one of the
+      repeating HLE call args (`trap=0xf000072c`'s own `r3`) across the
+      full run: **4,700 distinct values**, ending in a steady, real,
+      linear climb (`...b06c0000 -> b0700000 -> b0740000 -> b0780000 ->
+      b07c0000`, fixed `0x40000` steps) right up to the cutoff --
+      genuine forward movement, not a stuck/oscillating loop, but of
+      large and, from this evidence alone, unknown total magnitude (no
+      confirmed terminal value reached even at 2B steps). This is
+      real, legitimate, still-progressing work, just far past the
+      point where any single, larger *static* step-budget constant
+      would be a defensible permanent default (it would either still
+      be too small for this title, or needlessly inflate every other
+      title's own worst-case guard against a truly stuck loop).
+      Reverted the exploratory budget change (`git diff` on
+      `tools/game_probe.cpp` clean); this is exactly the interpreter-
+      throughput scenario Phase 11 already anticipates ("Revisit JIT
+      performance work if new titles expose interpreter bottlenecks")
+      rather than a per-title tooling tweak. **Net status for this
+      session**: Zeeboids and Volei no longer crash or wander at all
+      (a real, committed, tested fix) -- what stands between that and
+      actually reaching playable gameplay is now purely this
+      interpreter-throughput wall, not any further identified
+      correctness bug.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
