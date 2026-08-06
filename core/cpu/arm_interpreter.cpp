@@ -1101,6 +1101,24 @@ void ArmInterpreter::Step() {
           uint32_t rd = (instr >> 12) & 0xF;
           uint32_t rm = instr & 0xF;
           regs_[rd] = static_cast<uint32_t>(std::countl_zero(ReadOperandRegister(rm)));
+        } else if ((instr & 0x0FF0F090) == 0x01600080) {
+          // SMULxy Rd, Rm, Rs: cond 0001 0110 Rd 0000 Rs 1yx0 Rm -- real
+          // ARMv5TE DSP signed 16x16 multiply, sharing this same
+          // "miscellaneous" encoding space. Found live in Zeeboids (a
+          // per-entity update routine): x/y (bits 5/6) each pick the
+          // bottom or top halfword of Rm/Rs respectively; both are
+          // sign-extended to 32 bits before multiplying, and (unlike
+          // SMLAxy) there's no accumulate term and flags are untouched.
+          uint32_t rd = (instr >> 16) & 0xF;
+          uint32_t rs = (instr >> 8) & 0xF;
+          uint32_t rm = instr & 0xF;
+          bool y = (instr >> 6) & 1;
+          bool x = (instr >> 5) & 1;
+          uint32_t rm_val = ReadOperandRegister(rm);
+          uint32_t rs_val = ReadOperandRegister(rs);
+          int32_t rm_half = static_cast<int16_t>(x ? (rm_val >> 16) : (rm_val & 0xFFFF));
+          int32_t rs_half = static_cast<int16_t>(y ? (rs_val >> 16) : (rs_val & 0xFFFF));
+          regs_[rd] = static_cast<uint32_t>(rm_half * rs_half);
         } else {
           throw UnimplementedInstruction(
               "Miscellaneous instruction space (MRS/MSR/etc.)");

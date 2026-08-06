@@ -447,6 +447,39 @@ TEST(Cpu, ClzOfZeroReturnsThirtyTwo) {
   EXPECT_EQ(cpu.GetRegister(kR2), 32u);
 }
 
+TEST(Cpu, SmulbbMultipliesBottomHalfwordsSignExtended) {
+  // SMULxy shares the same "miscellaneous instructions" encoding space
+  // as MRS/MSR/BX/BLX/CLZ (cond 0001 0110 Rd 0000 Rs 1yx0 Rm) -- real
+  // ARMv5TE DSP instruction, found live in Zeeboids' own per-entity
+  // update code. SMULBB (y=0, x=0): both operands' bottom 16 bits.
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0xFFFF8000);  // low half = -32768
+  cpu.SetRegister(kR3, 0x00000002);  // low half = 2
+  cpu.GetMemory().Write32(0, 0xE1620381);  // SMULBB R2, R1, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0xFFFF0000u) << "-32768 * 2 = -65536";
+}
+
+TEST(Cpu, SmultbMultipliesTopRmByBottomRs) {
+  // SMULBT (y=0, x=1): Rm's top halfword, Rs's bottom halfword.
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0xFFFF0000);  // top half = -1
+  cpu.SetRegister(kR3, 0x00000005);  // low half = 5
+  cpu.GetMemory().Write32(0, 0xE16203A1);  // SMULBT R2, R1, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0xFFFFFFFBu) << "-1 * 5 = -5";
+}
+
+TEST(Cpu, SmulttMultipliesTopHalfwordsSignExtended) {
+  // SMULTT (y=1, x=1): both operands' top 16 bits.
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR1, 0x80000000);  // top half = -32768
+  cpu.SetRegister(kR3, 0x00020000);  // top half = 2
+  cpu.GetMemory().Write32(0, 0xE16203E1);  // SMULTT R2, R1, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0xFFFF0000u) << "-32768 * 2 = -65536";
+}
+
 TEST(Cpu, BranchWithLinkExchangeSetsLrAndJumps) {
   ArmInterpreter cpu;
   cpu.SetRegister(kPC, 0x1000);

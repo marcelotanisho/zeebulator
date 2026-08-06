@@ -912,9 +912,61 @@ int main(int argc, char** argv) {
   // 8). The fallback class this stub existed for is dead code anyway:
   // `0x0103d8ec` is itself an always-succeeding stub, so real code
   // never actually reaches the ClsId 0x01014bc4 fallback branch at all.
-  // Only `0x0103d8ec` needs a scaffold here.
-  uint32_t unknown_0x0103d8ec_obj = zeebulator::BuildGenericStubObject(
-      cpu.GetMemory(), hle, /*vtable=*/0x80040000, /*object=*/0x80041000, /*slot_count=*/40);
+  // Two of this scaffold's slots need more than the blind `Stub`
+  // treatment, found live tracing why Zeeboids/Zeebo Sports Volei (the
+  // "Crazyball engine" siblings, TASKS.md) both wandered into unmapped
+  // memory from an uninitialized object field, tens of thousands of
+  // real steps into their own per-entity init code:
+  // Slot 4 is a real "Register(this, interface_ptr, &out)"-shaped call
+  // -- `zeeboids.mod` 0x191700 calls it with the real interface pointer
+  // obtained one call earlier via the device-bitmap's own
+  // `QueryInterface(0x01001045)` override above, then treats a non-zero
+  // *out as a real success. The blind `Stub` never wrote *out, so this
+  // always read back zero -- confirmed live to be exactly the value
+  // that, threaded through two more real per-object fields, ends up as
+  // a null vtable pointer dereferenced at the real crash site
+  // (`zeeboids.mod` 0x1783e8). Echoing the interface pointer back
+  // through its own out-param (the same "you get back what you handed
+  // in" shape as slot 2's QueryInterface convention) fixed that half.
+  // Slot 5 turned out to be a second, independent check on the same
+  // result (`zeeboids.mod` 0x19171c calls it, expecting the literal
+  // value `1` written to a 5th, stack-passed out-param) -- initially
+  // looked like it might be real, un-mockable in-module type
+  // verification (a real global "class registry" object this
+  // scaffold's own object address happens to get cached into, at
+  // `[registry+8]`), but live-tracing the actual call target (not
+  // guessing from static disassembly) showed it resolves right back to
+  // *this same scaffold*, via its own trap address -- i.e. it's this
+  // project's own object being asked, through its own vtable, to
+  // confirm something about itself. Writing the literal `1` through
+  // that 5th out-param is what the caller's own `cmp r0,#1` requires.
+  // Verified live (game_probe run, not guessed): both titles now run
+  // clean through the real per-frame tick loop -- no more wandering
+  // or unimplemented-instruction crashes -- until they hit the same
+  // step-budget wall Zebo Sports Tênis's own long-but-real per-tick
+  // work already established as "legitimately long, not a bug"
+  // (TASKS.md).
+  std::vector<zeebulator::HleRuntime::HleFunction> unknown_0x0103d8ec_methods(
+      40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
+  unknown_0x0103d8ec_methods[4] = [&cpu](zeebulator::IArmCore& core) {
+    uint32_t interface_ptr = core.GetRegister(zeebulator::kR1);
+    uint32_t out_ptr = core.GetRegister(zeebulator::kR2);
+    if (out_ptr != 0) {
+      cpu.GetMemory().Write32(out_ptr, interface_ptr);
+    }
+    core.SetRegister(zeebulator::kR0, 0);
+  };
+  unknown_0x0103d8ec_methods[5] = [&cpu](zeebulator::IArmCore& core) {
+    uint32_t sp = core.GetRegister(zeebulator::kSP);
+    uint32_t out_ptr = cpu.GetMemory().Read32(sp);
+    if (out_ptr != 0) {
+      cpu.GetMemory().Write32(out_ptr, 1);
+    }
+    core.SetRegister(zeebulator::kR0, 0);
+  };
+  uint32_t unknown_0x0103d8ec_obj = zeebulator::BuildInterfaceObject(
+      cpu.GetMemory(), hle, /*vtable_address=*/0x80040000, /*object_address=*/0x80041000,
+      unknown_0x0103d8ec_methods);
   shell_hle.RegisterInstance(0x0103d8ec, unknown_0x0103d8ec_obj);
   // The third class, ClsId 0x01030766 (`peggle.mod` offset
   // 0x10a208-0x10a24c), is reached via a real IShell pointer stored at

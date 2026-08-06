@@ -4224,6 +4224,57 @@ playable start-to-finish at full speed, standalone build.
       scoped sub-tasks, not more of this round's own live-tracing-only
       approach.
 
+      **Resolved, same session -- the "real class registry" wasn't
+      real guest code at all.** Picked the concrete next step back up
+      and live-traced the actual call target at `0x1a7a84` (the `blx
+      ip` this whole chain builds up to) instead of reasoning from
+      static disassembly: `ip` resolved to `0xf0000674` -- an HLE trap,
+      not real module code -- and the object it's dispatching through
+      (`r0=0x80041000`) is *this project's own* `unknown_0x0103d8ec_obj`
+      scaffold. The "real class registry" is a real, global cache
+      inside `zeeboids.mod` (address `0x000ac654`) that stores whatever
+      object this harness most recently registered for ClsId
+      `0x0103d8ec` -- so the "type check" the previous entry couldn't
+      safely fake around turned out to be this project's own scaffold
+      being asked, through its own vtable slot 5, to confirm something
+      about itself, not an unknown real object's structure. Slot 5
+      expects the literal `1` written through a 5th, stack-passed out-
+      param (`str r3,[sp]` at the real call site, confirmed live) --
+      the same "blind `Stub` never writes out-params" gap as slot 4.
+      Overriding both (kept alongside slot 4's already-tested fix; see
+      `tools/game_probe.cpp`'s own doc comment on this scaffold for the
+      full derivation) **made both Zeeboids and Zeebo Sports Volei run
+      clean through their real per-frame tick loop** -- confirmed live,
+      both titles now just hit the same step-budget wall Tênis's own
+      long-but-real per-tick work already established as legitimate,
+      not any further wander or unimplemented-instruction crash.
+      **That same clean run surfaced one more real, separate gap**,
+      previously masked by the earlier crash happening first: `SMULBB`
+      (`cond 0001 0110 Rd 0000 Rs 1yx0 Rm`), a real ARMv5TE signed
+      16x16 halfword multiply sharing the CLZ/MRS/MSR/BX "miscellaneous
+      instructions" encoding space. Implemented the full `SMULxy`
+      family (`BB`/`BT`/`TB`/`TT`, selected by the encoding's own free
+      `x`/`y` bits) in `core/cpu/arm_interpreter.cpp`, matching the
+      real ARM ARM semantics (sign-extend the selected 16-bit half of
+      each operand, multiply, no accumulate/flags for this variant) --
+      3 new tests in `tests/cpu_test.cpp` covering all three distinct
+      half-selection combinations. Confirmed via live A/B testing that
+      *both* fixes are required together (the CPU fix alone still hits
+      the earlier crash first; the HLE fix alone still hits `SMULBB`
+      as an unimplemented instruction once the earlier wander is gone).
+      Verified no regressions: Double Dragon still reaches the event
+      loop and correctly restores a save state (audio included) with
+      the shared `unknown_0x0103d8ec_obj` scaffold now behaving
+      differently; 396/396 tests pass (393 prior + 3 new `SMULxy`
+      tests). Both fixes committed as permanent (not reverted --
+      unlike the previous round's now-superseded guesses, both are
+      fully evidence-grounded: the HLE fix targets this project's own
+      object confirmed live, and the CPU fix matches documented ARM
+      semantics exactly). Remaining wall for both titles is now
+      identical in shape to Tênis's own: real, legitimately long per-
+      tick work exceeding the interpreter's step budget, a
+      performance/tooling question, not a correctness bug.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
