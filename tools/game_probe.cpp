@@ -871,20 +871,38 @@ int main(int argc, char** argv) {
   // directly later, the same way a real fired ISignal would.
   auto captured_button_callback = std::make_shared<uint32_t>(0);
   auto captured_button_context = std::make_shared<uint32_t>(0);
-  constexpr uint32_t kRealButtonCallbackAddress = 0x0011bdf4;
+  // Was gated on the callback address matching Double Dragon's own real
+  // button-callback address literally (`ddragonz.mod` 0x11bdf4) -- a
+  // real, confirmed identification for that one title, but not a real
+  // general signal: every other title's own compiled code registers
+  // its own callback at its own, different address, so that check can
+  // never match for anyone else (found live bringing up Alien Breaker
+  // Deluxe: `CreateSignal` genuinely fires, but the address check
+  // silently never captures it, leaving `*captured_button_callback` at
+  // 0 for the rest of the process). The real, general signal -- per
+  // this same doc comment's own reference source
+  // (research/samples/conftest_source/conftest/GamepadMgr.c) -- is
+  // call *order*, not address: real code always registers exactly
+  // three signals through this same slot, in a fixed sequence (device
+  // connect, then button-event, then position-change). Capturing the
+  // second call generalizes to any title using this same real
+  // Signal-factory pattern, not just the one whose address happened to
+  // be reverse-engineered first.
+  auto signal_registration_count = std::make_shared<int>(0);
   std::vector<zeebulator::HleRuntime::HleFunction> signal_cb_factory_methods(
       20, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
-  signal_cb_factory_methods[3] = [captured_button_callback,
-                                   captured_button_context](zeebulator::IArmCore& core) {
+  signal_cb_factory_methods[3] = [captured_button_callback, captured_button_context,
+                                   signal_registration_count](zeebulator::IArmCore& core) {
     // AEEResult CreateSignal(ISignalCBFactory*, IDLECBFUNC pfn, void *pUser,
     //   ISignal **ppISignal, ISignalCtl **ppISignalCtl)
     uint32_t callback = core.GetRegister(zeebulator::kR1);
     uint32_t user_data = core.GetRegister(zeebulator::kR2);
     uint32_t out_signal_ctl = zeebulator::HleRuntime::ReadStackArg(core, 0);
-    if (callback == kRealButtonCallbackAddress) {
+    if (*signal_registration_count == 1) {
       *captured_button_callback = callback;
       *captured_button_context = user_data;
     }
+    ++*signal_registration_count;
     if (out_signal_ctl != 0) {
       // Real code only ever checks this pointer for null/non-null
       // (RegisterFor*Event's own ISignal argument) and calls Detach/
