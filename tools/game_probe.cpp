@@ -1900,6 +1900,52 @@ int main(int argc, char** argv) {
     if (!backend.HasRealGlActivity()) {
       display.RepresentLastFrame();
     }
+    if (std::getenv("ZEEBULATOR_AUTOPRESS")) {
+      // Temporary, env-gated: no OS-level input-automation tool
+      // available in this environment (no xdotool, no passwordless
+      // sudo to install one) -- reuses this file's own already-correct
+      // internal input-injection plumbing (the same paths a real
+      // keypress goes through, same guards included) instead, so
+      // bring-up investigations can probe "does pressing the confirm/
+      // advance button do anything" without a human at the keyboard.
+      // Tries both real input paths every ~2 real seconds, since a new
+      // title's own real dispatch isn't known to depend on either one
+      // specifically yet: the HID path (guarded on
+      // `*captured_button_callback != 0` exactly like the real
+      // keyboard handler above -- unguarded once already, live-caught
+      // when it called through a still-unset, all-zero callback
+      // pointer, that title's own real registration apparently not
+      // having run yet) and the AVK path via `HandleEvent` directly
+      // (always callable once `applet_ptr` exists, real evt/wParam
+      // shape confirmed against Double Dragon).
+      static uint64_t autopress_loop_count = 0;
+      constexpr uint64_t kAutopressEveryNLoops = 120;
+      if (autopress_loop_count % kAutopressEveryNLoops == 0) {
+        if (*captured_button_callback != 0) {
+          InjectHidButtonEvent(kHidUidBack, true);
+          InjectHidButtonEvent(kHidUidBack, false);
+        }
+        if (applet_ptr != 0) {
+          constexpr uint32_t kEvtKeyDown = 0x101;
+          constexpr uint32_t kEvtKeyUp = 0x102;
+          constexpr uint32_t kAvkConfirm = 0xe021;  // SdlKeyToAvk's own "0" key mapping
+          try {
+            CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn, applet_ptr,
+                                    kEvtKeyDown, kAvkConfirm, 0, /*trace=*/false,
+                                    /*hle_trace=*/false, &display, &backend);
+            CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn, applet_ptr,
+                                    kEvtKeyUp, kAvkConfirm, 0, /*trace=*/false,
+                                    /*hle_trace=*/false, &display, &backend);
+          } catch (const std::exception&) {
+            // Caught and ignored here deliberately: this is an
+            // exploratory probe, and a wander/crash here is itself
+            // informative (this AVK code isn't safe for this title),
+            // not something that should take the whole process down.
+          }
+        }
+      }
+      ++autopress_loop_count;
+    }
     // Elapsed-aware, not flat: this loop feeds a fixed kTickMs of
     // *simulated* time into Tick() every iteration, but the real
     // wall-clock cost of a single iteration varies a lot -- most do
