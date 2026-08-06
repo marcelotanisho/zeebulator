@@ -4019,6 +4019,33 @@ playable start-to-finish at full speed, standalone build.
       at its existing 5M default rather than permanently slowing every
       run for one title's own long pole.
 
+      **Traced Zeeboids' own new crash (`zeeboids.mod` 0x1783e8) live,
+      same round.** A live diagnostic caught something important the
+      static disassembly alone missed: `self` (`r5`) at the crashing
+      dereference is `0x816a994c` -- a real, valid, non-null heap
+      pointer, not a null object as the raw crash address's own
+      instruction shape suggested. The real bug is one level more
+      subtle: `[self+0]` (expected to hold a real vtable/interface
+      pointer) is `0`, while `[self+12]`, on the *same* freshly-
+      constructed object, holds a real, valid-looking heap pointer --
+      only part of this object got initialized. Traced that zero
+      field to its own real origin: it's exactly the caller's own
+      original `r0` argument into the object's constructor
+      (`zeeboids.mod` 0x17e50c), which was itself `0` at that call --
+      tracing back further, that traces to *another* field
+      (`[outer_r4+132]`) on a *different*, outer object, presumably
+      itself waiting on some earlier real initialization this harness
+      hasn't triggered yet. A real, evidenced chain, not a guess -- but
+      genuinely deep, multi-object, Zeeboids-specific territory (at
+      least 3 nested real functions: `0x1783cc`, `0x17e50c`,
+      `0x182800`'s own caller) that would benefit from its own focused
+      round (most promisingly, a live write watchpoint on
+      `[outer_r4+132]` itself, mirroring the technique that
+      successfully found the TTDMM gate flag's own real writer earlier
+      in this same investigation) rather than continuing to trace by
+      hand this late in an already long session. All temporary
+      instrumentation reverted, 393/393 tests pass unchanged.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
