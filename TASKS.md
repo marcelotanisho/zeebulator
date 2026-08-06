@@ -3852,16 +3852,37 @@ playable start-to-finish at full speed, standalone build.
       value decodes into exactly that instruction-encoding space) this
       is a literal jump to `tools/game_probe.cpp`'s own
       `kAppStartAddr+4` scratch address (the `AEEAppStart.clsApp`
-      field), not real module code. Reads as a scratch-memory address
-      collision in this harness's own layout -- the same *class* of bug
-      already found and fixed once before in this project's Peggle
-      investigation (two unrelated dynamic-object-address counters
-      colliding). Not yet confirmed which two harness-assigned regions
-      are colliding here. **Left unresolved this round** -- concrete
-      next step is a live watchpoint on `kAppStartAddr+4` (or a broader
-      scan of `tools/game_probe.cpp`'s own fixed scratch addresses for
-      anything landing in the same range) to find what's really being
-      called instead. 391/391 tests pass.
+      field), not real module code.
+      **Follow-up, same round: ruled out the simple "collision" theory.**
+      A narrow-PC-gated diagnostic (fires only when `pc==0x90024`,
+      before any exception unwinding) shows this address is actually
+      reached **three separate times** from **three different, unrelated
+      real call sites** (three distinct `lr` values) before the crash --
+      the first two survive (whatever real code lives at `0x90024` at
+      that moment apparently decodes as something harmless), only the
+      third throws. One of the three call sites is a clean, textbook
+      real C++ virtual dispatch (`ldr r1,[r0]; ldr r1,[r1]; blx r1` --
+      read vtable pointer, read slot 0, call it) at `zeeboids.mod`
+      0x1a0648, reached from a real per-entity update loop. A whole-run
+      write watchpoint on `kAppStartAddr+4` itself found exactly **one**
+      real write, ever: this harness's own one-time initialization
+      (`mem.Write32(kAppStartAddr + 4, cls_id)`) -- nothing in the game's
+      own code writes there. So this isn't a stored-pointer-reuse bug
+      (real code isn't caching and later misreading *this* field) --
+      three unrelated places are each independently *computing* the
+      value `0x90024` from their own, different data, landing on this
+      harness's fixed scratch constant seemingly by coincidence of
+      value, not by aliasing the same memory. Still reads as some kind
+      of scratch/address-space collision, but a subtler one than the
+      Peggle precedent (not two fixed regions overlapping in guest
+      memory -- more likely something computes an offset from a base
+      that isn't where real hardware would put it, or a real vtable
+      slot this harness leaves zeroed/wrong). **Left unresolved this
+      round** -- concrete next step is picking one of the three real
+      call sites (the clean virtual-dispatch one at `0x1a0648` is the
+      best-evidenced starting point) and tracing backward to find where
+      its own vtable pointer field actually comes from. All temporary
+      instrumentation reverted, 391/391 tests pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
