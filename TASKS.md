@@ -4307,6 +4307,40 @@ playable start-to-finish at full speed, standalone build.
       interpreter-throughput wall, not any further identified
       correctness bug.
 
+- [ ] **Checked whether Zebo Sports Tênis's own long-tick wall (this
+      file's earlier entry, "not a dead loop, just long real work") is
+      the same shape as Zeeboids/Volei's -- it is, and worse.** Tested
+      the same exploratory bigger-budget approach: tick 1 alone still
+      hadn't returned at 2 billion steps (71 real seconds), roughly the
+      same order of magnitude as Zeeboids. Live-traced a concrete,
+      well-evidenced hypothesis before assuming this needs raw
+      interpreter throughput work: the repeating HLE calls' own trap
+      address (`0xf000001c`) maps to `ModRuntime`'s `get_uptime_ms_fn`
+      (7th registered HLE function) -- and that function's own doc
+      comment already flags its "1ms per read" self-advance rate as
+      "inferred, not measured." A live diagnostic at the real call site
+      (`zeebotennis.mod` 0x127624, found via the caller's own `lr`)
+      confirmed a real, tight, `elapsed = now - lastCheck`-shaped loop,
+      settling into >2.5 million iterations of that one call site alone
+      within the sampled window -- a real, evidenced lead, not a guess.
+      **Tested it directly**: temporarily bumped the self-advance rate
+      1000x, then 1,000,000x (a full simulated real second per read).
+      Neither converged -- the 1,000,000x version still exhausted a
+      500M-step budget, and did so with *far fewer* total HLE calls
+      logged than before, meaning most of the remaining time is spent
+      in dense in-module ARM computation between calls, not in
+      additional clock polls. **This rules the busy-wait theory out as
+      the primary driver** (a real, useful negative result, not a
+      wasted round -- confirms this isn't a simple calibration fix).
+      Reverted both experiments (`core/brew/mod_runtime.cpp` and
+      `tools/game_probe.cpp` both clean against the pre-round
+      baseline); 396/396 tests pass. **Conclusion**: Tênis's own wall
+      is not smaller or more tractable than Zeeboids/Volei's after all
+      -- all three "Crazyball engine" titles now point at the same
+      real interpreter-throughput bottleneck (Phase 11's own
+      already-anticipated JIT work), not a per-title quirk fixable by
+      recalibrating one HLE stub.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
