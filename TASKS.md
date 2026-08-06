@@ -3773,18 +3773,45 @@ playable start-to-finish at full speed, standalone build.
       matter if so -- it would presumably also hang on real hardware)
       or specific to something this harness lays out differently
       (memory layout, resource load order/count, or a hash input that
-      happens to differ) isn't determined yet -- the offset-`0x184`
-      slot's own real semantics (called with a single `ms`-shaped
-      argument, `50`, return value unchecked at this call site -- a
-      different shape than Super BurgerTime's own `(flag=1, 0, table)`
-      call) are also still unidentified, and could plausibly matter
-      here despite looking like fire-and-forget. **Left unresolved this
-      round** -- concrete next step is identifying the real hash
-      function/table this code is indexing into (starting from
-      `zeebotennis.mod` 0x1047f0's own field reads) to see whether it's
-      fed by something this harness's own resource/memory layout
-      controls. All temporary instrumentation reverted, 391/391 tests
-      pass unchanged.
+      happens to differ) isn't determined yet.
+
+      **Correction + real gate found (sixth round).** The `0x1047dc`
+      hash-collision function traced above turned out to be a red
+      herring for the *live, repeating* loop specifically -- a targeted
+      PC-gated diagnostic confirmed its own comparison instruction is
+      never reached at all during the actual hang (0 hits across a full
+      run). The real, repeating call site is a *different* one of
+      offset `0x184`'s ~11 real call sites: `zeebotennis.mod 0x10520c`
+      onward. There, a real, explicit guard -- `cmp r0,#0; bne
+      0x105288` on `[r5+4]` (`r5` a real, ROPI-relocated static context
+      pointer) -- skips the entire assert-log-then-`sleep(50)`-then-
+      retry sequence whenever `[r5+4]` is nonzero; it's the loop's own
+      real exit condition. Live-verified this is the actual gate (not
+      another false lead): sampled across 78 real loop iterations,
+      `[r5+4]` reads exactly `0` every single time.
+      **Then answered the obvious follow-up with a whole-run memory
+      watchpoint** (temporary, on `Memory::Write8`, the established
+      technique from this same project's own Peggle/Super BurgerTime
+      watchpoint precedent): does *anything* in the whole module ever
+      write this address? Yes -- but only **twice**, both **during
+      startup**, both writing **`0`** -- i.e. it's zero-initialized once
+      and never touched again by any code in the entire module for the
+      rest of the run. Nothing internal to this title's own compiled
+      code can make this loop exit. The only real candidate left to set
+      it is whatever the still-unidentified offset-`0x184` system call
+      (called every single iteration, argument `50`, most likely an
+      `ms`-shaped yield/poll/sleep) does on real hardware as a side
+      effect -- but its calling convention alone (a single integer
+      argument, no reference to `[r5+4]`'s own address) doesn't reveal
+      what that side effect is, and guessing at a whole system service's
+      real behavior risks the same silent-corruption trap this
+      investigation has been careful to avoid throughout (see the
+      earlier `strncpy` vs. `strncat` correction). **This is the same
+      shape of wall Peggle (needs real BREW MP SDK header knowledge) and
+      Super BurgerTime (needs real, separate copyrighted ROM dumps) each
+      hit** -- a real gap this project doesn't have enough evidence to
+      close safely yet, not a bug in anything implemented so far. All
+      temporary instrumentation reverted, 391/391 tests pass unchanged.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
