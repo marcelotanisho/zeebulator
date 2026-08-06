@@ -29,18 +29,17 @@ void AppendU16LE(std::vector<uint8_t>& out, uint16_t v) {
 }
 
 // Builds a well-formed synthetic BAR archive: real 32-byte header, the
-// real resource-ID directory (a 16-byte sub-header, here left zeroed,
-// plus one 8-byte record per `resource_ids`), the real offset table
-// (entry_count offsets + one file-size sentinel), then the resources
-// themselves back to back -- matching every structural element
-// confirmed against the real file (core/loader/bar.h has the full
-// layout writeup).
+// real resource-ID directory (straight 8-byte records per
+// `resource_ids`, no sub-header -- see bar.h's own doc comment on why
+// there isn't one), the real offset table (entry_count offsets + one
+// file-size sentinel), then the resources themselves back to back --
+// matching every structural element confirmed against real files
+// (core/loader/bar.h has the full layout writeup).
 std::vector<uint8_t> BuildBar(const std::vector<std::vector<uint8_t>>& resources,
                                const std::vector<BarResourceId>& resource_ids = {}) {
   constexpr uint32_t kHeaderSize = 32;
-  constexpr uint32_t kSubHeaderSize = 16;
   uint32_t table1_start = kHeaderSize;
-  uint32_t table1_size = kSubHeaderSize + static_cast<uint32_t>(resource_ids.size()) * 8;
+  uint32_t table1_size = static_cast<uint32_t>(resource_ids.size()) * 8;
   uint32_t table_start = table1_start + table1_size;
   uint32_t entry_count = static_cast<uint32_t>(resources.size());
   uint32_t data_start = table_start + (entry_count + 1) * 4;
@@ -63,7 +62,6 @@ std::vector<uint8_t> BuildBar(const std::vector<std::vector<uint8_t>>& resources
   AppendU32LE(out, entry_count);
   AppendU32LE(out, data_start);
   AppendU32LE(out, data_size);
-  out.resize(table1_start + kSubHeaderSize, 0);  // the real, unparsed sub-header
   for (const BarResourceId& r : resource_ids) {
     AppendU16LE(out, r.type);
     AppendU16LE(out, r.requested_id);
@@ -127,9 +125,10 @@ TEST(Bar, DecreasingOffsetTableIsRejected) {
   auto blob = BuildBar({{1, 2, 3, 4}, {5, 6, 7, 8}});
   // Overwrite the second offset-table entry with something smaller
   // than the first, so it actually goes backwards (table starts right
-  // after the 32-byte header + 16-byte table1). Equal (not smaller) is
-  // legitimate -- see ZeroLengthEntryFromEqualConsecutiveOffsetsIsAccepted.
-  size_t table_start = 32 + 16;
+  // after the 32-byte header; no resource IDs requested here, so
+  // table1 is empty). Equal (not smaller) is legitimate -- see
+  // ZeroLengthEntryFromEqualConsecutiveOffsetsIsAccepted.
+  size_t table_start = 32;
   uint32_t first_offset;
   std::memcpy(&first_offset, blob.data() + table_start, 4);
   uint32_t smaller = first_offset - 1;
@@ -161,6 +160,25 @@ TEST(Bar, FindResolvesARealTypeIdPairToTheCorrectEntry) {
   const BarEntry* found = archive.Find(1, 4000);
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(archive.Extract(*found), res2);
+}
+
+TEST(Bar, FindResolvesTheVeryFirstDirectoryRecordWithNoSkippedBytes) {
+  // Real, shipped title evidence, not a synthetic edge case: the first
+  // 8 bytes of the resource-ID sub-table were originally believed to
+  // be part of an unconfirmed, skipped 16-byte sub-header -- wrong
+  // (see bar.h's own doc comment): both real samples this project has
+  // (Alien Breaker Deluxe, Peggle) decode those bytes as real,
+  // sensible records too. This exercises exactly that: a real record
+  // at index 0 (the bytes that used to be silently discarded) must
+  // resolve correctly, not just later ones.
+  std::vector<uint8_t> res0 = {'a'};
+  std::vector<uint8_t> res1 = {'b', 'b'};
+  auto blob = BuildBar({res0, res1}, {BarResourceId{1, 3000, 0, 0}, BarResourceId{1, 9000, 0, 1}});
+  auto archive = BarArchive::Parse(blob);
+
+  const BarEntry* found = archive.Find(1, 3000);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(archive.Extract(*found), res0);
 }
 
 TEST(Bar, FindReturnsNullForAnUnlistedTypeIdPair) {

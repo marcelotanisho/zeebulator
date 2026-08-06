@@ -18,7 +18,6 @@ uint16_t ReadU16LE(const uint8_t* p) {
   return static_cast<uint16_t>(p[0]) | static_cast<uint16_t>(static_cast<uint16_t>(p[1]) << 8);
 }
 
-constexpr uint32_t kResourceIdSubHeaderSize = 16;
 constexpr uint32_t kResourceIdRecordSize = 8;
 
 }  // namespace
@@ -78,17 +77,24 @@ BarArchive BarArchive::Parse(std::vector<uint8_t> data) {
     archive.entries_.push_back(BarEntry{offsets[i], offsets[i + 1] - offsets[i]});
   }
 
-  // The resource-ID directory: a fixed 16-byte sub-header (unconfirmed,
-  // not needed) followed by 8-byte records.
-  if (table1_size < kResourceIdSubHeaderSize ||
-      (table1_size - kResourceIdSubHeaderSize) % kResourceIdRecordSize != 0) {
+  // The resource-ID directory: straight 8-byte records from the very
+  // start of table1, no sub-header at all -- see bar.h's own doc
+  // comment for how the previous "16-byte sub-header" theory was found
+  // to be wrong (those 16 bytes decode as two more real, sensible
+  // records in both real samples this project has: Alien Breaker
+  // Deluxe's own id=9001->entry 0 and id=9037->entry 30, and Peggle's
+  // own id=3000->entry 0 (a real MP3) and id=9000->entry 46 (a real
+  // 32768-byte texture block, matching this same file's own already-
+  // documented texture-block shape) -- not two coincidental false
+  // positives, real evidence the original 16-byte skip was silently
+  // discarding real directory entries this whole time.
+  if (table1_size % kResourceIdRecordSize != 0) {
     throw std::runtime_error("BAR: resource-ID sub-table size doesn't fit whole records");
   }
-  uint32_t resource_id_count =
-      (table1_size - kResourceIdSubHeaderSize) / kResourceIdRecordSize;
+  uint32_t resource_id_count = table1_size / kResourceIdRecordSize;
   archive.resource_ids_.reserve(resource_id_count);
   for (uint32_t i = 0; i < resource_id_count; ++i) {
-    const uint8_t* rec = d + table1_start + kResourceIdSubHeaderSize + i * kResourceIdRecordSize;
+    const uint8_t* rec = d + table1_start + i * kResourceIdRecordSize;
     BarResourceId res_id;
     res_id.type = ReadU16LE(rec + 0);
     res_id.requested_id = ReadU16LE(rec + 2);

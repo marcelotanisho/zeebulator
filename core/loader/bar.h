@@ -54,24 +54,39 @@ struct BarResourceId {
 //              (file size minus offset 24; also a redundant check)
 //
 // At offset 32: a first sub-table (`offset 12` bytes long, real length
-// 496 in the one sample seen), now solved -- **this is the real
+// 496 in the Peggle sample), now solved -- **this is the real
 // resource-ID directory `ISHELL_LoadResDataEx(pIShell, pszResFile,
-// wResID, resType, buffer, pnLen)` needs**: a 16-byte sub-header (still
-// unconfirmed -- not needed to use the directory correctly) followed by
-// `(offset 12 - 16) / 8` real, 8-byte records: `{uint16 type; uint16
-// requested_id; uint16 unknown; uint16 entry_index}`. Confirmed exactly
-// against a real, live `peggle.mod` call site (traced via a full
-// instruction trace, TASKS.md Phase 8): real code calls
-// `ISHELL_LoadResDataEx(shell, "resources.bar", id=4000, type=1, ...)`,
-// and this directory's own one `type=1` record reads `{1, 4000, 3,
-// 304}` -- entry **304** decodes (independently, before this directory
-// was even understood) to a real, legible localized UI string
-// (`"English^Español^Portugu..."`), an exact, non-coincidental match.
-// The other 59 records (all `type=6`, `requested_id` 1000-6000,
+// wResID, resType, buffer, pnLen)` needs**: `(offset 12) / 8` real,
+// straight 8-byte records from the very start of this sub-table (no
+// sub-header at all -- see below), each `{uint16 type; uint16
+// requested_id; uint16 unknown; uint16 entry_index}`. One record
+// confirmed exactly against a real, live `peggle.mod` call site
+// (traced via a full instruction trace, TASKS.md Phase 8): real code
+// calls `ISHELL_LoadResDataEx(shell, "resources.bar", id=4000, type=1,
+// ...)`, and this directory's own one `type=1` record reads `{1, 4000,
+// 3, 304}` -- entry **304** decodes (independently, before this
+// directory was even understood) to a real, legible localized UI
+// string (`"English^Español^Portugu..."`), an exact, non-coincidental
+// match. Most of the rest (`type=6`, `requested_id` 1000-6000,
 // `entry_index` 58-249) are presumed image-resource lookups given the
 // image-heavy makeup of this archive's own entries, though not
 // individually cross-checked the same way. The third field's meaning
 // remains unconfirmed (preserved, not interpreted).
+//
+// This sub-table's own first 16 bytes were originally believed to be
+// an unconfirmed, skipped sub-header -- wrong, found bringing up a
+// second real title (Alien Breaker Deluxe, TASKS.md): those bytes
+// decode as two more real, sensible 8-byte records in *both* real
+// samples this project has, not two coincidental false positives.
+// Alien Breaker Deluxe's own real code requests a resource by an ID
+// that only resolves once this fix is in (previously silently
+// discarded as "header" bytes); Peggle's own first two "header" bytes
+// decode to `id=3000->entry 0` (a real MP3 file) and `id=9000->entry
+// 46` (a real 32768-byte raw texture block, matching this same file's
+// own already-documented texture-block shape one paragraph below) --
+// real, meaningful resources, not padding. The 16-byte skip was
+// silently discarding real directory entries in every title parsed so
+// far, not just the one that happened to surface it.
 //
 // At the real offset table (`offset 16`): `offset 20` consecutive
 // uint32 LE *absolute file offsets*, strictly increasing, one per real
@@ -113,7 +128,7 @@ class BarArchive {
   // `(type, id)` request resolves to via the real resource-ID
   // directory, or nullptr if no directory record matches (a real,
   // possible outcome -- not every real resource in the file necessarily
-  // has a directory entry pointing at it, since only 60 of this
+  // has a directory entry pointing at it, since only 62 of the Peggle
   // sample's 308 real entries are covered).
   const BarEntry* Find(uint16_t type, uint16_t id) const;
 
