@@ -4153,6 +4153,77 @@ playable start-to-finish at full speed, standalone build.
       treat `0x0103d8ec` itself as the answer. 393/393 tests pass
       (investigation only, no code changes this round).
 
+      **Followed that concrete next step, live, against Zeeboids --
+      found the real gate, one level deeper than `0x0103d8ec` itself.**
+      Dumped the scaffold's own vtable (temporary, reverted) to confirm
+      exactly which of its 40 slots real code calls: slot 2
+      (QueryInterface-shaped, asked about `0x0103d8dd`/`0x0103d8ea`),
+      slot 4 ("Register"-shaped -- takes the real interface pointer
+      obtained one call earlier via the device-bitmap's own
+      `QueryInterface(0x01001045)` override, plus an out-param), slot 9
+      (takes a freshly `malloc`'d 0x80-byte block), slot 16 (all-zero
+      args). **Tried overriding slot 9 first** on the plausible-looking
+      theory that this freshly allocated block was the object later
+      null-vtable-dispatched at the real crash site (`zeeboids.mod`
+      0x1783e8) -- verified live this changed *nothing whatsoever*
+      (byte-identical crash, same exact step count), which is exactly
+      what ruled it out. **Slot 4 was the real one**: a live diagnostic
+      at `0x1783e8` confirmed `self` is the same real, valid heap
+      pointer earlier rounds found (`0x816a994c`), and traced `[self+0]`
+      one more hop than before -- it's populated (or not) by
+      `zeeboids.mod` 0x191704's own check on the return value of
+      `0x1a7918` (the same lookup/register function from the prior
+      round, called this time with key `r1=0x80003000`, the real
+      `IDisplay` object -- confirmed live). Overriding slot 4 to echo
+      the registered interface pointer back through its own out-param
+      (a plausible, evidence-shaped "you get back what you handed in"
+      guess, not invented from nothing) **did make `0x1a7918` return
+      non-zero for the first time** (`0x80019000`, confirmed live) --
+      real, measurable forward progress, a new HLE call (slot 5) even
+      starts firing that never did before. **But the crash is still
+      identical.** Traced one hop further to find out why: the caller
+      (`zeeboids.mod` 0x19171c) doesn't trust `0x1a7918`'s non-zero
+      result on its own -- it immediately runs a *second*, independent
+      check (`bl 0x1a7a48`) and only accepts the result if that returns
+      exactly `1`. `0x1a7a48` is a real, in-module type-verification
+      call: it loads a real global "class registry" object (address
+      `0x000ac654`, confirmed live -- the same literal `0x1a7918`
+      itself already reads at start-up as its own early-exit gate) and
+      dispatches through *that* object's own real vtable slot 5,
+      passing our candidate object as the argument -- a real,
+      compiled-in "is this genuinely an instance of the expected class"
+      check, not an HLE call this project could stub around. Since the
+      candidate object here is `unknown_0x01001045_obj` -- this
+      project's own totally generic, empty scaffold (every slot a
+      no-op `Stub`, no real internal fields at all) -- it cannot
+      plausibly pass a real structural type check the way a genuine
+      object of whatever real class `0x01001045` is would. **This
+      reframes the wall one more level, concretely**: it's not that
+      `0x0103d8ec`'s own out-param is missing (that part's fix helped,
+      confirmed live) -- it's that *every* object this harness hands
+      back for still-unidentified real classes is a structurally empty
+      shell, and real compiled code in this title genuinely, actively
+      checks for that (not just trusting whatever's returned the way
+      `0x198bbc`'s "always log and succeed" pattern does elsewhere).
+      Passing this specific check for real would mean reverse-
+      engineering the real internal layout of whatever class
+      `0x01001045` truly is -- a materially bigger, dedicated task,
+      not something this round's live-tracing method alone can safely
+      guess at (this project's own established `strncpy`/`strncat`
+      correction is exactly the cautionary precedent for guessing at
+      structure instead of confirming it). Reverted the slot-4 override
+      (and all four temporary diagnostics) rather than keep an
+      unproven behavior change on a scaffold class shared globally with
+      Peggle's own, currently-working use of it -- 393/393 tests pass,
+      `git diff` on `tools/game_probe.cpp` clean against the pre-round
+      baseline. Concrete next step for a dedicated round: reverse-
+      engineer the real internal shape whatever real class `0x01001045`
+      is (or find and implement the real class registry itself, at
+      module address `0x000ac654`, if that turns out to be the more
+      tractable side of this same check) -- both genuinely new,
+      scoped sub-tasks, not more of this round's own live-tracing-only
+      approach.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
