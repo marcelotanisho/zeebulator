@@ -4341,6 +4341,107 @@ playable start-to-finish at full speed, standalone build.
       already-anticipated JIT work), not a per-title quirk fixable by
       recalibrating one HLE stub.
 
+- [ ] **Picked a seventh title, Alien Breaker Deluxe**, deliberately
+      *not* another Crazyball-engine sports title or PopCap game or
+      arcade-collection title sharing Super BurgerTime's own separate-
+      ROM-dump requirement -- a small (134KB `.mod`, vs. the ~1MB+
+      Crazyball-engine titles), architecturally different game, picked
+      specifically to find out whether the interpreter-throughput wall
+      is universal or specific to that one engine family.
+      **Found and fixed a real bug in this project's own BAR parser**
+      along the way: this title's real `data.bar` has a genuine zero-
+      length resource entry (two consecutive offset-table values
+      equal), which the parser's "strictly increasing" check rejected
+      as corrupt. The real invariant is monotonically non-decreasing --
+      `Extract()` already handles a zero-size entry fine. Fixed and
+      tested (`core/loader/bar.cpp`, `tests/bar_test.cpp`).
+      **Found the real ClsId** the same way as every other title this
+      session (`0x0108e356`, the thin-wrapper `r0`/`cls_id` clobber).
+      `CreateInstance` and `HandleEvent(EVT_APP_START)` both succeed,
+      and the title reaches its own event loop.
+      **Found and registered a 24th runtime-helper table slot**, offset
+      `0x138` (immediately before the confirmed sprintf slot at
+      `0x13c`): left unregistered, real code's own `blx` through it
+      jumped through a null function pointer within the first tick (337
+      steps -- a real, fast, findable gap, not the interpreter wall).
+      Only one real call site found, real identity unconfirmed, so
+      registered as a safe no-op matching the established precedent for
+      single-call-site gaps. With this fix alone, the title reaches its
+      own event loop cleanly and **stays there indefinitely with no
+      crash, no wander, and no interpreter-throughput wall** -- a light,
+      steady per-tick idle pattern, confirming this title generalizes
+      the Crazyball-engine wall theory correctly (that wall is specific
+      to that engine, not universal).
+      **Built `--autopress`** (`tools/game_probe.cpp`, env-gated,
+      opt-in): no OS-level input-automation tool available in this
+      environment (no `xdotool`, no passwordless `sudo` to install
+      one), so this reuses the file's own already-correct, already-
+      guarded input-injection plumbing (both the HID path and a direct
+      AVK `HandleEvent` call) to periodically press the confirm/advance
+      button without a human at the keyboard -- a genuinely reusable
+      tool for future bring-up work, not just this title.
+      **Live-reported: the real window shows a black screen** despite
+      the clean event-loop tick pattern. Traced concretely, not
+      guessed: confirmed via a temporary diagnostic that
+      `HasRealGlActivity` is false for the entire run and **zero real
+      `IDisplay` calls ever happen** (no `DrawText`/`DrawRect`/`Update`)
+      -- the title hasn't reached (or doesn't use) either real
+      rendering path at all, so this isn't a rendering bug so much as
+      "never gets far enough to draw anything."
+      **Found and fixed two more real, generalizable gaps chasing
+      that**: (1) `data.bar`'s raw bytes were only ever registered for
+      `LoadResDataEx`'s ID-based lookup, never exposed as a directly-
+      openable VFS file -- the same real "the archive's own raw bytes
+      need to be a VFS entry too" shape `MergeGgzInto`'s own doc
+      comment already documents for Double Dragon's `sound.ggz`. Fixed
+      by registering the same bytes into the VFS too. (2) The real HID
+      button-callback capture was gated on the callback's address
+      literally matching Double Dragon's own compiled address
+      (`ddragonz.mod` 0x11bdf4) -- a real, confirmed identification for
+      *that* title specifically, not a real general rule; every other
+      title compiles its own callback at its own different address, so
+      the check could never match for anyone else. The real, general
+      signal (per the bundled `GamepadMgr.c` reference source, already
+      cited in that same comment) is call *order*: real code always
+      registers exactly three signals through this slot, in a fixed
+      sequence (connect, button-event, position-change). Switched to
+      capturing the second call instead -- verified live this doesn't
+      regress Double Dragon (its own button callback still captures
+      and fires correctly).
+      **Neither fix turned out to be the actual blocker for this
+      title, but both are real, evidenced, and now generally
+      available**: live-traced (not guessed) that Alien Breaker Deluxe
+      never actually calls `CreateSignal` at all (zero calls against
+      either the HID or SignalCBFactory objects the whole run) -- this
+      title very plausibly doesn't use a gamepad/HID input path at all
+      (a simple, casual breakout-style game), so the button-callback
+      fix, while real and correct, wasn't the reason input wasn't
+      reaching it. And `data.bar` is never opened directly either (the
+      string "data.bar" only ever appears as `LoadResDataEx`'s own
+      `pszResFile` argument, never as any other real call's argument)
+      -- the VFS-exposure fix didn't change this title's own behavior,
+      though it's still a real, correct, precedent-grounded fix worth
+      keeping for whichever future title *does* need it.
+      **The real, concrete remaining lead**: `data.bar`'s own resource-
+      ID directory has exactly **one** entry (`type=0x5000,
+      id=0x234e`), out of 87 raw resource entries total. Real code
+      requests 49 distinct IDs via `LoadResDataEx` (all `type=0x5000`,
+      a contiguous-ish range `0x2329`-`0x237f`), and only the one real
+      directory entry can ever match -- confirmed live, all 48 others
+      fail. Real, shipped, playable games wouldn't ship a resource
+      directory this sparse relative to what their own code requests,
+      so the most likely real explanation is that this title's own
+      code uses some other, not-yet-identified addressing scheme for
+      most of its assets (very plausibly: the one real ID that *does*
+      resolve is itself a manifest/index resource the game reads first,
+      then uses to compute real byte offsets into `data.bar` directly,
+      through some real call this investigation hasn't identified yet)
+      -- not something to guess at further without live-tracing that
+      one successful load's own real consumer code next. 398/398 tests
+      pass; all four fixes (BAR parser, runtime slot 0x138, VFS
+      exposure, order-based signal capture) committed as real,
+      permanent, tested changes -- nothing reverted this round.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
