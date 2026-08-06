@@ -3973,11 +3973,39 @@ playable start-to-finish at full speed, standalone build.
       passing extra implicit context this harness's own direct
       function-pointer call doesn't supply), or `0x101bec` isn't really
       being reached as a raw `PFNNOTIFY` in the way `SetTimer`'s own
-      already-validated 3-titles-strong convention assumes. Not
-      resolved -- a real ABI/calling-convention question, not a quick
-      trace, and deserves its own dedicated round rather than a rushed
-      guess this late in an already long one. All temporary
-      instrumentation reverted, 391/391 tests pass unchanged.
+      already-validated 3-titles-strong convention assumes.
+
+      **Resolved, same round: confirmed and fixed the real calling
+      convention.** Traced the real registration call site itself
+      (`sbt_methods[7]`, `tools/game_probe.cpp`'s own experimental
+      `IShellHle::ScheduleTimer` path, registered for every title, not
+      Super BurgerTime-specific despite the name) live: real arguments
+      `r0=0x80047000 r1=0x00080000 r2=0x00101bec(callback)
+      r3=0x80300024(user_data)` -- a real, non-zero `r1` this project's
+      own code was silently discarding. Confirms the theory above
+      directly: this registration path's real callback shape is
+      `callback(r0=<the real r1 captured at registration>,
+      r1=pUser)`, a genuinely different 2-argument contract from plain
+      `ISHELL_SetTimer`'s own real, already-validated
+      `PFNNOTIFY(pUser in r0)`. **Fixed properly** (not a global swap,
+      which a live test proved would have broken Double Dragon's own
+      real `SetTimer`-based main-loop timer -- confirmed by trying it
+      first and watching a *different*, earlier wander appear):
+      extended `IShellHle::PendingTimer`/`ExpiredTimer` with an
+      `std::optional<uint32_t> r0_override`, set only by this specific
+      experimental registration path; `tools/game_probe.cpp`'s own
+      tick-firing code fires with `(r0=r0_override, r1=pUser)` when
+      present, else the unchanged, standard `(r0=pUser)`. 3 new tests
+      (`tests/brew_test.cpp`).
+      **Verified live against both titles**: the crash is completely
+      gone from both. Zeebo Sports Tênis now runs deep into real,
+      previously-unseen HLE call territory (dozens of new real trap
+      addresses) before hitting this project's own step-budget limit --
+      genuinely executing, not crashing, the best outcome short of
+      reaching a visible frame. Zeeboids runs **13,182** real steps
+      before its own next gap (previously 6), reaching an entirely new,
+      later crash location. No regression on Double Dragon (still
+      reaches the event loop cleanly). 393/393 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

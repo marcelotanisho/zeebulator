@@ -269,7 +269,49 @@ TEST(IShellHle, SetTimerThenTickFiresAfterElapsedTimeReachesDeadline) {
   ASSERT_EQ(expired.size(), 1u);
   EXPECT_EQ(expired[0].callback, kCallback);
   EXPECT_EQ(expired[0].user_data, kUserData);
+  EXPECT_FALSE(expired[0].r0_override.has_value())
+      << "a real ISHELL_SetTimer call keeps the standard PFNNOTIFY(pUser) firing convention";
   EXPECT_TRUE(shell_hle.Tick(1000).empty()) << "one-shot timers don't recur on their own";
+}
+
+TEST(IShellHle, ScheduleTimerWithR0OverrideCarriesItThroughToTheExpiredTimer) {
+  // See ScheduleTimer's own doc comment: real evidence (Zeebo Sports
+  // Tênis/Zeeboids) that this experimental registration path's real
+  // callback shape takes a real first argument distinct from pUser,
+  // not the plain ISHELL_SetTimer PFNNOTIFY(pUser) contract.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  constexpr uint32_t kCallback = 0x00102000;
+  constexpr uint32_t kUserData = 0x80300024;
+  constexpr uint32_t kR0Override = 0x00080000;
+  shell_hle.ScheduleTimer(33, kCallback, kUserData, kR0Override);
+
+  auto expired = shell_hle.Tick(33);
+  ASSERT_EQ(expired.size(), 1u);
+  EXPECT_EQ(expired[0].callback, kCallback);
+  EXPECT_EQ(expired[0].user_data, kUserData);
+  ASSERT_TRUE(expired[0].r0_override.has_value());
+  EXPECT_EQ(*expired[0].r0_override, kR0Override);
+}
+
+TEST(IShellHle, ReschedulingWithScheduleTimerUpdatesTheR0Override) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  constexpr uint32_t kCallback = 0x00102000;
+  constexpr uint32_t kUserData = 0x80300024;
+  shell_hle.ScheduleTimer(33, kCallback, kUserData, 0x00080000);
+  shell_hle.ScheduleTimer(33, kCallback, kUserData, 0x00090000);  // real re-arm, same identity
+
+  auto expired = shell_hle.Tick(33);
+  ASSERT_EQ(expired.size(), 1u) << "re-arming shouldn't create a second pending timer";
+  ASSERT_TRUE(expired[0].r0_override.has_value());
+  EXPECT_EQ(*expired[0].r0_override, 0x00090000u);
 }
 
 TEST(IShellHle, SetTimerAgainWithSameCallbackReschedulesRatherThanDuplicates) {

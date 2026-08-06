@@ -82,7 +82,8 @@ void IShellHle::GetDeviceInfoImpl(IArmCore& core) {
   core.SetRegister(kR0, 0);
 }
 
-void IShellHle::ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data) {
+void IShellHle::ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data,
+                               std::optional<uint32_t> r0_override) {
   // Re-registering the same (callback, user_data) pair reschedules it
   // rather than creating a duplicate -- matches the real self-rearming
   // timer pattern (see class doc comment) where the callback calls
@@ -90,10 +91,11 @@ void IShellHle::ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data
   for (auto& timer : timers_) {
     if (timer.callback == callback && timer.user_data == user_data) {
       timer.remaining_ms = ms;
+      timer.r0_override = r0_override;
       return;
     }
   }
-  timers_.push_back(PendingTimer{ms, callback, user_data});
+  timers_.push_back(PendingTimer{ms, callback, user_data, r0_override});
 }
 
 void IShellHle::SetTimerImpl(IArmCore& core) {
@@ -172,7 +174,7 @@ std::vector<IShellHle::ExpiredTimer> IShellHle::Tick(uint32_t elapsed_ms) {
   std::vector<ExpiredTimer> expired;
   for (auto it = timers_.begin(); it != timers_.end();) {
     if (elapsed_ms >= it->remaining_ms) {
-      expired.push_back(ExpiredTimer{it->callback, it->user_data});
+      expired.push_back(ExpiredTimer{it->callback, it->user_data, it->r0_override});
       it = timers_.erase(it);
     } else {
       it->remaining_ms -= elapsed_ms;

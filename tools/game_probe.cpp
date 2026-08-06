@@ -1027,7 +1027,13 @@ int main(int argc, char** argv) {
     constexpr uint32_t kInferredTickMs = 16;
     uint32_t callback = core.GetRegister(zeebulator::kR2);
     uint32_t user_data = core.GetRegister(zeebulator::kR3);
-    shell_hle.ScheduleTimer(kInferredTickMs, callback, user_data);
+    // r1 at this real call: found live (TASKS.md Phase 8, the Zeebo
+    // Sports Tênis/Zeeboids round) to be a real, non-zero, previously-
+    // discarded argument -- see IShellHle::ScheduleTimer's own doc
+    // comment on `r0_override` for the real evidence this is the
+    // callback's own real first argument, not a coincidence.
+    uint32_t r1_at_registration = core.GetRegister(zeebulator::kR1);
+    shell_hle.ScheduleTimer(kInferredTickMs, callback, user_data, r1_at_registration);
     core.SetRegister(zeebulator::kR0, 0);  // SUCCESS
   };
   sbt_methods[10] = [](zeebulator::IArmCore& core) {
@@ -1744,8 +1750,16 @@ int main(int argc, char** argv) {
       bool trace_this_tick = tick_count < 10;
       if (trace_this_tick) std::printf("--- tick %llu ---\n", static_cast<unsigned long long>(tick_count));
       try {
+        // Plain ISHELL_SetTimer-registered timers use the real,
+        // already-validated-for-3-titles PFNNOTIFY(pUser in r0)
+        // contract. Timers scheduled through IShellHle::ScheduleTimer's
+        // own experimental path with a real captured `r0_override`
+        // instead use that title's own real 2-argument shape -- see
+        // that method's own doc comment for the live evidence.
+        uint32_t call_r0 = timer.r0_override.value_or(timer.user_data);
+        uint32_t call_r1 = timer.r0_override.has_value() ? timer.user_data : 0;
         auto tick_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, timer.callback,
-                                                   timer.user_data, 0, 0, 0,
+                                                   call_r0, call_r1, 0, 0,
                                                    /*trace=*/false,
                                                    /*hle_trace=*/trace_this_tick, &display, &backend);
         if (tick_result.wandered_outside_module || tick_result.exceeded_step_budget) {

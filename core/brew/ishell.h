@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -122,7 +123,23 @@ class IShellHle {
   // reached via a still-unidentified class's method, not through
   // ISHELL_SetTimer directly -- see tools/game_probe.cpp for the real
   // disassembly evidence this is grounded in.
-  void ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data);
+  //
+  // `r0_override`, if given, is real evidence too, not a guess: the
+  // Zeebo Sports Tênis/Zeeboids round of that same investigation found
+  // real code registering through this exact path with a real, non-
+  // zero 4th argument (`r1` at the real registration call, distinct
+  // from `callback`/`user_data`) that this class used to silently
+  // discard -- and the real registered callback itself reads its own
+  // "self" from `r1`, not the real, already-validated-for-3-titles
+  // `PFNNOTIFY(pUser in r0)` convention plain ISHELL_SetTimer uses.
+  // Reads as this specific registration path really being a different,
+  // real 2-argument callback shape (`callback(r0=<this override>,
+  // r1=pUser)`), not the same PFNNOTIFY contract with a coincidentally-
+  // unread argument. Only ever set via *this* experimental path --
+  // plain ISHELL_SetTimer-registered timers are unaffected, keeping
+  // their own already-validated single-argument firing convention.
+  void ScheduleTimer(uint32_t ms, uint32_t callback, uint32_t user_data,
+                      std::optional<uint32_t> r0_override = std::nullopt);
 
   // A pending SetTimer callback whose deadline Tick() determined has now
   // been reached. The caller is responsible for actually invoking it
@@ -131,6 +148,8 @@ class IShellHle {
   struct ExpiredTimer {
     uint32_t callback;
     uint32_t user_data;
+    // See ScheduleTimer's own doc comment on `r0_override`.
+    std::optional<uint32_t> r0_override;
   };
 
   // Advances every pending timer by `elapsed_ms` and returns (removing)
@@ -143,6 +162,7 @@ class IShellHle {
     uint32_t remaining_ms;
     uint32_t callback;
     uint32_t user_data;
+    std::optional<uint32_t> r0_override;
   };
 
   void CreateInstanceImpl(IArmCore& core);
