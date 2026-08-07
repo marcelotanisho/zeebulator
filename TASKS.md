@@ -5495,6 +5495,41 @@ playable start-to-finish at full speed, standalone build.
       with a real, rich per-frame system, not a narrow single-purpose
       interface -- reinforces this as a dedicated task, not something
       a handful of guessed return values could safely stub around.
+      **Went one round deeper into this subsystem, same session, and
+      confirmed it's real, sustained, per-frame work, not a one-time
+      burst.** Live-traced the real callers of the four highest-
+      frequency slots (`33`/`54`/`100`/`107`, ~50,000 calls each across
+      a 45-real-second run -- roughly once per real tick, not a startup
+      spike): all four route through generic, reusable thin-wrapper
+      trampolines (`abd.mod` 0x115354/0x115c24/0x115ad0/0x115d20, the
+      same "preserve caller's own `lr`, forward through a vtable slot"
+      shape already identified elsewhere this session), not distinct
+      per-slot application code -- meaning the real application logic
+      lives one level further out, at each trampoline's own real
+      caller. Found one such real caller directly (slot 33's, `abd.mod`
+      0x102b78-0x102c3c): validates a candidate position against a
+      real `1600x1200` bound (a virtual canvas or level size, not this
+      project's own 640x480 display resolution) before dispatching --
+      real, non-trivial per-frame layout/placement logic, not idle
+      polling.
+      **Tried one cheap, evidence-motivated experiment before
+      committing to deeper per-slot tracing**: swapped this whole
+      fresh scaffold's blind default from `0` to `1` (testing whether
+      real code reads `0` as a null/empty result rather than success
+      for any of these calls) -- no observable change, reverted
+      (`git diff` on `tools/game_probe.cpp` clean). Rules out "wrong
+      default value" as an explanation; the real gap is real, distinct,
+      per-slot behavior, not a single global miscalibration.
+      **Genuinely unresolved, not chased further this session**: this
+      subsystem is now confirmed to be a real, active, per-frame engine
+      component (not a dead end, not a one-time init) whose full real
+      contract spans at least 17 distinct slots behind generic
+      trampolines -- correctly implementing it means tracing each
+      trampoline's own real caller in turn, the same technique that
+      worked for slot 33, repeated enough times to reconstruct a real
+      picture of what this class actually is. A genuinely large,
+      dedicated task on its own, appropriately scoped as its own future
+      round rather than folded into this one.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
