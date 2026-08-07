@@ -5098,6 +5098,35 @@ playable start-to-finish at full speed, standalone build.
       "never calls `IDisplay`" is confirmed to lie somewhere else
       entirely, not in this chain -- ruled out with live evidence, not
       abandoned on a guess.
+      **Checked the fifth and last steady-state per-tick call too, same
+      session, for the same reason -- and it's also inert.** Live-
+      traced the scaffold object's own repeated call (`r0=0x80041000`,
+      trap for vtable slot 25) two levels up: a small real dispatch
+      wrapper (`abd.mod` 0x1147ec) looks up a real global object from a
+      real static-base table (offset 8) and, only if non-null, forwards
+      to *that* object's own vtable slot 25 -- generic, real "notify an
+      optional registered listener" plumbing, not specific to this
+      scaffold. Its own caller (`abd.mod` 0x107020-0x107034) passes two
+      real object fields as arguments, both `0` in this run
+      (`[r4+396]`/`[r4+400]`), and never inspects the call's return
+      value at all (falls straight through to its own return). Given
+      this project's own scaffold's default stub (a plain `SetRegister
+      (kR0, 0)`, no memory writes), and given the caller doesn't branch
+      on the result either way, this call is confirmed inert -- not a
+      candidate for the real blocker.
+      **Where this leaves the investigation**: both real steady-state
+      per-tick calls this round examined (`0x80064000`'s HID chain,
+      `0x80041000`'s scaffold notification) are now confirmed, live,
+      to be healthy and inconsequential, not blocking gates -- ruling
+      out the two most obvious candidates. The real reason Alien
+      Breaker Deluxe never calls `IDisplay` is confirmed to live
+      outside this per-tick idle chain entirely, most plausibly in
+      scene/state-transition logic this round never reached (e.g. a
+      real "still loading" flag gating when the game would first start
+      drawing) -- a genuinely different, unexamined part of the code,
+      not a deeper layer of the same chain. Not chased further this
+      session; a fresh round should start from the loading/scene-
+      transition angle instead of continuing down this per-tick path.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
