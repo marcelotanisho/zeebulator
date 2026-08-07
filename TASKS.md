@@ -4529,6 +4529,66 @@ playable start-to-finish at full speed, standalone build.
       rendering remains blocked on what looks like incomplete source
       data rather than anything left to fix in the emulator itself.
 
+- [ ] **Picked an eighth title, Disney All Star Cards**, same session,
+      same "keep trying architecturally different titles" approach --
+      real ClsId `0x010940da` found the same way as every other title
+      (thin-wrapper `r0`/`cls_id` clobber). `CreateInstance` succeeds
+      immediately.
+      **`HandleEvent(EVT_APP_START)` wandered after only 88 real
+      steps** -- by a wide margin the fastest, cleanest gap this
+      project has hit, and it kept happening again, one real gap
+      deeper, every time the previous one got fixed: **eight more
+      runtime-helper table slots** found and registered this round
+      (0x30, 0x144, 0x14c, 0x150, 0x64, 0xcc, 0x90, 0x10 -- the
+      project's 25th through 32nd confirmed slots), each one a safe
+      no-op matching the established precedent (none had a calling
+      convention confirmed well enough to implement for real), step
+      count reaching the next gap climbing steadily each time (88 ->
+      226 -> 3578 -> 5288 -> 6033, then past `HandleEvent` entirely
+      into the real per-tick loop at 1405 -> 1513 -> 2210 -> clean).
+      Also found and fixed a real, separate gap along the way: a
+      genuine, unidentified real BREW class (`ClsId 0x0100100c`) that
+      real code creates and dereferences without a null check, exactly
+      the same "real `CreateInstance` call site this project's history
+      keeps finding" shape as every other unidentified class --
+      registered as a generic scaffold.
+      **Confirmed the *last* gap efficiently, not by continuing to
+      iterate one rebuild at a time**: a temporary diagnostic filled
+      *every* still-unmapped table offset up to 0x400 with a logging
+      no-op instead of a silent wander, then ran once with a real step
+      budget -- found exactly one further real call (offset 0x10) in
+      one pass instead of many more rebuild-retest cycles. With it
+      registered, **this title reaches `CreateInstance`/`HandleEvent`
+      success and stays in its own real per-tick event loop for a
+      full 20-second run with no further wander, crash, or unmapped-
+      slot hit at all** -- the cleanest bring-up of any new title this
+      session, Alien Breaker Deluxe included.
+      **Verified no regression**, important given the sheer number of
+      shared-table slots touched this round: Double Dragon still boots
+      cleanly from a fresh (non-save-state) launch with every one of
+      these new slots active. A `--load-state` run did throw (`Block
+      data transfer with S=1 (user-bank registers / exception return)
+      not supported`) mid-investigation -- traced this to the *save
+      file itself*, not this round's code: Double Dragon's own save
+      state lives at a path shared with a separate, long-running real
+      play session (a different worktree, still using the same ROM
+      directory), which had itself saved much further into real
+      gameplay than this project's own last known-good state. That's a
+      real, separate, pre-existing interpreter gap (a real ARM
+      instruction variant -- block data transfer with the S-bit set --
+      this project's own interpreter has never implemented), genuinely
+      unrelated to this round's runtime-table work, surfaced by real
+      gameplay reaching further than any of this project's own testing
+      has before. Worth a dedicated round on its own; not chased
+      further here. 407/407 tests pass; every fix this round committed
+      as real, permanent, tested code.
+      **Not yet confirmed playable/rendering** -- reaching and staying
+      in the event loop is a real, substantial milestone (the same one
+      every previously-working title reached before becoming
+      playable), but whether real gameplay/UI actually renders still
+      needs a live look at the window, the same way Alien Breaker
+      Deluxe's own "black screen" was only caught that way.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
