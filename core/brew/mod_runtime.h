@@ -418,7 +418,22 @@ namespace zeebulator {
 // precedent) rather than a guess, just to unblock real execution past
 // this specific call site.
 //
-// Only these twenty-four table slots are confirmed by real disassembly
+// A twenty-fifth slot, offset 0x30, was found bringing up a fresh
+// title (Disney All Star Cards) after Alien Breaker Deluxe's own
+// bring-up stalled on incomplete source data rather than an engine
+// gap: real code calls it right in `HandleEvent(EVT_APP_START)`
+// itself (88 real steps in, the fastest any of this project's own
+// runtime-slot gaps has been hit), immediately after a real call
+// through a *different*, per-instance vtable (offset 0x44 there,
+// unrelated to this table's own identically-numbered MEMCPY-alias
+// slot). Its own real return value is used as a loop counter
+// (`add r0,r0,#1; cmp r0,r4; ble ...` immediately follows), suggesting
+// something enumerable/iterable, but only one real call site found so
+// far and not enough evidence to guess further -- registered as a
+// safe no-op matching the established precedent for single-call-site
+// gaps.
+//
+// Only these twenty-five table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
