@@ -860,6 +860,32 @@ int main(int argc, char** argv) {
     }
     core.SetRegister(zeebulator::kR0, 0);  // AEE_SUCCESS
   };
+  hid_methods[5] = [](zeebulator::IArmCore& core) {
+    // AEEResult GetNextConnectEvent(IHID*, int *pnDevHandle, int *pnStatus,
+    //   boolean *pbDroppedEvents) -- confirmed real signature and slot
+    // index (research/docs/sdk_installer_extract/sdk_installer_cab, IHID's
+    // real vtable order already documented above: CreateDevice(3)/
+    // GetDeviceInfo(4)/GetNextConnectEvent(5)/RegisterForConnectEvents(6)/
+    // GetConnectedDevices(7)). Real Alien Breaker Deluxe disassembly
+    // (`abd.mod` 0x101a78-0x101b38) polls this slot in a real loop, once
+    // per real connect/disconnect event, checking each reported device's
+    // own UID (via slot 4/GetDeviceInfo) against a real target constant
+    // that decodes to `AEEUID_HID_Joystick_Device` (0x0106c3fd, same real
+    // UID already confirmed above for slot 7). Left as the same blind
+    // `Stub` every other slot here defaults to (an unconditional
+    // AEE_SUCCESS, "there's always a next event"), this is a genuine
+    // real infinite loop, not a crash: real code's own termination
+    // condition -- this call eventually reporting no more pending
+    // events -- never arrives, confirmed live even at a 20-billion-step
+    // budget. The correct, honest real answer is the same one already
+    // established for slot 7: this project has no real joystick hardware
+    // to report a connection event for, so no connect event is ever
+    // pending. Returns AEE_EFAILED (matching the real documented "another
+    // appropriate error code" contract for "no event retrieved"), the
+    // same generic failure code this project's own `GetNextButtonEvent`
+    // above already uses for its own analogous "queue empty" case.
+    core.SetRegister(zeebulator::kR0, 1);  // AEE_EFAILED-ish: no connect event pending
+  };
   uint32_t hid_obj = zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, /*vtable_address=*/0x8001C000,
                                                        /*object_address=*/0x8001D000, hid_methods);
   shell_hle.RegisterInstance(/*AEECLSID_HID=*/0x0106c411, hid_obj);
