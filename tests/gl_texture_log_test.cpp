@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 using zeebulator::BindTextureCall;
+using zeebulator::CompactGlTextureLog;
 using zeebulator::DeleteTexturesCall;
 using zeebulator::DeserializeGlTextureLog;
 using zeebulator::GenTexturesCall;
@@ -225,4 +226,196 @@ TEST(GlTextureLog, ReplayReportsFailureWhenTheTargetAssignsDifferentIds) {
 
   FakeGlBackend mismatched(/*first_id=*/50);  // will assign ID 50, not 1
   EXPECT_FALSE(ReplayGlTextureLog(recorder.Log(), mismatched));
+}
+
+namespace {
+GlTextureImage MakeImage(int width, int height, const uint8_t* pixels) {
+  GlTextureImage image;
+  image.width = width;
+  image.height = height;
+  image.type = 0x8363;  // kGlUnsignedShort565 -- 2 bytes/pixel
+  image.pixels = pixels;
+  return image;
+}
+}  // namespace
+
+TEST(GlTextureLogCompact, DropsAllButTheLastTexImage2DForARepeatedlyUploadedTexture) {
+  FakeGlBackend real;
+  GlTextureRecordingBackend recorder(real);
+  GLuint id = 0;
+  recorder.GenTextures(1, &id);
+  recorder.BindTexture(0x0DE1, id);
+  uint8_t first[4] = {1, 1, 1, 1};
+  uint8_t second[4] = {2, 2, 2, 2};
+  uint8_t third[4] = {3, 3, 3, 3};
+  // Real gameplay re-uploading the same live texture many times over a
+  // long session -- exactly the pattern that made a real 57-minute
+  // session's own save state reach 470MB (see CompactGlTextureLog's
+  // own doc comment).
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, first));
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, second));
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, third));
+
+  auto compacted = CompactGlTextureLog(recorder.Log());
+
+  int tex_image_count = 0;
+  for (const auto& entry : compacted) {
+    if (const auto* tex = std::get_if<TexImage2DCall>(&entry)) {
+      ++tex_image_count;
+      EXPECT_EQ(tex->pixels[0], 3u) << "only the last upload should survive";
+    }
+  }
+  EXPECT_EQ(tex_image_count, 1);
+}
+
+TEST(GlTextureLogCompact, DropsAllButTheLastValuePerDistinctTexParameterPname) {
+  FakeGlBackend real;
+  GlTextureRecordingBackend recorder(real);
+  GLuint id = 0;
+  recorder.GenTextures(1, &id);
+  recorder.BindTexture(0x0DE1, id);
+  constexpr GLenum kWrapS = 0x2802;
+  constexpr GLenum kMinFilter = 0x2801;
+  recorder.TexParameter(0x0DE1, kWrapS, 0x2900);
+  recorder.TexParameter(0x0DE1, kMinFilter, 0x2600);
+  recorder.TexParameter(0x0DE1, kWrapS, 0x812F);  // supersedes the first kWrapS
+
+  auto compacted = CompactGlTextureLog(recorder.Log());
+
+  std::unordered_map<GLenum, GLint> params;
+  for (const auto& entry : compacted) {
+    if (const auto* param = std::get_if<TexParameterCall>(&entry)) {
+      params[param->pname] = param->param;
+    }
+  }
+  ASSERT_EQ(params.size(), 2u) << "both distinct pnames survive, just deduplicated";
+  EXPECT_EQ(params[kWrapS], 0x812F);
+  EXPECT_EQ(params[kMinFilter], 0x2600);
+}
+
+TEST(GlTextureLogCompact, DeletedTextureContributesNothingToTheOutput) {
+  FakeGlBackend real;
+  GlTextureRecordingBackend recorder(real);
+  GLuint id = 0;
+  recorder.GenTextures(1, &id);
+  recorder.BindTexture(0x0DE1, id);
+  uint8_t pixels[4] = {9, 9, 9, 9};
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, pixels));
+  GLuint delete_id = id;
+  recorder.DeleteTextures(1, &delete_id);
+
+  auto compacted = CompactGlTextureLog(recorder.Log());
+
+  for (const auto& entry : compacted) {
+    EXPECT_FALSE(std::holds_alternative<TexImage2DCall>(entry))
+        << "a texture deleted by the end of the log needs no image data restored";
+    EXPECT_FALSE(std::holds_alternative<BindTextureCall>(entry))
+        << "no reason to bind a texture nothing else references anymore";
+  }
+}
+
+TEST(GlTextureLogCompact, PreservesEveryGenAndDeleteCallVerbatimAndInOrder) {
+  // Real-driver ID assignment during replay depends on this exact
+  // sequence (ReplayGlTextureLog's own doc comment) -- compaction must
+  // never touch it, no matter how much of the rest it collapses.
+  FakeGlBackend real;
+  GlTextureRecordingBackend recorder(real);
+  GLuint first = 0, second = 0;
+  recorder.GenTextures(1, &first);
+  recorder.GenTextures(1, &second);
+  GLuint delete_first = first;
+  recorder.DeleteTextures(1, &delete_first);
+  recorder.BindTexture(0x0DE1, second);
+  uint8_t pixels[4] = {5, 5, 5, 5};
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, pixels));
+
+  auto compacted = CompactGlTextureLog(recorder.Log());
+
+  std::vector<GlTextureLogEntry> gen_and_delete_only;
+  for (const auto& entry : compacted) {
+    if (std::holds_alternative<GenTexturesCall>(entry) ||
+        std::holds_alternative<DeleteTexturesCall>(entry)) {
+      gen_and_delete_only.push_back(entry);
+    }
+  }
+  ASSERT_EQ(gen_and_delete_only.size(), 3u);
+  EXPECT_EQ(std::get<GenTexturesCall>(gen_and_delete_only[0]).assigned_ids,
+            (std::vector<GLuint>{first}));
+  EXPECT_EQ(std::get<GenTexturesCall>(gen_and_delete_only[1]).assigned_ids,
+            (std::vector<GLuint>{second}));
+  EXPECT_EQ(std::get<DeleteTexturesCall>(gen_and_delete_only[2]).ids,
+            (std::vector<GLuint>{first}));
+}
+
+TEST(GlTextureLogCompact, ReusedIdAfterDeleteDoesNotInheritTheOldTexturesState) {
+  FakeGlBackend real;
+  GlTextureRecordingBackend recorder(real);
+  GLuint id = 0;
+  recorder.GenTextures(1, &id);
+  recorder.BindTexture(0x0DE1, id);
+  uint8_t old_pixels[4] = {7, 7, 7, 7};
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, old_pixels));
+  GLuint delete_id = id;
+  recorder.DeleteTextures(1, &delete_id);
+  // A real driver can hand the same numeric ID back out after it's
+  // freed -- simulate that directly rather than relying on FakeGlBackend's
+  // own monotonic counter.
+  GenTexturesCall regen;
+  regen.assigned_ids = {id};
+  // Push the raw entries this round needs beyond what the recorder's
+  // own real calls would produce, to exercise the specific "same ID,
+  // fresh generation" case regardless of the fake backend's own ID
+  // policy.
+  std::vector<GlTextureLogEntry> log = recorder.Log();
+  log.push_back(regen);
+  log.push_back(BindTextureCall{0x0DE1, id});
+  uint8_t new_pixels[4] = {8, 8, 8, 8};
+  TexImage2DCall new_image;
+  new_image.target = 0x0DE1;
+  new_image.level = 0;
+  new_image.internal_format = 0;
+  new_image.width = 2;
+  new_image.height = 1;
+  new_image.format = 0;
+  new_image.type = 0x8363;
+  new_image.has_pixels = true;
+  new_image.pixels.assign(new_pixels, new_pixels + 4);
+  log.push_back(new_image);
+
+  auto compacted = CompactGlTextureLog(log);
+
+  int tex_image_count = 0;
+  for (const auto& entry : compacted) {
+    if (const auto* tex = std::get_if<TexImage2DCall>(&entry)) {
+      ++tex_image_count;
+      EXPECT_EQ(tex->pixels[0], 8u) << "only the fresh generation's own upload should survive";
+    }
+  }
+  EXPECT_EQ(tex_image_count, 1);
+}
+
+TEST(GlTextureLogCompact, ReplayingTheCompactedLogReproducesTheSameFinalStateAsTheOriginal) {
+  FakeGlBackend real;
+  GlTextureRecordingBackend recorder(real);
+  GLuint id = 0;
+  recorder.GenTextures(1, &id);
+  recorder.BindTexture(0x0DE1, id);
+  uint8_t stale[4] = {1, 1, 1, 1};
+  uint8_t final_pixels[4] = {42, 42, 42, 42};
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, stale));
+  recorder.TexParameter(0x0DE1, 0x2801, 0x2600);
+  recorder.TexImage2D(0x0DE1, MakeImage(2, 1, final_pixels));
+
+  auto compacted = CompactGlTextureLog(recorder.Log());
+
+  FakeGlBackend original_replay_target;
+  ASSERT_TRUE(ReplayGlTextureLog(recorder.Log(), original_replay_target));
+  FakeGlBackend compacted_replay_target;
+  ASSERT_TRUE(ReplayGlTextureLog(compacted, compacted_replay_target));
+
+  ASSERT_EQ(original_replay_target.live_textures_.size(),
+            compacted_replay_target.live_textures_.size());
+  EXPECT_EQ(original_replay_target.live_textures_.at(1u),
+            compacted_replay_target.live_textures_.at(1u));
+  EXPECT_EQ(compacted_replay_target.live_textures_.at(1u)[0], 42u);
 }

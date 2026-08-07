@@ -1718,6 +1718,14 @@ int main(int argc, char** argv) {
         // already has the right textures, so replaying would just
         // create redundant duplicates.
         if (event.key.keysym.sym == SDLK_F1) {
+          // Compacted before every save, not just periodically in the
+          // tick loop below: guarantees a save taken moments after a
+          // long play session started (before the periodic compaction
+          // has run even once) still writes a bounded file instead of
+          // the whole session's own raw history (see
+          // CompactGlTextureLog's own doc comment -- a real 57-minute
+          // session's own uncompacted save reached 470MB).
+          gl_recorder.CompactLog();
           std::ofstream out(save_state_path, std::ios::binary);
           // Mixer/MediaHle state appended last, same reasoning as the GL
           // texture log: only a cold `--load-state` load actually needs
@@ -1913,6 +1921,16 @@ int main(int argc, char** argv) {
         break;
       }
       ++tick_count;
+      // Periodic maintenance, not just right before an F1 save: a long
+      // real play session's own GL texture log otherwise grows without
+      // bound for the rest of the process's lifetime (see
+      // CompactGlTextureLog's own doc comment), which matters for a
+      // live session's own memory use even between saves, not only for
+      // save-state file size. Roughly once a real minute at this
+      // title's own ~31fps real per-tick cadence (TASKS.md Phase 8);
+      // cheap enough (one pass over the log) not to worry about
+      // running it this often.
+      if (tick_count % 1800 == 0) gl_recorder.CompactLog();
     }
     mixer.Mix(backend, static_cast<size_t>(kAudioSampleRate * kTickMs / 1000));
     // See IDisplayHle::RepresentLastFrame's own doc comment: keeps the

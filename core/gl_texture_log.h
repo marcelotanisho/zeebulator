@@ -67,11 +67,28 @@ using GlTextureLogEntry =
 // the same real texture IDs/contents a loaded save state's guest
 // memory expects -- a fresh, non-interactively-driven boot never
 // recreates those on its own the way real gameplay would.
+//
+// Forward-declared here (full doc comment down by its own definition,
+// near Serialize/DeserializeGlTextureLog) so GlTextureRecordingBackend's
+// own CompactLog() can call it inline.
+std::vector<GlTextureLogEntry> CompactGlTextureLog(const std::vector<GlTextureLogEntry>& log);
+
 class GlTextureRecordingBackend : public GlBackend {
  public:
   explicit GlTextureRecordingBackend(GlBackend& real) : real_(real) {}
 
   const std::vector<GlTextureLogEntry>& Log() const { return log_; }
+
+  // Replaces the recorded log with CompactGlTextureLog's own output --
+  // see that function's doc comment for why this exists and what it
+  // preserves. Safe to call at any time, repeatedly, during a live
+  // session (unlike ClearLog, which only belongs at the one specific
+  // boot/gameplay boundary): real callers should call this
+  // periodically during long sessions, and always right before
+  // serializing a save state, to keep both memory use and save-state
+  // size bounded instead of growing for the rest of the process's
+  // lifetime.
+  void CompactLog() { log_ = CompactGlTextureLog(log_); }
 
   // Discards everything recorded so far. Real callers need this once,
   // right after a deterministic, always-the-same boot/setup sequence
@@ -149,5 +166,35 @@ bool ReplayGlTextureLog(const std::vector<GlTextureLogEntry>& log, GlBackend& ta
 
 bool SerializeGlTextureLog(const std::vector<GlTextureLogEntry>& log, std::ostream& out);
 bool DeserializeGlTextureLog(std::istream& in, std::vector<GlTextureLogEntry>& out);
+
+// Compacts a log down to just what's needed to reproduce the *final*
+// state of every texture still alive at the end of it: every
+// GenTextures/DeleteTextures call is kept verbatim, in its original
+// order (ReplayGlTextureLog's own real-driver ID-assignment trick
+// depends on replaying that exact sequence -- reordering or dropping
+// any of these would desync every texture ID from there on), but
+// Bind/TexParameter/TexImage2D calls collapse down to one synthesized
+// bind plus each texture's last-write-wins parameters and per-level
+// images. A texture deleted by the end of the log contributes nothing
+// to the output at all.
+//
+// Exists because this log has no size cap of its own (see
+// GlTextureRecordingBackend's own doc comment on why `ClearLog` only
+// runs once, at boot) -- a real, long play session re-uploading or
+// reconfiguring the same live textures many times (menu transitions,
+// animated UI, ...) otherwise makes both the in-memory log and any
+// save state serializing it grow without bound for the rest of the
+// process's lifetime, confirmed live: a 57-minute real session's own
+// save state reached 470MB, almost entirely this log's own
+// accumulated history rather than anything a fresh replay actually
+// needs.
+//
+// Assumes each real texture ID is only ever used with one real GL
+// target across its lifetime -- true for every real call site this
+// project has traced so far (no cube maps or similar multi-target
+// textures observed). If some future title's own real code violates
+// that, the one synthesized bind per surviving texture may use the
+// wrong target for a minority of its own parameter/image calls.
+std::vector<GlTextureLogEntry> CompactGlTextureLog(const std::vector<GlTextureLogEntry>& log);
 
 }  // namespace zeebulator

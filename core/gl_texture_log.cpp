@@ -1,6 +1,8 @@
 #include "core/gl_texture_log.h"
 
 #include <cstdio>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace zeebulator {
 
@@ -79,6 +81,106 @@ bool ReplayGlTextureLog(const std::vector<GlTextureLogEntry>& log, GlBackend& ta
     }
   }
   return all_ids_matched;
+}
+
+std::vector<GlTextureLogEntry> CompactGlTextureLog(const std::vector<GlTextureLogEntry>& log) {
+  // Accumulated final state for one still-live texture: the target it
+  // was last used with (see this function's own doc comment on the
+  // single-target assumption), its parameters (last-write-wins per
+  // pname), and its per-level images (last-write-wins per level).
+  // Plain vectors, not maps: real textures only ever have a handful of
+  // distinct pnames/levels set, so a linear scan per update is cheap
+  // and keeps output order matching first-set order, not pname/level
+  // numeric order.
+  struct LiveTextureState {
+    GLenum target = 0;
+    std::vector<std::pair<GLenum, GLint>> params;
+    std::vector<TexImage2DCall> images;
+  };
+
+  std::unordered_map<GLenum, GLuint> bound_to_target;  // real current binding, per target
+  std::unordered_map<GLuint, LiveTextureState> live;   // id -> state, only for still-Gen'd ids
+  std::vector<GLuint> emission_order;                  // stable, first-seen order for output
+  std::unordered_set<GLuint> seen_ids;
+
+  std::vector<GlTextureLogEntry> compacted;
+
+  for (const GlTextureLogEntry& entry : log) {
+    if (const auto* gen = std::get_if<GenTexturesCall>(&entry)) {
+      // Kept verbatim, in original order: ReplayGlTextureLog's real-
+      // driver ID-assignment trick depends on replaying this exact
+      // sequence -- dropping or reordering any of these would desync
+      // every texture ID from here on.
+      compacted.push_back(*gen);
+      for (GLuint id : gen->assigned_ids) {
+        live[id] = LiveTextureState{};  // fresh state, even if `id` is being reused
+        if (seen_ids.insert(id).second) emission_order.push_back(id);
+      }
+    } else if (const auto* del = std::get_if<DeleteTexturesCall>(&entry)) {
+      compacted.push_back(*del);
+      for (GLuint id : del->ids) {
+        live.erase(id);
+        // Real GL auto-unbinds a deleted texture from every target it
+        // was bound to.
+        for (auto& [target, bound_id] : bound_to_target) {
+          if (bound_id == id) bound_id = 0;
+        }
+      }
+    } else if (const auto* bind = std::get_if<BindTextureCall>(&entry)) {
+      bound_to_target[bind->target] = bind->texture;
+      // Not appended here -- a single synthesized bind per surviving
+      // texture gets emitted at the end instead, right before that
+      // texture's own compacted parameters/images.
+    } else if (const auto* param = std::get_if<TexParameterCall>(&entry)) {
+      auto bound_it = bound_to_target.find(param->target);
+      GLuint id = bound_it != bound_to_target.end() ? bound_it->second : 0;
+      auto live_it = live.find(id);
+      if (id != 0 && live_it != live.end()) {
+        live_it->second.target = param->target;
+        bool replaced = false;
+        for (auto& [pname, value] : live_it->second.params) {
+          if (pname == param->pname) {
+            value = param->param;
+            replaced = true;
+            break;
+          }
+        }
+        if (!replaced) live_it->second.params.emplace_back(param->pname, param->param);
+      }
+    } else if (const auto* tex = std::get_if<TexImage2DCall>(&entry)) {
+      auto bound_it = bound_to_target.find(tex->target);
+      GLuint id = bound_it != bound_to_target.end() ? bound_it->second : 0;
+      auto live_it = live.find(id);
+      if (id != 0 && live_it != live.end()) {
+        live_it->second.target = tex->target;
+        bool replaced = false;
+        for (TexImage2DCall& existing : live_it->second.images) {
+          if (existing.level == tex->level) {
+            existing = *tex;
+            replaced = true;
+            break;
+          }
+        }
+        if (!replaced) live_it->second.images.push_back(*tex);
+      }
+    }
+  }
+
+  for (GLuint id : emission_order) {
+    auto live_it = live.find(id);
+    if (live_it == live.end()) continue;  // deleted by the end of the log
+    const LiveTextureState& state = live_it->second;
+    if (state.params.empty() && state.images.empty()) continue;  // nothing to restore
+    compacted.push_back(BindTextureCall{state.target, id});
+    for (const auto& [pname, value] : state.params) {
+      compacted.push_back(TexParameterCall{state.target, pname, value});
+    }
+    for (const TexImage2DCall& image : state.images) {
+      compacted.push_back(image);
+    }
+  }
+
+  return compacted;
 }
 
 namespace {
