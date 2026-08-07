@@ -5431,6 +5431,57 @@ playable start-to-finish at full speed, standalone build.
       backward from there to what real condition guards reaching it,
       rather than continuing to guess at what triggers it forward from
       the event side.
+      **Did exactly that immediately after, same session, and it paid
+      off in two real, permanent fixes.** Found real literal-pool
+      entries for all three real ClsIds (`AEECLSID_DISPLAY`/`GL`/`EGL`)
+      directly in the raw `.mod` file and traced the one real function
+      that references `AEECLSID_EGL`/`0x0103d8ec` together (`abd.mod`
+      0x101ba4-0x101c60): live-confirmed it's genuinely reached and
+      genuinely succeeds (both `CreateInstance` calls return success)
+      -- this project's own `EVT_APP_RESUME` fix was enough to get real
+      code this far. Its own next step (`abd.mod` 0x101e08 onward)
+      branches on a real getter's return value: if a real field is
+      already non-null (confirmed live: it is, holding this project's
+      own `0x0103d8ec` scaffold), real code takes an *alternate* real
+      path instead of creating `AEECLSID_GL` directly -- calling that
+      same scaffold's own real `QueryInterface` (vtable slot 2, the
+      standard `INHERIT_IQI` convention every slot-2 in this whole
+      family already follows) for two more real, related ClsIds
+      (`0x0103d8dd`, `0x0103d8ea`). This scaffold never implemented
+      slot 2 at all (only slots 4/5 were ever customized), so the real
+      3rd-arg out-param stayed unwritten -- the same real "unchecked
+      result, garbage out-param" shape this entire project has found
+      and fixed dozens of times elsewhere. Fixed
+      (`tools/game_probe.cpp`): writes a fresh, independent, all-slots-
+      stub scaffold, this file's own established safe treatment for
+      still-unidentified real interfaces.
+      **That fix alone crashed differently, live -- not a step backward,
+      a real, immediate second finding.** Real code calls vtable slot
+      79 (byte offset `0x13c`) on the freshly-returned object -- the
+      same "not enough vtable slots" shape this file's own HID device
+      scaffold doc comment already precedents. Bumped that specific
+      fresh scaffold from 40 to 200 slots. **Confirmed live this real
+      fix genuinely resolves the crash and unlocks real, sustained
+      further activity**: the *second* `QueryInterface` result (ClsId
+      `0x0103d8ea`) gets called over 50,000 times in under a minute,
+      with real, coordinate/physics-shaped numeric arguments -- a
+      volume and shape of activity this title has never produced
+      before this session, strong evidence of a real, substantial
+      subsystem now genuinely running, not idling. Verified no
+      regression on Double Dragon and Peggle; 426/426 tests pass.
+      **Still doesn't reach `IDisplay`, even given 3 more real minutes
+      to run**: this newly-active object's every method is still the
+      generic always-return-0 stub, so whatever real per-frame state
+      this subsystem polls for is never actually provided -- the same
+      "polls forever, concludes nothing to do" shape as the fixes
+      before it, just one level further in. **Genuinely unresolved, not
+      chased further this session**: identifying this subsystem's real
+      class and its own real per-slot contract (used 50,000+ times per
+      run, so almost certainly a real, central per-frame system --
+      physics, animation, or scene-graph-shaped, given the numeric
+      argument shapes observed) is now the single highest-value next
+      target, and a genuinely large, dedicated reverse-engineering task
+      in its own right, not a quick follow-on fix.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
