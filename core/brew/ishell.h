@@ -180,6 +180,10 @@ class IShellHle {
   std::unordered_map<uint32_t, std::function<uint32_t()>> factories_;
   std::vector<PendingTimer> timers_;
   std::unordered_map<std::string, BarArchive> resource_files_;
+  // Per-object vtable-slot-43 call counter -- see Build()'s own doc
+  // comment on that slot for the real evidence this stateful behavior
+  // is grounded in.
+  std::unordered_map<uint32_t, uint32_t> slot43_call_counts_;
 };
 
 }  // namespace zeebulator

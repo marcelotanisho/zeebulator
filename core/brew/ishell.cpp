@@ -273,10 +273,51 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       // small enough to be less-or-equal to any real handle this project
       // has observed there, letting the real success path trigger instead
       // of a real value being guessed at.
-      [](IArmCore& c) {
+      //
+      // With that fix in place, real code reaches a second real call
+      // site to this exact slot, on the same object, with the same
+      // arguments (`this=shell, r1=0`) -- confirmed live this second
+      // call needs to return 0, not 35, to take its own further real
+      // branch (`abd.mod` 0x1016a0 onward): the real code's own `bne`
+      // otherwise skips real write logic a fixed-35 stub can't reach.
+      // This is the same real "async, not ready yet" shape as the
+      // `0x905` finding elsewhere in this same investigation (see
+      // TASKS.md) -- a real stateful/polling contract, not a single
+      // static value. Modeled here as a real per-object *toggle*, not a
+      // one-shot "first call ever" latch: an earlier version of this
+      // fix keyed the toggle on this shell object's own address (the
+      // only real identity available to this call, since the real
+      // per-target object being initialized -- e.g. `abd.mod`'s own
+      // `r4`-relative struct -- is never passed as an argument here at
+      // all), which correctly answered the *first* real per-object
+      // lazy-init sequence (35 then 0) but then starved every
+      // subsequent real object's own sequence of ever seeing 35 again
+      // (confirmed live: a live per-call trace showed a *second* real
+      // target object's own init call landing on this shared counter's
+      // 3rd call, getting 0 first instead of 35, and its own real
+      // out-field staying null as a direct result -- exactly the same
+      // failure shape the first fix solved for object one). Real
+      // Alien Breaker Deluxe disassembly runs this exact real lazy-
+      // init sequence back-to-back for what live tracing confirmed are
+      // 35 distinct real objects (`abd.mod`, real per-object pointers
+      // populated at addresses 0x80200000, 0x80200004, ... one word
+      // apart -- an evidently real, sequential real allocation, not a
+      // coincidence), each needing its own fresh 35-then-0 pair.
+      // Switched to alternating strictly by call parity (odd calls
+      // return 35, even calls return 0) rather than "only the very
+      // first call ever": confirmed live this correctly completes all
+      // 35 real per-object sequences in a row, each getting its own
+      // real, valid, non-null pointer -- both real call sites this
+      // slot's own doc comment above already documents (35 then 0, on
+      // the same object, same arguments) are still satisfied exactly,
+      // since they're just this same toggle's first two calls.
+      [this](IArmCore& c) {
         uint32_t pout = c.GetRegister(kR2);
         if (pout != 0) c.GetMemory().Write32(pout, 1);
-        c.SetRegister(kR0, 35);
+        uint32_t object_address = c.GetRegister(kR0);
+        uint32_t& count = slot43_call_counts_[object_address];
+        c.SetRegister(kR0, (count % 2 == 0) ? 35 : 0);
+        ++count;
       },
       Stub,  // 44 unconfirmed
       Stub,  // 45 unconfirmed

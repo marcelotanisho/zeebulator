@@ -252,13 +252,14 @@ TEST(IShellHle, GetDeviceInfoWritesRealScreenDimensions) {
   EXPECT_EQ(cpu.GetMemory().Read16(kDeviceInfoAddr + 2), 480u);
 }
 
-TEST(IShellHle, Slot43ReturnsTheConfirmedRealLiteral35) {
+TEST(IShellHle, Slot43FirstCallReturnsTheConfirmedRealLiteral35) {
   // Real, confirmed return value -- see IShellHle::Build's own doc
   // comment on slot 43 for the full derivation. Real Alien Breaker
   // Deluxe disassembly requires exactly 35 (not just nonzero/success)
-  // from this call to proceed past a real bail-out branch gating a
-  // real object-pointer field this project's own live tracing
-  // confirmed otherwise stays null and crashes a later real call.
+  // from this call's *first* real call site to proceed past a real
+  // bail-out branch gating a real object-pointer field this project's
+  // own live tracing confirmed otherwise stays null and crashes a
+  // later real call.
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);
   IShellHle shell_hle(cpu.GetMemory(), hle);
@@ -266,6 +267,64 @@ TEST(IShellHle, Slot43ReturnsTheConfirmedRealLiteral35) {
 
   uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 43 * 4);
   EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 35u);
+}
+
+TEST(IShellHle, Slot43SecondCallOnTheSameObjectReturnsZero) {
+  // Real, confirmed stateful/polling contract -- see IShellHle::Build's
+  // own doc comment on slot 43. Real code calls this exact slot a
+  // *second* time on the same object with the same arguments, deep
+  // inside the real success path the first call's fix unblocked, and
+  // needs 0 back (not 35 again) to take its own further real branch.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 43 * 4);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 35u);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 0u);
+}
+
+TEST(IShellHle, Slot43CallCountIsTrackedPerObject) {
+  // A second, distinct real object hitting this same slot starts its
+  // own real lazy-init sequence fresh -- the toggle this fix adds is
+  // keyed per-object (real `this`/R0), not a single global one, so two
+  // independently-initializing real objects can't stomp each other's
+  // state.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+  constexpr uint32_t kOtherObjectAddr = 0x80002000;
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 43 * 4);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 35u);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kOtherObjectAddr, 0), 35u);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 0u);
+}
+
+TEST(IShellHle, Slot43AlternatesRatherThanLatchingAfterTheFirstCall) {
+  // Real Alien Breaker Deluxe disassembly runs this exact real lazy-
+  // init sequence back-to-back for many distinct real objects, on the
+  // same shared shell object, all with the same arguments -- see
+  // IShellHle::Build's own doc comment on slot 43 for the full
+  // derivation. A "35 once, then 0 forever" latch (an earlier version
+  // of this fix) answers the first real object's own sequence
+  // correctly but starves every later one of ever seeing 35 again;
+  // this call's own real contract is a strict odd/even toggle instead,
+  // so every subsequent pair of calls gets its own fresh 35-then-0
+  // answer, matching real, confirmed behavior for at least two
+  // real, independent per-object sequences on the same object.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 43 * 4);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 35u);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 0u);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 35u);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 0u);
 }
 
 TEST(IShellHle, Slot43WritesTheSmallRealThirdArgOutParamValue) {
