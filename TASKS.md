@@ -5046,6 +5046,20 @@ playable start-to-finish at full speed, standalone build.
       is a genuinely open, scoped reverse-engineering question, not a
       further slot/table gap this round's live-tracing-only method can
       safely guess at.
+      **Ruled out one concrete hypothesis for that steady state, cheaply,
+      before stopping**: tried this project's own existing
+      `ZEEBULATOR_AUTOPRESS` probe (both the HID and direct-AVK
+      `HandleEvent` injection paths) against this exact steady state --
+      no effect at all, byte-for-byte identical per-tick call pattern
+      with or without it. Consistent with, not contradicting, this
+      investigation's own earlier finding that Alien Breaker Deluxe
+      never registers a real HID button callback in the first place (so
+      the HID injection path has nothing to reach) -- rules out "just
+      waiting on a simulated player input" as the explanation, narrowing
+      the real next step to actually identifying what `0x80064000`
+      (real HID device, called four different ways every tick) and
+      `0x80041000` (this project's own shared scaffold) are really being
+      asked for.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
