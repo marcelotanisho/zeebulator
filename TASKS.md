@@ -5165,6 +5165,32 @@ playable start-to-finish at full speed, standalone build.
       code probe (`git diff` on `tools/game_probe.cpp` clean),
       426/426 tests still passing, nothing speculative implemented
       against an unconfirmed real trigger.
+      **Took one more concrete step, same session, using a genuinely
+      different technique than this whole investigation's usual LR-
+      capture: a live memory scan, not a static-file search.** ROPI
+      vtables/handler pointers don't exist as literal `0x0010b5c4`
+      bytes anywhere in the raw `.mod` file (confirmed: a direct search
+      found zero matches) -- they're only ever materialized as real
+      absolute addresses in emulated RAM, at runtime, after this
+      project's own loader resolves the real PC-relative construction
+      sequences. Scanned the live heap/object address range instead
+      and found exactly one hit: `applet_ptr + 24` (`0x8030003c`,
+      `0x80300024` being this run's own real applet object) holds this
+      handler directly as a plain stored field -- not behind a further
+      vtable indirection, matching the "single dispatcher entered once,
+      via a preserved LR" shape already found. Traced its own real
+      write site (`abd.mod` 0x100680, inside an early real constructor-
+      shaped function): the value stored there comes from a real
+      caller-supplied constructor argument (`ldr r0, [sp, #44]`), not a
+      fixed literal computed in this function itself -- a real, general
+      "register a handler" composition pattern, not something hardcoded
+      once and forgotten. **Genuinely unresolved, not chased further
+      this session**: finding what real, live value actually flows
+      into that stack slot means tracing this constructor's own caller
+      chain (a different, bigger kind of tracing than the LR-capture-
+      at-a-known-address technique this whole investigation has used
+      so far) -- a good, concrete starting point for whoever picks this
+      up next, not a dead end.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
