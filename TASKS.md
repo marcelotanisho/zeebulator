@@ -5388,6 +5388,49 @@ playable start-to-finish at full speed, standalone build.
       -- no change, `IDisplay` still never called. Whatever this title
       is waiting for is a real, specific trigger, not a timeout or a
       splash-screen delay.
+      **Exhausted this internal scene dispatcher's own remaining
+      branches too, same session**: checked the two real cases this
+      whole investigation hadn't tried yet (internal codes `11` and
+      `1029`, the switch's own last untried branches) -- both are real,
+      but inert: `11` just runs two debug-log calls before marking the
+      event handled; `1029` marks it handled with no other real work at
+      all. Neither is EVT_APP_STOP or a real, documented AEE.h constant
+      this project could cross-check the way `EVT_APP_SUSPEND`/
+      `EVT_APP_RESUME` were -- most plausibly private, app-internal
+      codes this app sends to itself, not real system events reachable
+      through `HandleEvent`.
+      **Broadened the search past this one dispatcher, same session**:
+      confirmed real `HandleEvent` doesn't route every event through
+      it -- key events reach a separate, direct dispatch instead (this
+      round's own earlier finding). Tried seven more plausible real
+      system event codes cross-checked against the bundled real AEE.h
+      (`EVT_APP_BROWSE_URL`, `EVT_APP_MESSAGE`, raw `EVT_KEY`,
+      `EVT_COMMAND`, `EVT_DIALOG_INIT`, `EVT_DIALOG_START`,
+      `EVT_NOTIFY`) directly via `HandleEvent`, right after
+      `EVT_APP_RESUME`. Only raw `EVT_KEY` (0x100) came back "handled"
+      (matching the already-explored code `256` case); every other
+      candidate came back unhandled. All ran cleanly, no crash or
+      wander, and each triggered its own small one-time burst of real
+      activity before settling back to the identical steady idle state
+      -- no combination reached `IDisplay`.
+      **Genuinely unresolved, not chased further this session**: this
+      round has now ruled out, live, with real evidence rather than
+      guesses: every reachable branch of the confirmed scene dispatcher,
+      a 3-minute timeout, seven more plausible real system events, and
+      (last session) the entire HID/position-poll steady-state chain.
+      Reverted the temporary candidate-event probe (`git diff` on
+      `tools/game_probe.cpp` clean), 426/426 tests passing. What
+      remains is real, but no longer reachable by trying more event
+      codes at the same two entry points (`HandleEvent`'s own top level
+      and this one scene dispatcher) -- the next productive step is
+      almost certainly disassembly-driven: find where in the applet's
+      own real code `IDisplay`/`AEECLSID_GL`/`AEECLSID_EGL` would first
+      be requested (a real string/literal search for those ClsIds
+      within `abd.mod`, the same technique already used to find
+      `AEEUID_HID_Joystick_Device` earlier this session) and work
+      backward from there to what real condition guards reaching it,
+      rather than continuing to guess at what triggers it forward from
+      the event side.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
