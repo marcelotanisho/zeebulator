@@ -35,6 +35,9 @@ constexpr uint32_t kUnknownSlotOffset0xdc = 0xdc;
 constexpr uint32_t kUnknownSlotOffset0x138 = 0x138;
 constexpr uint32_t kUnknownSlotOffset0x30 = 0x30;
 constexpr uint32_t kUnknownSlotOffset0x144 = 0x144;
+constexpr uint32_t kUnknownSlotOffset0x14c = 0x14c;
+constexpr uint32_t kUnknownSlotOffset0x150 = 0x150;
+constexpr uint32_t kUnknownSlotOffset0x64 = 0x64;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
@@ -984,6 +987,49 @@ TEST(ModRuntime, UnknownSlot0x144IsWiredAndSafelyReturnsZero) {
   ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
   mod_runtime.Install(kModuleBase, kTableAddress);
   uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x144);
+
+  EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
+  EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
+}
+
+TEST(ModRuntime, UnknownSlot0x14cIsWiredAndSafelyReturnsZero) {
+  // Found in Disney All Star Cards (TASKS.md), same round: appeared
+  // the moment slot 0x144 got fixed, in the same tight 0x138-0x150
+  // cluster. Calling convention not confirmed -- safe no-op.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x14c);
+
+  EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
+  EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
+}
+
+TEST(ModRuntime, UnknownSlot0x150IsWiredAndSafelyReturnsZero) {
+  // Found in Disney All Star Cards (TASKS.md), same round: appeared
+  // the moment slot 0x14c got fixed, same tight cluster. Calling
+  // convention not confirmed -- safe no-op.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x150);
+
+  EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
+  EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
+}
+
+TEST(ModRuntime, UnknownSlot0x64IsWiredAndSafelyReturnsZero) {
+  // Found in Disney All Star Cards (TASKS.md), same round, one gap
+  // deeper still (5288 real steps in): a real 4-argument call
+  // immediately before the confirmed MALLOC slot at 0x68. Calling
+  // convention not confirmed -- safe no-op.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x64);
 
   EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
   EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);

@@ -447,7 +447,23 @@ namespace zeebulator {
 // behavior rather than just an unimplemented gap -- registered as a
 // safe no-op instead, matching the same established precedent.
 //
-// Only these twenty-six table slots are confirmed by real disassembly
+// A twenty-seventh slot, offset 0x14c (immediately after the
+// twenty-sixth), and a twenty-eighth, offset 0x150 (immediately after
+// that), were found continuing the same Disney All Star Cards round,
+// each one appearing the moment the previous gap in this same tight
+// cluster (0x138-0x150) got fixed -- real, evidenced forward progress
+// each time (step count reaching the next gap grew from 88 to 226 to
+// 3578 to 5288 across this whole run), not a guess. Neither has a
+// calling convention confirmed well enough to identify; both
+// registered as safe no-ops matching the same established precedent.
+//
+// A twenty-ninth slot, offset 0x64 (immediately before the confirmed
+// MALLOC slot at 0x68), was found the same round, one real gap deeper
+// still (5288 steps in): a real 4-argument call
+// (`dest`/`src`-shaped first two registers plus two more) with no
+// confirmed identity yet -- also a safe no-op.
+//
+// Only these twenty-nine table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report
