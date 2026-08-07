@@ -5286,6 +5286,50 @@ playable start-to-finish at full speed, standalone build.
       start by identifying that new object and tracing what it's
       waiting on, the same live-tracing methodology this whole
       investigation has used throughout.
+      **Picked that up immediately, same session, and it went further
+      than expected -- the "newly-created object" lead turned out to be
+      a known dead end, but chasing the real resource loads next paid
+      off big.** The new object from `CreateInstance(0x0101eb0b)` is
+      this project's own already-documented, already-understood
+      "self-propagating stub" scaffold (`tools/game_probe.cpp`'s own
+      doc comment on `build_self_propagating_stub` -- a real, confirmed
+      PopCap/Zeebo telemetry-shaped interface whose writes nothing
+      reads back) -- not a new gate, a real dead end already known
+      from Peggle's own earlier bring-up.
+      The three resource loads were the real lead. Live-traced their
+      real caller (`abd.mod` 0x10ee58, this project's own already-
+      documented "load resource N into cache slot" wrapper from
+      Peggle's own much earlier investigation) back to *its* own real
+      callers, across a full run: **not 3 requests, closer to 49** --
+      real code requests nearly this title's *entire* real asset
+      catalog (ids `9001`-`9087`) once the resume-triggered enable flag
+      is set, not a handful. Cross-checked against this project's own
+      confirmed `BarArchive::Find` fallback algorithm by hand: all but
+      six of those ids (`9031`-`9036`, genuinely outside every real
+      directory record's own covered range) resolve to valid, real
+      entries. **This means this whole session's very first fix (the
+      real `.bar` sequential-fallback algorithm, `core/loader/bar.cpp`)
+      was already correctly solving the "most resources fail to load"
+      problem documented from a much earlier investigation round --
+      this session simply hadn't seen it fully exercised until the
+      `EVT_APP_RESUME` fix unlocked the real code path that actually
+      requests them all.**
+      **Even with nearly the entire real asset catalog now loading
+      successfully, this title still never reaches `IDisplay`** --
+      confirmed live over a full 60-real-second, 1,858-tick run: the
+      resource-load burst completes early and the per-tick pattern
+      settles back to the same steady idle shape, zero `IDisplay` calls
+      the whole time. **Genuinely unresolved, not chased further this
+      session**: real code needs some further, still-unidentified real
+      trigger beyond "resources loaded" before it starts drawing --
+      very plausibly another real event (the same general shape
+      `EVT_APP_RESUME` itself was), a real "all loads complete"
+      callback this project's own `LoadResDataEx` doesn't model
+      (it's synchronous here; real hardware's own version may be
+      asynchronous, with a real completion notification this project
+      has no equivalent for), or something this round didn't reach.
+      No code changes this round (pure investigation); 426/426 tests
+      still passing, `tools/game_probe.cpp` clean.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
