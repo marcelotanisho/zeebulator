@@ -5482,6 +5482,19 @@ playable start-to-finish at full speed, standalone build.
       argument shapes observed) is now the single highest-value next
       target, and a genuinely large, dedicated reverse-engineering task
       in its own right, not a quick follow-on fix.
+      **Left concrete data for that next round instead of guessing
+      further, same session**: a temporary vtable dump (reverted,
+      `git diff` on `tools/game_probe.cpp` clean) mapped the real trap
+      addresses observed back to real vtable slot indices on this
+      specific object: slots `4`, `6`, `33`-`35`, `40`, `52`-`57`,
+      `88`-`89`, `100`, `104`, `106`-`107` -- 17 distinct real slots in
+      active use, not one or two, and several real argument values
+      that decode as plausible fixed-point (16.16) screen coordinates
+      (e.g. `0x012c0000` = `300.0`, `0x00960000` = `150.0`, well within
+      this project's own 640x480 real display resolution). Consistent
+      with a real, rich per-frame system, not a narrow single-purpose
+      interface -- reinforces this as a dedicated task, not something
+      a handful of guessed return values could safely stub around.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
