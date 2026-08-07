@@ -716,6 +716,18 @@ int main(int argc, char** argv) {
   uint32_t last_opened_file_proxy =
       file_hle.BuildLastOpenedFileProxy(/*vtable=*/0x80012000, /*object=*/0x80013000);
   shell_hle.RegisterInstance(0x01001014, last_opened_file_proxy);
+  // ClsId 0x0100100c: a real, still-unidentified class found bringing
+  // up Disney All Star Cards -- real code calls
+  // `ISHELL_CreateInstance(shell, 0x0100100c, &ppo)` and, like every
+  // other real `CreateInstance` call site in this project's history
+  // that turned out to matter, never checks the returned status before
+  // dereferencing `*ppo` two instructions later (confirmed live: the
+  // out-param stayed null and the next real instruction crashed
+  // through it). Generic scaffold, same as every other still-
+  // unidentified class -- real interface not known yet.
+  uint32_t unknown_0x0100100c_obj = zeebulator::BuildGenericStubObject(
+      cpu.GetMemory(), hle, /*vtable=*/0x80048000, /*object=*/0x80049000, /*slot_count=*/40);
+  shell_hle.RegisterInstance(0x0100100c, unknown_0x0100100c_obj);
   // A still-deeper gate (0x1d5b8, reached only after the fixes above)
   // requires two more classes -- confirmed via real objdump directly on
   // the literal pool addresses its own `ldr r1,[pc,#N]` instructions
