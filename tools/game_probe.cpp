@@ -1536,6 +1536,18 @@ int main(int argc, char** argv) {
       return 1;
     }
     std::printf("HandleEvent(EVT_APP_START) returned %u\n", handle_result.r0);
+
+    stage = "HandleEvent(EVT_APP_RESUME)";
+    constexpr uint32_t kEvtAppResume = 3;
+    std::printf("Calling HandleEvent(EVT_APP_RESUME)...\n");
+    auto resume_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn,
+                                                 applet_ptr, kEvtAppResume, 0, kAppStartAddr,
+                                                 /*trace=*/false, /*hle_trace=*/false, &display, &backend);
+    if (resume_result.wandered_outside_module || resume_result.exceeded_step_budget) {
+      std::printf("HandleEvent(EVT_APP_RESUME) did not complete trustworthily -- stopping.\n");
+      return 1;
+    }
+    std::printf("HandleEvent(EVT_APP_RESUME) returned %u\n", resume_result.r0);
   } catch (const std::exception& e) {
     std::printf("%s threw: %s (pc=0x%08x, offset 0x%08x from mod base)\n", stage, e.what(),
                 cpu.GetRegister(zeebulator::kPC), cpu.GetRegister(zeebulator::kPC) - kBase);
