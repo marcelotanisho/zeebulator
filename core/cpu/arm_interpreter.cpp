@@ -1043,10 +1043,37 @@ void ArmInterpreter::Step() {
       bool is_extend = bits9_4 == 0b000111 &&
                         (bits27_20 == 0x6A || bits27_20 == 0x6B || bits27_20 == 0x6E ||
                          bits27_20 == 0x6F);
-      if (!is_extend) {
+      if ((instr & 0x0FFF0FF0) == 0x06BF0F30) {
+        // REV Rd, Rm: cond 0110 1011 1111 Rd 1111 0011 Rm -- real ARMv6
+        // byte-reverse-word instruction, sharing this same "media
+        // instructions" encoding space with the Extend family (same
+        // bits[27:20]=0x6B as UXTB/UXTAB, disambiguated by bits[9:4]:
+        // 0b110011 here vs. Extend's 0b000111). Found live in Heavy
+        // Weapon: a real loop reads a word, byte-reverses it, writes it
+        // back, repeated over a loaded data block -- a real endian-swap
+        // routine.
+        uint32_t rd = (instr >> 12) & 0xF;
+        uint32_t rm = instr & 0xF;
+        uint32_t val = ReadOperandRegister(rm);
+        regs_[rd] = ((val & 0x000000FF) << 24) | ((val & 0x0000FF00) << 8) |
+                    ((val & 0x00FF0000) >> 8) | ((val & 0xFF000000) >> 24);
+      } else if ((instr & 0x0FFF0FF0) == 0x06BF0FB0) {
+        // REV16 Rd, Rm: cond 0110 1011 1111 Rd 1111 1011 Rm -- REV's
+        // sibling, swapping bytes within each 16-bit half independently
+        // rather than reversing the whole word (bits[7:4]=1011 vs.
+        // REV's 0011). Found live immediately after REV in this same
+        // Heavy Weapon routine, in an identical loop shape but over
+        // 16-bit halfwords instead of 32-bit words.
+        uint32_t rd = (instr >> 12) & 0xF;
+        uint32_t rm = instr & 0xF;
+        uint32_t val = ReadOperandRegister(rm);
+        regs_[rd] = ((val & 0x000000FF) << 8) | ((val & 0x0000FF00) >> 8) |
+                    ((val & 0x00FF0000) << 8) | ((val & 0xFF000000) >> 8);
+      } else if (!is_extend) {
         throw UnimplementedInstruction("Undefined instruction space");
+      } else {
+        ExecuteExtend(instr);
       }
-      ExecuteExtend(instr);
     } else if (bits27_25 == 0b011) {
       ExecuteSingleDataTransfer(instr);
     } else if (bits27_25 == 0b010) {

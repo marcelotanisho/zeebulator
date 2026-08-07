@@ -447,6 +447,38 @@ TEST(Cpu, ClzOfZeroReturnsThirtyTwo) {
   EXPECT_EQ(cpu.GetRegister(kR2), 32u);
 }
 
+TEST(Cpu, RevByteReversesWord) {
+  // REV shares the same "media instructions" encoding space as the
+  // Extend family (cond 0110 1011 1111 Rd 1111 0011 Rm, bits[27:20]=0x6B
+  // same as UXTB/UXTAB, disambiguated by bits[9:4]=0b110011) -- real
+  // ARMv6 instruction, found live in Heavy Weapon's own real endian-swap
+  // loop over a loaded data block.
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR3, 0x12345678);
+  cpu.GetMemory().Write32(0, 0xE6BF2F33);  // REV R2, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0x78563412u);
+}
+
+TEST(Cpu, RevOfZeroIsZero) {
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR3, 0);
+  cpu.GetMemory().Write32(0, 0xE6BF2F33);  // REV R2, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0u);
+}
+
+TEST(Cpu, Rev16SwapsBytesWithinEachHalfwordIndependently) {
+  // REV16's sibling encoding (bits[7:4]=1011 vs. REV's 0011) -- found
+  // live immediately after REV in Heavy Weapon's own real endian-swap
+  // code, same loop shape but over 16-bit halfwords.
+  ArmInterpreter cpu;
+  cpu.SetRegister(kR3, 0x12345678);
+  cpu.GetMemory().Write32(0, 0xE6BF2FB3);  // REV16 R2, R3
+  cpu.Step();
+  EXPECT_EQ(cpu.GetRegister(kR2), 0x34127856u);
+}
+
 TEST(Cpu, SmulbbMultipliesBottomHalfwordsSignExtended) {
   // SMULxy shares the same "miscellaneous instructions" encoding space
   // as MRS/MSR/BX/BLX/CLZ (cond 0001 0110 Rd 0000 Rs 1yx0 Rm) -- real
@@ -593,11 +625,12 @@ TEST(Cpu, UxtahAddsExtendedHalfwordToAccumulator) {
 }
 
 TEST(Cpu, OtherMediaInstructionSpaceStillUnimplemented) {
-  // REV R0, R0 -- same bits[27:20] family as SXTH (0x6B) but a different
-  // bits[9:4] pattern, confirming the Extend-family check doesn't
-  // over-match neighboring, still-unimplemented media encodings.
+  // REVSH R0, R0 -- REV/REV16's sibling (bits[27:20]=0x6F rather than
+  // their 0x6B), confirming neither the Extend-family check nor the
+  // REV/REV16 checks over-match neighboring, still-unimplemented media
+  // encodings.
   ArmInterpreter cpu;
-  cpu.GetMemory().Write32(0, 0xE6BF0F30);  // REV R0, R0
+  cpu.GetMemory().Write32(0, 0xE6FF0FB0);  // REVSH R0, R0
   EXPECT_THROW(cpu.Step(), UnimplementedInstruction);
 }
 
