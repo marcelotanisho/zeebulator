@@ -5330,6 +5330,59 @@ playable start-to-finish at full speed, standalone build.
       has no equivalent for), or something this round didn't reach.
       No code changes this round (pure investigation); 426/426 tests
       still passing, `tools/game_probe.cpp` clean.
+      **Found and fixed a real, permanent bug the very next session:
+      a genuine infinite loop, not just an unmet trigger.** User asked
+      to keep pushing on this title specifically, wanting to see it
+      actually running. Retried this project's own existing
+      `ZEEBULATOR_AUTOPRESS` probe (ruled out for a different reason
+      earlier) now that resources load -- this time it triggered real,
+      new activity (real `AEECLSID_MEDIA` audio setup, real string/text
+      processing) instead of nothing, but the injected key event's own
+      call never returned even at a 20-billion-step budget. Live PC-
+      sampling (not guessing) found a tight, real loop (`abd.mod`
+      0x101abc-0x101b30) and traced the object it operates on down
+      three pointer levels to this project's own `IHID` scaffold
+      (`tools/game_probe.cpp`'s own `hid_obj`) -- real code was polling
+      vtable slot 5 (`GetNextConnectEvent`, confirmed real signature
+      and slot order already documented on this same object) in a real
+      loop, looking for a device matching a real UID this file already
+      names, `AEEUID_HID_Joystick_Device`. Left as the generic always-
+      succeed default every unimplemented slot here uses, "no event
+      pending" never arrives, so the loop never terminates -- a real
+      bug, not legitimate expensive work (confirmed by the same live-
+      verify-before-trusting discipline this whole investigation has
+      used throughout, this time catching a wrong "maybe it's just
+      slow" read). Fixed: slot 5 now returns `AEE_EFAILED` (no connect
+      event pending), the same honest answer this project already gives
+      for zero real joystick hardware via `GetConnectedDevices`. Real
+      effect confirmed live: the hang is gone (1,860 clean ticks over
+      60 real seconds, previously stalling on the very first injected
+      key), and real code now visibly does more (audio + text
+      processing) in response to a key press, though it still settles
+      back to the same steady idle afterward and `IDisplay` is still
+      never called. Verified no regression on Double Dragon and Peggle
+      (`tools/game_probe.cpp`, committed as a real, permanent fix).
+      **Also checked, live, whether the specific injected key mattered
+      at all**: retried with `AVK_SELECT` (the real, standard BREW
+      confirm key) instead of the file's existing `AVK_0` default --
+      identical outcome either way, confirming the enumeration loop
+      (and now its fix) triggers on *any* key event reaching this
+      applet, not something specific to which key. Traced the
+      enumeration function's own caller live: reached directly from
+      `HandleEvent` itself via a tail-call chain (`lr` still the
+      original trap-base sentinel), confirming this specific code path
+      really is this applet's own key-press handler's joystick-connect
+      check -- not deeper game logic incidentally touching HID, and not
+      where a "start game" action would live. **Genuinely unresolved,
+      not chased further this session**: confirmed zero `AEECLSID_GL`/
+      `AEECLSID_EGL` requests anywhere in the entire run too (not just
+      zero `IDisplay` calls) -- real code hasn't reached rendering
+      *setup* at all yet, let alone drawing. The real remaining
+      question is the same shape as before (what real trigger moves
+      real code past its current idle state) but the search space is
+      now smaller: whatever it is, it isn't gated behind this specific
+      key-press handler's own logic, so it's somewhere else in the
+      applet's own real event/state dispatch this round didn't reach.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
