@@ -5127,6 +5127,44 @@ playable start-to-finish at full speed, standalone build.
       not a deeper layer of the same chain. Not chased further this
       session; a fresh round should start from the loading/scene-
       transition angle instead of continuing down this per-tick path.
+      **Picked that redirect straight back up, same session, and found
+      the real scene/state gate the earlier entry predicted.** Read the
+      self-rearming timer callback's own full body directly (`abd.mod`
+      0x10b9f4), not just the HLE calls inside it: after real elapsed-
+      time bookkeeping (two real subroutine calls, `0x1071d8`/
+      `0x106d04` -- these are what actually contain the already-ruled-
+      out HID/scaffold chain), it checks a real per-object flag at
+      offset `432` (`0x1b0`) and returns immediately, skipping
+      everything else, whenever that flag is zero -- which live-tracing
+      confirms it always is, for the whole 1,854-tick run. This is the
+      real gate: whatever real, substantial per-tick work this object
+      does (a tail-called vtable slot beyond this check) never runs at
+      all.
+      Found where that flag is real, meaningfully set: a separate real
+      per-object event handler (`abd.mod` 0x10b5c4, a `switch`-shaped
+      dispatch on an internal event code in `r1`) sets it to `1` for
+      code `3` (gated further on a real field, `[this+1460]`, equaling
+      `-1` at that moment) and clears it to `0` for code `2` -- reads
+      as a real, private "enable this scene's per-tick updates" /
+      "disable" pair, not a generic BREW `EVT_*` code (this object's
+      own internal enum, not AVK's). **Live-confirmed this handler is
+      only ever entered once in the whole run**, with internal code
+      `0` (not `2` or `3`), immediately at real startup -- consistent
+      with this being reached via a real tail-call chain from this
+      project's own single `HandleEvent(EVT_APP_START)` call, not a
+      per-tick thing. Code `3` -- the one that would set the flag this
+      whole chain is waiting on -- never arrives at all.
+      **This is now a concrete, scoped, well-evidenced next step, not a
+      vague "look at scene management"**: find what real, higher-level
+      trigger (very plausibly a different real `HandleEvent` code this
+      project's own harness never sends after the initial
+      `EVT_APP_START`, or some other real async completion this round
+      didn't trace back far enough to find) is supposed to deliver
+      internal event code `3` to this object on real hardware. Not
+      chased further this session -- reverted the temporary LR/event-
+      code probe (`git diff` on `tools/game_probe.cpp` clean),
+      426/426 tests still passing, nothing speculative implemented
+      against an unconfirmed real trigger.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
