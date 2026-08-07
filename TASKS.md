@@ -5709,6 +5709,26 @@ playable start-to-finish at full speed, standalone build.
       title-specific quirk table entry, an opt-in probe flag, or
       confirming the same key helps other stalled titles first) rather
       than this investigation deciding unilaterally for every title.
+      **Checked whether the post-trigger slowdown was actually a bug in
+      disguise before accepting "interpreter throughput" as the
+      answer, same session.** Two concrete, checkable hypotheses:
+      (1) real code allocating an unbounded number of objects in a
+      runaway loop (matching the growing-heap-address calls already
+      observed) -- live-counted them: only a handful of real calls,
+      nowhere near the thousands that would indicate a real runaway;
+      ruled out. (2) a real infinite loop through the still-only-
+      loosely-confirmed runtime-table slot `0x1c` (registered as a
+      blind no-op stub much earlier this session, for a different real
+      gap in this same title) -- live-counted calls through it during
+      the stall: fewer than 1,000 in a 30-real-second window, not a
+      tight loop either; ruled out. Live PC sampling during the same
+      window showed real, diverse execution across many different real
+      code addresses with no single dominant hot spot -- consistent
+      with genuinely varied real computation, not a stuck loop hiding
+      behind a slow step-budget check. Reverted both temporary probes
+      (`git diff` on `tools/game_probe.cpp` clean); 426/426 tests still
+      pass. The "interpreter throughput" read stands, checked rather
+      than assumed.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
