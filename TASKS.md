@@ -5638,6 +5638,77 @@ playable start-to-finish at full speed, standalone build.
       valuable, de-risking progress toward a future rendering-bridge
       implementation, not something to rush into building from here
       without the remaining slots' own real contracts confirmed too.
+      **Found the real root cause anyway, same session, chasing a
+      completely different thread: this title's own black screen was
+      never really about the drawing engine at all -- it's a real,
+      still-pending user-input gate, several layers below anything
+      this investigation had reached before.** Live-traced the real
+      per-tick "update" dispatcher (`abd.mod` 0x10c008): a real jump
+      table on a real scene-state field (`applet+840`) that's been
+      stuck at a real, out-of-range value (`16`) for the entire
+      session so far -- confirmed live it never changes, ticks or not.
+      State `16` falls through to a real do-nothing default case
+      (immediate return, no drawing, nothing). Traced the real
+      *transition* function separately (`abd.mod` 0x10d148, confirmed
+      called ~once per tick): it computes the real next state via
+      `abd.mod` 0x10be80, which returns `-1` ("nothing to transition
+      to") every single time, because the real flags field it checks
+      (`applet+772`) is permanently zero -- confirmed live, never
+      written anywhere in the whole run. That flags field is gated,
+      in turn, by a real countdown at `applet+1460`: real code only
+      sets the flags once this countdown reaches exactly `0`, but the
+      countdown itself is stuck at `-1` (a real "not started" sentinel
+      this project's own earlier `EVT_APP_RESUME` fix resets it to,
+      confirmed live), which is *not* a positive value that could ever
+      count down to zero.
+      **Found the one real place that sets a real, valid countdown
+      value instead of `-1`**: the SAME internal event dispatcher
+      already reverse-engineered earlier this session (`abd.mod`
+      0x10b5c4) has a case for raw `EVT_KEY` (`256`) with `wParam`
+      equal to the real key code `AVK_END` (`0xE02E`, confirmed
+      against the real bundled AVK code table) that sets
+      `applet+1460 = 5` unconditionally. **Confirmed live this is
+      exactly right**: sending a real, direct `HandleEvent(EVT_KEY,
+      AVK_END)` call (not through `--autopress`, which sends
+      `EVT_KEY_PRESS`/`RELEASE`, `0x101`/`0x102` -- a different real
+      event code than the raw `EVT_KEY` this specific dispatcher case
+      actually checks for) returned `1` (handled), and the very next
+      ticks show a real, dramatic escalation in activity: real object
+      allocation at real, growing heap addresses, several brand-new
+      real objects and vtable slots activating for the first time all
+      session (real `IShell`/`IHID` calls never seen before, plus new
+      calls on the mystery drawing-engine object).
+      **This is the real trigger.** Not a guess that happened not to
+      crash -- a fully traced, four-layer real causal chain from "the
+      screen is black" all the way back to "a specific real button
+      needs to be pressed," each link confirmed live, not assumed.
+      **Where this leaves things**: after this real trigger fires, the
+      title stalls again, but in a new, different, and more benign way
+      -- not a crash, not an infinite ARM loop (confirmed via live PC
+      sampling: real step counts are still climbing, just roughly
+      1000x slower than this project's own established baseline,
+      consistent with genuinely expensive per-step memory operations,
+      e.g. this project's own sparse page-based `Memory` class paying
+      real allocation overhead for touching many never-before-used
+      pages during what's very plausibly bulk real-object
+      initialization for an actual game level/playfield). This is the
+      same real "interpreter-throughput" shape already flagged
+      elsewhere in this project (Phase 11, "revisit JIT performance
+      work") -- a real, known category of problem, not a new one.
+      **Deliberately not made a permanent default**: unlike
+      `EVT_APP_RESUME` (a general BREW lifecycle event every app can
+      expect), `AVK_END` is a real, specific button real hardware
+      typically treats as "back/exit" -- sending it unconditionally to
+      every title the way this project already does for `RESUME` risks
+      real, unwanted side effects in titles that don't share this same
+      real "press END to leave the loading screen" behavior. Reverted
+      the temporary direct-call probe (`git diff` on
+      `tools/game_probe.cpp` clean); 426/426 tests still pass. This
+      finding is recorded here, not wired into the default boot
+      sequence -- a future round should decide how to expose it (a
+      title-specific quirk table entry, an opt-in probe flag, or
+      confirming the same key helps other stalled titles first) rather
+      than this investigation deciding unilaterally for every title.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
