@@ -256,17 +256,26 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       // calls this slot `(shell, dw=0, &pOut)` and requires *two* real
       // conditions to proceed past a real bail-out branch: the literal
       // return value 35 exactly (`cmp r0, #35`, not just "nonzero"), and
-      // `*pOut != 0` (confirmed live: leaving pOut unwritten, even with
-      // the correct return value, still hits the same bail-out one
-      // instruction later). No evidence yet for what either value
-      // itself represents, so this returns the confirmed literal and
-      // writes this same shell object's own address into *pOut -- a
-      // real, always-valid, already-fully-built object (so any further
-      // real call through it lands on genuine, working slots rather
-      // than a fresh null), not a guess at the real object's identity.
-      [object_address](IArmCore& c) {
+      // `*pOut != 0` one instruction later.
+      //
+      // *pOut isn't a pointer real code dereferences, though -- confirmed
+      // live it flows on, unmodified, into a real raw unsigned comparison
+      // much further down the same real function (`abd.mod` 0x101550,
+      // `cmp [real handle from an earlier real lookup], pOut-value`) that
+      // decides between a real success path and a real "not ready yet"
+      // status. An earlier version of this fix wrote this same shell
+      // object's own address here, which is *always* non-null (passing
+      // the first check) but is such a large value that it's *never*
+      // less-or-equal to any real handle in that later comparison,
+      // permanently forcing the "not ready" branch -- confirmed live via
+      // that exact comparison's own operands. Writes the small constant 1
+      // instead: still real and non-null (passes the first check), and
+      // small enough to be less-or-equal to any real handle this project
+      // has observed there, letting the real success path trigger instead
+      // of a real value being guessed at.
+      [](IArmCore& c) {
         uint32_t pout = c.GetRegister(kR2);
-        if (pout != 0) c.GetMemory().Write32(pout, object_address);
+        if (pout != 0) c.GetMemory().Write32(pout, 1);
         c.SetRegister(kR0, 35);
       },
       Stub,  // 44 unconfirmed

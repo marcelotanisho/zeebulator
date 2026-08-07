@@ -268,15 +268,17 @@ TEST(IShellHle, Slot43ReturnsTheConfirmedRealLiteral35) {
   EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 35u);
 }
 
-TEST(IShellHle, Slot43AlsoWritesTheRealThirdArgOutParam) {
+TEST(IShellHle, Slot43WritesTheSmallRealThirdArgOutParamValue) {
   // Real, confirmed dual-condition gate -- see IShellHle::Build's own
   // doc comment on slot 43. Confirmed live: leaving the real 3rd
-  // argument (a real out-param pointer) unwritten still hits the same
-  // real bail-out branch one instruction later, even with the correct
+  // argument (a real out-param) unwritten still hits the same real
+  // bail-out branch one instruction later, even with the correct
   // return value, since real code checks `*pOut != 0` as a second,
-  // separate condition. Writes this same shell object's own address
-  // (always real, valid, and fully built) rather than a guess at the
-  // real object's own identity.
+  // separate condition. Writes the small constant 1, not a pointer --
+  // confirmed live that *pOut later flows unmodified into a real raw
+  // unsigned comparison against a real handle value, so a large
+  // "safe, always-valid object address" choice (an earlier version of
+  // this fix) permanently fails that later comparison instead.
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);
   IShellHle shell_hle(cpu.GetMemory(), hle);
@@ -286,7 +288,7 @@ TEST(IShellHle, Slot43AlsoWritesTheRealThirdArgOutParam) {
   constexpr uint32_t kOutAddr = 0x90000;
   cpu.GetMemory().Write32(kOutAddr, 0);
   hle.CallArmFunction(sentinel, kObjectAddr, 0, kOutAddr);
-  EXPECT_EQ(cpu.GetMemory().Read32(kOutAddr), kObjectAddr);
+  EXPECT_EQ(cpu.GetMemory().Read32(kOutAddr), 1u);
 }
 
 TEST(IShellHle, SetTimerThenTickFiresAfterElapsedTimeReachesDeadline) {
