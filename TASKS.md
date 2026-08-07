@@ -5729,6 +5729,61 @@ playable start-to-finish at full speed, standalone build.
       (`git diff` on `tools/game_probe.cpp` clean); 426/426 tests still
       pass. The "interpreter throughput" read stands, checked rather
       than assumed.
+      **Wrong anyway -- corrected the same session, with real, direct
+      timing evidence instead of inference.** User asked to commit to
+      this one title until it works and pushed back on treating a
+      "future round" writeup as a stopping point. Went back in with
+      per-tick wall-clock timestamps (not step sampling): every real
+      tick from 0-5 completes in under 1.3ms, several **under half a
+      millisecond** -- the complete opposite of "expensive per-step
+      work." **Tick 6 never starts at all.** Traced why directly: the
+      self-rearming timer callback (`abd.mod` 0x10b9f4) checks a real
+      per-object "enabled" flag (`applet+432`, the same one this
+      session's `IHID`/`EVT_APP_RESUME` work already established) and
+      returns immediately, skipping its own real tail-call into the
+      deeper update logic, whenever that flag is `0` -- confirmed live
+      this is exactly what happens on tick 5. This project's own
+      harness only drives ticks by polling `IShellHle`'s timer queue,
+      so once nothing re-arms it, the outer loop has nothing left to
+      do and idles harmlessly forever -- indistinguishable from "stuck"
+      by wall-clock alone, but not slow, not looping, not a performance
+      problem in any sense.
+      **Found the real, deliberate disable, live:** a second real
+      function (`abd.mod` 0x105860, distinct from the already-known
+      `HandleEvent` dispatcher) sets `applet+432 = 0` directly, then
+      calls a real, bounded (exactly 4 iterations, not unbounded)
+      cleanup loop and a further real subroutine, before tail-calling
+      into another real object's own vtable slot 6. Reads as a real,
+      intentional "pause per-tick updates, tear down up to 4 real sub-
+      objects, kick off whatever comes next" scene-transition step --
+      confirmed exactly once, not repeating, ruling out a disable/
+      re-enable oscillation this round's tracing was just missing.
+      **Checked whether a second real `EVT_APP_RESUME` (the same fix
+      that unlocked this whole thread) re-enables it -- it doesn't.**
+      Grepped every real write site to `applet+432` in the whole
+      binary: exactly four, and the only two real "enable" writes are
+      both part of the already-known `EVT_APP_RESUME` handling this
+      project already sends once at startup -- there is no separate,
+      dedicated "resume after this specific pause" write site anywhere
+      in the binary. Live-confirmed a repeated real `EVT_APP_RESUME`
+      call during the stall has no effect: the flag stays `0`,
+      consistent with `EVT_APP_RESUME`'s own already-documented
+      `applet+1460 == -1` guard no longer holding (this session's own
+      `AVK_END` fix already moved that field to a real positive
+      countdown, not `-1`, so the same real real gate a second `RESUME`
+      call depends on is itself no longer open).
+      **Where this leaves it**: the real "what re-enables per-tick
+      updates after this specific pause" question connects directly to
+      the same still-unidentified drawing-engine subsystem this
+      session already flagged as a dedicated task (the tail-called
+      slot-6 method reached at the end of the disable sequence lands on
+      a real, not-yet-mapped object) -- not a new, separate mystery,
+      the same one, one layer closer. Reverted the periodic-resume
+      probe (`git diff` on `tools/game_probe.cpp` clean); 426/426 tests
+      pass. The corrected, verified state of this title: real, fast,
+      healthy execution the entire way through a real, deliberate
+      pause -- not a performance ceiling, a real design this project
+      hasn't finished reverse-engineering yet.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
