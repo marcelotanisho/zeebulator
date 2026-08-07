@@ -114,12 +114,31 @@ std::vector<uint8_t> BarArchive::Extract(const BarEntry& entry) const {
 }
 
 const BarEntry* BarArchive::Find(uint16_t type, uint16_t id) const {
+  // Real directory records mark only the *first* id of a contiguous
+  // run; the rest of that run's ids resolve to sequential entries by
+  // simple offset -- see bar.h's own doc comment for the confirmed
+  // evidence (two real, live-requested ids in Heavy Weapon, 54 and 158
+  // entries past the nearest declared record, land exactly on two real
+  // PNG files -- not a coincidence, a real algorithm).
+  const BarResourceId* best = nullptr;
   for (const BarResourceId& res_id : resource_ids_) {
-    if (res_id.type == type && res_id.requested_id == id) {
-      return &entries_[res_id.entry_index];
+    if (res_id.type == type && res_id.requested_id <= id) {
+      if (best == nullptr || res_id.requested_id > best->requested_id) best = &res_id;
     }
   }
-  return nullptr;
+  if (best == nullptr) return nullptr;
+  uint32_t offset = id - best->requested_id;
+  uint32_t candidate = best->entry_index + offset;
+  // Bound the run so it can't wander into a different declared run's own
+  // entries, or past the end of the archive.
+  uint32_t bound = static_cast<uint32_t>(entries_.size());
+  for (const BarResourceId& res_id : resource_ids_) {
+    if (res_id.entry_index > best->entry_index && res_id.entry_index < bound) {
+      bound = res_id.entry_index;
+    }
+  }
+  if (candidate >= bound) return nullptr;
+  return &entries_[candidate];
 }
 
 }  // namespace zeebulator

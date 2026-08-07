@@ -125,11 +125,27 @@ class BarArchive {
   std::vector<uint8_t> Extract(const BarEntry& entry) const;
 
   // Real `ISHELL_LoadResDataEx`-shaped lookup: finds the entry a real
-  // `(type, id)` request resolves to via the real resource-ID
-  // directory, or nullptr if no directory record matches (a real,
-  // possible outcome -- not every real resource in the file necessarily
-  // has a directory entry pointing at it, since only 62 of the Peggle
-  // sample's 308 real entries are covered).
+  // `(type, id)` request resolves to.
+  //
+  // Confirmed real algorithm (not a guess): a directory record marks
+  // only the *first* id of a contiguous run; every id from there up to
+  // (but not including) the next declared record of the same type
+  // resolves to sequential entries by simple offset from the declared
+  // one. Every title this project has probed has a real resource-ID
+  // directory covering only a small fraction of its own archive's real
+  // entries (e.g. Heavy Weapon: 1 of 366) -- originally read as
+  // incomplete source dumps, until this cross-checked exactly: the
+  // header's own redundant record-count field (bar.h's own doc comment,
+  // "offset 4") always matches the directory's real size exactly, so
+  // the sparse directory is authored that way on purpose, not
+  // truncated. Confirmed directly, not inferred: Heavy Weapon's own
+  // real code requests ids 9055 and 9159 (type 20480), 54 and 158 past
+  // its one real directory record for that type (`id=9001 -> entry 0`)
+  // -- entries 54 and 158 both start with the real PNG magic
+  // (`\x89PNG\r\n\x1a\n`), landing exactly where this formula predicts,
+  // not a coincidence. Real, possible outcome: nullptr if `id` precedes
+  // every declared record of that type, or if the computed offset would
+  // run into a different declared run's own entries.
   const BarEntry* Find(uint16_t type, uint16_t id) const;
 
  private:

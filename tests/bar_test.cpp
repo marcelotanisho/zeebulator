@@ -189,6 +189,65 @@ TEST(Bar, FindReturnsNullForAnUnlistedTypeIdPair) {
   EXPECT_EQ(archive.Find(6, 4000), nullptr) << "type must match too, not just the id";
 }
 
+TEST(Bar, FindFallsThroughToASequentialEntryPastTheDeclaredRecord) {
+  // Confirmed real algorithm, not a guess (see bar.h's own doc
+  // comment): a directory record marks only the first id of a
+  // contiguous run; ids after it resolve to sequential entries by
+  // simple offset. Real evidence: Heavy Weapon's own real code
+  // requests ids 54 and 158 past its one real directory record, and
+  // both land exactly on real PNG files at those computed entries.
+  std::vector<uint8_t> res0 = {'a'};
+  std::vector<uint8_t> res1 = {'b', 'b'};
+  std::vector<uint8_t> res2 = {'c', 'c', 'c'};
+  auto blob = BuildBar({res0, res1, res2}, {BarResourceId{20480, 9001, 0, 0}});
+  auto archive = BarArchive::Parse(blob);
+
+  const BarEntry* found = archive.Find(20480, 9002);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(archive.Extract(*found), res1);
+}
+
+TEST(Bar, FindFallThroughIsBoundedByTheNextDeclaredRecordOfTheSameType) {
+  // Record A (id 100 -> entry 0) reserves entries 0-4 as its own
+  // fallback run (5 entries' worth of id gap before record B starts at
+  // id 200 -> entry 5). id 104 (offset 4) is the last one still inside
+  // that run; id 105 (offset 5) would land exactly on record B's own
+  // entry and must not silently resolve to it.
+  std::vector<std::vector<uint8_t>> resources(6);
+  for (int i = 0; i < 6; ++i) resources[i] = {static_cast<uint8_t>('a' + i)};
+  auto blob = BuildBar(resources, {BarResourceId{1, 100, 0, 0}, BarResourceId{1, 200, 0, 5}});
+  auto archive = BarArchive::Parse(blob);
+
+  const BarEntry* last_in_run = archive.Find(1, 104);
+  ASSERT_NE(last_in_run, nullptr);
+  EXPECT_EQ(archive.Extract(*last_in_run), resources[4]);
+
+  EXPECT_EQ(archive.Find(1, 105), nullptr) << "must not overrun into record B's own entry";
+}
+
+TEST(Bar, FindFallThroughPicksTheNearestPrecedingRecordOfTheSameType) {
+  std::vector<uint8_t> res0 = {'a'};
+  std::vector<uint8_t> res1 = {'b'};
+  std::vector<uint8_t> res2 = {'c'};
+  std::vector<uint8_t> res3 = {'d'};
+  auto blob = BuildBar(
+      {res0, res1, res2, res3},
+      {BarResourceId{1, 100, 0, 0}, BarResourceId{1, 200, 0, 2}});
+  auto archive = BarArchive::Parse(blob);
+
+  // id 201 is past record 200 (the nearer one), not record 100.
+  const BarEntry* found = archive.Find(1, 201);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(archive.Extract(*found), res3);
+}
+
+TEST(Bar, FindReturnsNullWhenIdPrecedesEveryDeclaredRecordOfThatType) {
+  auto blob = BuildBar({{1, 2, 3}}, {BarResourceId{1, 4000, 0, 0}});
+  auto archive = BarArchive::Parse(blob);
+
+  EXPECT_EQ(archive.Find(1, 3999), nullptr);
+}
+
 TEST(Bar, OutOfBoundsEntryIndexInDirectoryIsRejected) {
   auto blob = BuildBar({{1, 2, 3}}, {BarResourceId{1, 4000, 0, 5}});  // only entry 0 exists
   EXPECT_THROW(BarArchive::Parse(blob), std::runtime_error);
