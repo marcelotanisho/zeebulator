@@ -252,6 +252,43 @@ TEST(IShellHle, GetDeviceInfoWritesRealScreenDimensions) {
   EXPECT_EQ(cpu.GetMemory().Read16(kDeviceInfoAddr + 2), 480u);
 }
 
+TEST(IShellHle, Slot43ReturnsTheConfirmedRealLiteral35) {
+  // Real, confirmed return value -- see IShellHle::Build's own doc
+  // comment on slot 43 for the full derivation. Real Alien Breaker
+  // Deluxe disassembly requires exactly 35 (not just nonzero/success)
+  // from this call to proceed past a real bail-out branch gating a
+  // real object-pointer field this project's own live tracing
+  // confirmed otherwise stays null and crashes a later real call.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 43 * 4);
+  EXPECT_EQ(hle.CallArmFunction(sentinel, kObjectAddr, 0), 35u);
+}
+
+TEST(IShellHle, Slot43AlsoWritesTheRealThirdArgOutParam) {
+  // Real, confirmed dual-condition gate -- see IShellHle::Build's own
+  // doc comment on slot 43. Confirmed live: leaving the real 3rd
+  // argument (a real out-param pointer) unwritten still hits the same
+  // real bail-out branch one instruction later, even with the correct
+  // return value, since real code checks `*pOut != 0` as a second,
+  // separate condition. Writes this same shell object's own address
+  // (always real, valid, and fully built) rather than a guess at the
+  // real object's own identity.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  IShellHle shell_hle(cpu.GetMemory(), hle);
+  shell_hle.Build(kVtableAddr, kObjectAddr);
+
+  uint32_t sentinel = cpu.GetMemory().Read32(kVtableAddr + 43 * 4);
+  constexpr uint32_t kOutAddr = 0x90000;
+  cpu.GetMemory().Write32(kOutAddr, 0);
+  hle.CallArmFunction(sentinel, kObjectAddr, 0, kOutAddr);
+  EXPECT_EQ(cpu.GetMemory().Read32(kOutAddr), kObjectAddr);
+}
+
 TEST(IShellHle, SetTimerThenTickFiresAfterElapsedTimeReachesDeadline) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

@@ -248,7 +248,27 @@ uint32_t IShellHle::Build(uint32_t vtable_address, uint32_t object_address) {
       // next real call into this range doesn't reproduce the same
       // undersized-vtable crash.
       Stub,  // 42 unconfirmed
-      Stub,  // 43 unconfirmed -- the one real call site found so far
+      // 43: real, confirmed 3-arg out-param shape, still-unidentified
+      // real meaning. Real Alien Breaker Deluxe disassembly (`abd.mod`
+      // 0x101360-0x101374, a real per-object lazy-init routine gating a
+      // real object-pointer field this project's own live tracing
+      // confirmed stays null and crashes a later real call otherwise)
+      // calls this slot `(shell, dw=0, &pOut)` and requires *two* real
+      // conditions to proceed past a real bail-out branch: the literal
+      // return value 35 exactly (`cmp r0, #35`, not just "nonzero"), and
+      // `*pOut != 0` (confirmed live: leaving pOut unwritten, even with
+      // the correct return value, still hits the same bail-out one
+      // instruction later). No evidence yet for what either value
+      // itself represents, so this returns the confirmed literal and
+      // writes this same shell object's own address into *pOut -- a
+      // real, always-valid, already-fully-built object (so any further
+      // real call through it lands on genuine, working slots rather
+      // than a fresh null), not a guess at the real object's identity.
+      [object_address](IArmCore& c) {
+        uint32_t pout = c.GetRegister(kR2);
+        if (pout != 0) c.GetMemory().Write32(pout, object_address);
+        c.SetRegister(kR0, 35);
+      },
       Stub,  // 44 unconfirmed
       Stub,  // 45 unconfirmed
       Stub,  // 46 unconfirmed
