@@ -463,7 +463,25 @@ namespace zeebulator {
 // (`dest`/`src`-shaped first two registers plus two more) with no
 // confirmed identity yet -- also a safe no-op.
 //
-// Only these twenty-nine table slots are confirmed by real disassembly
+// Three more slots -- offset 0xcc (immediately after the confirmed
+// STRNCPY slot at 0xc8, a thirtieth), offset 0x90 (immediately before
+// the confirmed DBGPRINTF slot at 0x9c, a thirty-first), and offset
+// 0x10 (right after MEMCPY/MEMSET, a thirty-second) -- were found
+// finishing the same Disney All Star Cards round, the last of them
+// (0x10) reached only *after* real code got past `HandleEvent
+// (EVT_APP_START)` into its own first real per-tick timer callback --
+// this title's own `CreateInstance`/`HandleEvent` now both succeed
+// cleanly, a real, substantial milestone none of this round's earlier
+// fixes reached alone. None of these three have a confirmed calling
+// convention; all three are safe no-ops matching the same established
+// precedent. Confirmed via a temporary, exhaustive diagnostic (every
+// still-unmapped table offset up to 0x400 filled with a logging no-op
+// instead of guessing one gap at a time) that 0x10 was the *last* real
+// gap this title's own boot sequence needs: with it registered, a full
+// 20-second run reaches and stays in the real per-tick event loop with
+// no further wander, crash, or unmapped-slot hit at all.
+//
+// Only these thirty-two table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report

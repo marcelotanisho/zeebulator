@@ -42,6 +42,9 @@ constexpr uint32_t kUnknownSlotOffset0x144 = 0x144;
 constexpr uint32_t kUnknownSlotOffset0x14c = 0x14c;
 constexpr uint32_t kUnknownSlotOffset0x150 = 0x150;
 constexpr uint32_t kUnknownSlotOffset0x64 = 0x64;
+constexpr uint32_t kUnknownSlotOffset0xcc = 0xcc;
+constexpr uint32_t kUnknownSlotOffset0x90 = 0x90;
+constexpr uint32_t kUnknownSlotOffset0x10 = 0x10;
 // Offsets within the "app context" struct GetAppContext returns where
 // real call sites read the current app's IShell/IDisplay pointers.
 constexpr uint32_t kAppContextShellOffset = 12;
@@ -608,6 +611,9 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   uint32_t unknown_0x14c_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0x150_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   uint32_t unknown_0x64_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  uint32_t unknown_0xcc_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  uint32_t unknown_0x90_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  uint32_t unknown_0x10_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemcpyAliasSlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
@@ -637,6 +643,9 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   memory_.Write32(table_address + kUnknownSlotOffset0x14c, unknown_0x14c_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x150, unknown_0x150_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x64, unknown_0x64_fn);
+  memory_.Write32(table_address + kUnknownSlotOffset0xcc, unknown_0xcc_fn);
+  memory_.Write32(table_address + kUnknownSlotOffset0x90, unknown_0x90_fn);
+  memory_.Write32(table_address + kUnknownSlotOffset0x10, unknown_0x10_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 
