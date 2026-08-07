@@ -5014,13 +5014,38 @@ playable start-to-finish at full speed, standalone build.
       execution for the full length of a real, non-trivial run (90
       real seconds, still running, no crash, no wander) -- genuinely
       further than any previous round reached, past a real, permanent,
-      35-object initialization sequence. **Not fully playable yet**:
-      this is the same real "interpreter-throughput wall" shape already
-      documented for the Crazyball-engine titles elsewhere in this
-      project (a single real ARM call running for a very long time
-      without returning, not a crash or a further identified gap) --
-      genuinely a different, and likely much larger, kind of problem
-      than a single missing slot, not chased further this session.
+      35-object initialization sequence.
+      **Corrected a wrong read on that "still running" state, same
+      session**: first guessed this was the same real interpreter-
+      throughput wall already documented for the Crazyball-engine
+      titles (a single real ARM call running long without returning).
+      Wrong -- live-traced with `--persistent-log` instead of guessing
+      from a killed process's own partial, buffered stdout: this
+      project's own harness caps its `--- tick N ---` print at the
+      first 10 real ticks (see `tools/game_probe.cpp`) specifically so
+      a long healthy run doesn't flood output, which is exactly what
+      made a genuinely fine, ongoing run look stuck. The real log shows
+      **1,854 real ticks completing cleanly** in a 30-second run (~31
+      real ticks/sec, matching this title's own already-documented
+      real cadence) -- a steady, repeating, 8-call-per-tick pattern
+      (objects `0x80064000`/`0x80041000`, then a self-rearming
+      `SetTimer`), not a stall at all.
+      **The real, still-open problem is the one this investigation
+      already named before any of today's fixes**: across all 1,854
+      real ticks, there are **zero calls to the real `IDisplay` object**
+      (`r0=0x80003000`) -- this title still never reaches or uses its
+      own real rendering path, so the black screen persists even
+      though the boot-time crash that used to mask this finding is now
+      gone. **Not fully playable yet, and not chased further this
+      session**: identifying what these two steady-state per-tick
+      objects (`0x80064000`, the real HID device; `0x80041000`, this
+      project's own shared `unknown_0x0103d8ec_obj` scaffold, already
+      involved in a materially-bigger, dedicated identification task
+      flagged elsewhere in this file for other titles) are actually
+      polling for before the real game logic would proceed to drawing
+      is a genuinely open, scoped reverse-engineering question, not a
+      further slot/table gap this round's live-tracing-only method can
+      safely guess at.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
