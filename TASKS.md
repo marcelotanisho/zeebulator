@@ -5530,6 +5530,35 @@ playable start-to-finish at full speed, standalone build.
       picture of what this class actually is. A genuinely large,
       dedicated task on its own, appropriately scoped as its own future
       round rather than folded into this one.
+      **Kept going the same session and it reframes the whole
+      remaining task.** Traced slot 100's own real caller (`abd.mod`
+      0x104e00-0x105010): a real jump table (`addcc pc,pc,sl,lsl#2`)
+      selecting one of roughly eight real alignment-mode handlers based
+      on a real type value (`fp`/`r11`, checked against `9`/`10`/`12`/
+      `18`/`33`/`36`), each doing real 2D anchor math -- `x -= width/2`,
+      `y -= height/2` for centered modes, then `x+width, y+height` to
+      compute the opposite corner -- before assembling a real rectangle
+      struct and dispatching into this same mystery object (via slot
+      33's own trampoline, then slot 100's, in sequence). This is real,
+      textbook sprite/text bounding-box computation for a real 2D
+      layout system, not incidental math.
+      **The real, honest conclusion this points to**: this mystery
+      object very plausibly *is* this title's own software rendering/
+      layout engine -- the thing real code hands a computed
+      destination rectangle *to*, expecting *it* to turn that into
+      real pixels. If that's right, no return value this project could
+      answer these calls with will ever produce a visible frame,
+      because the real missing piece isn't "the right stub value" the
+      way every other fix this whole session has been -- it's that
+      this project doesn't yet implement this engine's own real
+      drawing semantics at all. Getting real pixels on screen from
+      here needs translating this object's real draw-shaped calls into
+      real `IDisplay`/GL calls ourselves, a genuine feature-
+      implementation task (write a real bridge from this engine's
+      contract to this project's own existing rendering backend), not
+      a bug to keep hunting for. Substantially bigger in kind than
+      anything else done this session -- flagged here rather than
+      started without checking in first.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
