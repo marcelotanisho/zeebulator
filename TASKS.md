@@ -5597,6 +5597,47 @@ playable start-to-finish at full speed, standalone build.
       well-evidenced, appropriately-sized task for whoever picks this
       up next, with real, permanent progress (six confirmed bug fixes
       this session alone) already banked and unaffected either way.
+      **Kept tracing the real "draw one element" sequence, same
+      session, and reconstructed it close to end to end.** Mapped six
+      more of this engine's own real trampolines (`abd.mod` 0x115644/
+      0x11568c/0x11573c/0x115784/0x1154dc/0x115cf4) to real vtable
+      slots (`52`/`53`/`56`/`57`/`40`/`107`) the same way as before,
+      then read the one real function that calls all of them in
+      sequence (`abd.mod` 0x10547c-0x1054fc) as a single, whole real
+      operation for the first time, not slot-by-slot in isolation:
+      **slot 40** `(r7, r8, r9, sl)` -- real per-element setup/select,
+      called first; **slot 52** `(0xde1)` and **slot 53** `(0x8078)`
+      -- two real single-value property calls; **slot 107**
+      `(type=2, 0x140c, 0, &stackStruct)` -- the real geometry call
+      already traced through slot 100's own alignment jump table;
+      **slot 54** `(type=5, 0, 4)` -- another real property call;
+      **slot 57** and **slot 56** -- the *same* two values from slots
+      53/52 passed again, reads as a real "restore" pairing with the
+      earlier "select" calls; a **conditional** call through a further
+      real trampoline (`abd.mod` 0x11595c, only taken if a real stack
+      flag is set) reaching **slot 88**; and finally **slot 6**
+      `(255.0, 255.0, 255.0)` -- the real `SetColor` call already
+      confirmed. A coherent, real, single-purpose sequence end to end:
+      select/begin, set two real properties, set geometry, set another
+      property, restore the two properties, conditionally do one more
+      real thing, set color. 11 of this engine's own 17 real slots now
+      have at least one confirmed real call-site context, not just a
+      trap address.
+      **Where this leaves it**: mapping the remaining slots (`34`,
+      `35`, `89`, `104`, `106`) means chasing further nested real
+      trampolines-within-trampolines (confirmed live this round: slot
+      88's own real call site is itself gated behind a *second* real
+      trampoline layer, not a direct call) -- real, continuing
+      progress, but each additional slot is costing more live-tracing
+      effort than the last for less new structural insight, since the
+      broad shape (a real per-element draw sequence: select, set
+      properties, set geometry, set color) is already clear. Good,
+      natural point to bank this round's real progress rather than
+      keep pushing through diminishing returns tonight -- the decision
+      from earlier in this same session still holds: this is real,
+      valuable, de-risking progress toward a future rendering-bridge
+      implementation, not something to rush into building from here
+      without the remaining slots' own real contracts confirmed too.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
