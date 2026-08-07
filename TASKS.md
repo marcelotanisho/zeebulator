@@ -5060,6 +5060,44 @@ playable start-to-finish at full speed, standalone build.
       (real HID device, called four different ways every tick) and
       `0x80041000` (this project's own shared scaffold) are really being
       asked for.
+      **Took that next step, same session, and ruled the whole HID
+      chain out as a red herring -- live-confirmed, not just read
+      statically.** Mapped the four real per-tick HID calls exactly via
+      a live vtable dump: `GetNextButtonEvent`(9), `GetPositionState`
+      (10), `GetMinPositionInfo`(11), `GetMaxPositionInfo`(12) -- a
+      real, coherent "poll input" sequence, called from two distinct
+      real functions (`abd.mod` 0x1024f8 for button events, gated on a
+      real event actually being available; 0x102528 for position,
+      unconditional every tick). Traced 0x102528's own real chain
+      (`0x100834` -> `0x1009fc`) down to a real, substantial axis-type
+      identification routine, and initially formed a plausible-looking
+      static-reading hypothesis: a real UID comparison (`cmp r1, fp`,
+      `fp` loaded from a real module literal) that this project's own
+      all-zero default `GetAxesInfo` stub could never satisfy, since
+      nothing ever populates the compared field. **Verified live before
+      trusting that reading, per this project's own established
+      convention -- correctly, since it was wrong**: a temporary return-
+      value probe at `0x1009fc`'s own single return point showed it
+      returning real success (`r0=0`) via that same UID scan's own
+      real, intentional *fallback* path (already present in the real
+      disassembly, missed on the first static read: if no UID matches,
+      real code falls back to the first all-zero/unused slot, which an
+      all-zero stub trivially satisfies). Then traced one level up:
+      `0x100834` itself reaches its own shared return point
+      (`0x100974`) with `r0=0` on every single one of 244 sampled real
+      ticks -- not a failure bailout as the address's own branch
+      structure first suggested, but that function's own normal
+      *success* epilogue (a real, explicit `mov r0, #0` immediately
+      above it, reached after a real cached-lookup call at `0x100804`
+      that legitimately skips redundant work after the first tick).
+      **Net finding: this entire real HID/position-poll chain completes
+      successfully, every tick, with no failure and nothing further to
+      do** -- healthy real code correctly reporting "no new input this
+      tick," not a stuck or blocked gate. Reverted the temporary probes
+      (`git diff` on `tools/game_probe.cpp` clean); the real cause of
+      "never calls `IDisplay`" is confirmed to lie somewhere else
+      entirely, not in this chain -- ruled out with live evidence, not
+      abandoned on a guess.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
