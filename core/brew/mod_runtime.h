@@ -433,7 +433,21 @@ namespace zeebulator {
 // safe no-op matching the established precedent for single-call-site
 // gaps.
 //
-// Only these twenty-five table slots are confirmed by real disassembly
+// A twenty-sixth slot, offset 0x144 (immediately after the sprintf-
+// family slot at 0x13c and the twenty-third slot at 0x140), was found
+// continuing that same Disney All Star Cards round: real code calls it
+// with a shape that looks sprintf-adjacent but isn't quite this file's
+// own confirmed `SprintfImpl` convention -- `(dest=a stack buffer,
+// size=32, fmt=a real literal string address)`, an explicit size
+// parameter between dest and fmt that `SprintfImpl`'s own confirmed
+// `(dest, fmt, ppArgs)` shape doesn't have, very plausibly a real
+// `snprintf`-shaped sibling rather than the same function reused.
+// Only one real call site found so far and the size/format mismatch
+// means reusing `SprintfImpl` outright would risk silently wrong
+// behavior rather than just an unimplemented gap -- registered as a
+// safe no-op instead, matching the same established precedent.
+//
+// Only these twenty-six table slots are confirmed by real disassembly
 // so far. Every other offset is left unmapped -- a real .mod hitting
 // one would fetch from unwritten memory, which tools/game_probe.cpp's
 // wandered-outside-module check exists specifically to catch and report

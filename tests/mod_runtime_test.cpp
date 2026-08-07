@@ -34,6 +34,7 @@ constexpr uint32_t kUnknownSlotOffset0x1b4 = 0x1b4;
 constexpr uint32_t kUnknownSlotOffset0xdc = 0xdc;
 constexpr uint32_t kUnknownSlotOffset0x138 = 0x138;
 constexpr uint32_t kUnknownSlotOffset0x30 = 0x30;
+constexpr uint32_t kUnknownSlotOffset0x144 = 0x144;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
@@ -967,6 +968,22 @@ TEST(ModRuntime, UnknownSlot0x138IsWiredAndSafelyReturnsZero) {
   ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
   mod_runtime.Install(kModuleBase, kTableAddress);
   uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x138);
+
+  EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
+  EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
+}
+
+TEST(ModRuntime, UnknownSlot0x144IsWiredAndSafelyReturnsZero) {
+  // Found in Disney All Star Cards (TASKS.md), same round as slot
+  // 0x30: a real call shape that looks sprintf-adjacent (dest, size,
+  // fmt) but doesn't match this file's own confirmed SprintfImpl
+  // convention (dest, fmt, ppArgs) -- registered as a safe no-op
+  // rather than risk silently wrong behavior from reusing SprintfImpl.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x144);
 
   EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
   EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
