@@ -4960,6 +4960,67 @@ playable start-to-finish at full speed, standalone build.
       call counts or real elapsed state per real logical operation),
       which is a real design decision this project hasn't made yet,
       not one more value to discover by tracing.
+      **Made that design decision, new session, and it's real progress,
+      not just a static value swapped for another one.** First tried
+      the simplest model matching the two confirmed real call sites
+      exactly: a per-object latch (35 on a given object's first-ever
+      call, 0 on every call after). Live-traced the result: it
+      correctly finishes the *first* real per-object init sequence
+      (`abd.mod` 0x1031dc's own real `[r4+40]` field goes from
+      permanently null to a real, valid, non-null pointer for the
+      first time ever) but then a **second**, sibling real object
+      (`r4=0x80300044`, immediately adjacent to the first's
+      `r4=0x80300040`) runs the exact same real init code and gets
+      starved: its own call lands on the shared latch's 3rd call,
+      already exhausted to 0, so its own `[r4+40]` stays null and the
+      exact same real crash (a null real vtable jump, `abd.mod`
+      0x101f60-0x101f74) recurs one object later instead of being
+      fixed. Confirmed this really is "many real objects, each needing
+      their own fresh 35-then-0 pair" and not a one-off: switched the
+      model from a latch to a strict call-parity **toggle** (odd calls
+      return 35, even calls return 0) -- still answers both original
+      confirmed call sites identically (they're just this toggle's
+      first two calls) -- and live-traced **35 consecutive real
+      objects** completing their own init in a row, each getting its
+      own real, valid, sequential pointer (`0x80200000`, `0x80200004`,
+      ... `0x80200088`, one word apart -- an evidently real, intentional
+      allocation pattern, not coincidence). Fixed (`core/brew/ishell.cpp`),
+      tested (`IShellHle.Slot43AlternatesRatherThanLatchingAfterTheFirstCall`
+      plus the existing slot-43 tests, updated for the toggle).
+      **That real fix immediately exposed the next real gap, live**:
+      once all 35 real objects finish initializing, real code (`abd.mod`
+      0x106150/0x10619c, a real per-object post-init step) calls through
+      runtime-helper-table offset `0x1c` -- unregistered, another real
+      null-function-pointer jump, the same shape this project has fixed
+      repeatedly elsewhere in this same table. Registered as a safe
+      no-op, same established precedent as every other single-purpose
+      gap in this table (`core/brew/mod_runtime.cpp`, tested:
+      `ModRuntime.UnknownSlot0x1cIsWiredAndSafelyReturnsZero`).
+      **Verified both fixes are real and don't regress**, live, against
+      both other titles this project has: ran Double Dragon and Peggle
+      through a clean `git stash` A/B against the exact last-committed
+      state (not an older, stale capture) -- Peggle in particular shows
+      the *same* kind of further real progress this title did: a
+      previously-real crash (`peggle.mod` 0x105b70, after 588 steps) no
+      longer happens at all; it now runs past that point until this
+      project's own interpreter step budget (5,000,000 steps per call)
+      is reached instead, meaning both fixes generalize beyond this one
+      title's own bring-up. Double Dragon shows no behavioral difference
+      at all past cosmetic HLE-trap-address renumbering (registering one
+      more runtime-table slot shifts every later slot's assigned trap
+      address by four, expected and harmless). 426/426 tests pass.
+      **Where this leaves Alien Breaker Deluxe**: with both fixes in
+      place, a full run reaches and stays in real, healthy, ongoing
+      execution for the full length of a real, non-trivial run (90
+      real seconds, still running, no crash, no wander) -- genuinely
+      further than any previous round reached, past a real, permanent,
+      35-object initialization sequence. **Not fully playable yet**:
+      this is the same real "interpreter-throughput wall" shape already
+      documented for the Crazyball-engine titles elsewhere in this
+      project (a single real ARM call running for a very long time
+      without returning, not a crash or a further identified gap) --
+      genuinely a different, and likely much larger, kind of problem
+      than a single missing slot, not chased further this session.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
