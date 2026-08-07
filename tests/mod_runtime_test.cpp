@@ -41,6 +41,7 @@ constexpr uint32_t kUnknownSlotOffset0x64 = 0x64;
 constexpr uint32_t kUnknownSlotOffset0xcc = 0xcc;
 constexpr uint32_t kUnknownSlotOffset0x90 = 0x90;
 constexpr uint32_t kUnknownSlotOffset0x10 = 0x10;
+constexpr uint32_t kUnknownSlotOffset0x1c = 0x1c;
 constexpr uint32_t kAppContextShellOffset = 12;
 constexpr uint32_t kAppContextDisplayOffset = 20;
 constexpr uint32_t kAppContextThirdObjectOffset = 0x2c;
@@ -1079,6 +1080,23 @@ TEST(ModRuntime, UnknownSlot0x10IsWiredAndSafelyReturnsZero) {
   ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
   mod_runtime.Install(kModuleBase, kTableAddress);
   uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x10);
+
+  EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
+  EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
+}
+
+TEST(ModRuntime, UnknownSlot0x1cIsWiredAndSafelyReturnsZero) {
+  // Found in Alien Breaker Deluxe (TASKS.md), reached only after the
+  // IShellHle slot-43 stateful/toggle fix let its own real per-object
+  // init loop run to completion: real code's own `blx [table+0x1c]`
+  // (two real call sites, `abd.mod` 0x106150/0x10619c) jumps through a
+  // null function pointer once real per-object init work is done.
+  // Calling convention not confirmed -- safe no-op.
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, 0xF0000000, 0x1000);
+  ModRuntime mod_runtime(cpu.GetMemory(), hle, kHeapRegion, /*heap_size=*/0x1000, kContextAddress);
+  mod_runtime.Install(kModuleBase, kTableAddress);
+  uint32_t unknown_fn = cpu.GetMemory().Read32(kTableAddress + kUnknownSlotOffset0x1c);
 
   EXPECT_NE(unknown_fn, 0u) << "slot must be wired to a real trap, not left as a null pointer";
   EXPECT_EQ(hle.CallArmFunction(unknown_fn, 0x1234, 0x5678), 0u);
