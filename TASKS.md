@@ -4588,6 +4588,343 @@ playable start-to-finish at full speed, standalone build.
       playable), but whether real gameplay/UI actually renders still
       needs a live look at the window, the same way Alien Breaker
       Deluxe's own "black screen" was only caught that way.
+      **Follow-up session: confirmed live it's a real black screen, and
+      root-caused why** -- a live look (screenshot of the real window,
+      not just log output) showed only this harness's own "FPS:60"
+      debug overlay on solid black, unchanged over several real
+      minutes. Initially looked exactly like a hang (steps stopped
+      advancing, process sat mostly in a real `poll` syscall) -- traced
+      with a bounded, targeted live trace (this round's own version of
+      the "fill every gap, run once" efficient-diagnostic technique)
+      bracketing every step of the outer per-tick loop in
+      `game_probe.cpp`, not just the ARM/HLE layer. That proved it is
+      NOT hung at all: the real per-tick outer loop (SDL event poll,
+      timer processing, audio mix, present) keeps cycling correctly and
+      indefinitely at the real ~60fps pace -- it's just that after 4
+      real per-tick timer callbacks (the same 4 ticks the original
+      round already saw), the title's own code calls real
+      `ISHELL_SetTimer` with `dwCount=0xFFFFFFFF` (~49 real days) and
+      never arms anything else, so `IShellHle::Tick` legitimately
+      returns zero expired timers forever after -- a correct, faithful
+      emulation of what the title's own real code asked for, not a bug
+      in this project's timer code. Confirmed via `Sdl2UnifiedBackend::
+      HasRealGlActivity()` staying false the entire time: this title's
+      own code never issues a single real `IDisplay`/GL draw call
+      across all 4 ticks, so the screen is genuinely, correctly black
+      -- there's simply nothing queued to draw yet. Tried simulated
+      input (`ZEEBULATOR_AUTOPRESS=1`, this file's existing
+      exploratory-only mechanism) in case this is the same "real code
+      waits for a real human keypress at a title screen with zero
+      simulated input" shape Double Dragon's own bring-up already
+      confirmed -- no observable effect after 15 real seconds (same 4
+      ticks, same final SetTimer call, no new draws). Left genuinely
+      open: either real hardware's `SetTimer` treats a `dwCount` this
+      large as some other special sentinel this project's own
+      literal-faithful `ScheduleTimer` doesn't replicate, or this
+      title's own real first-draw trigger is some other real event
+      (a real HID device-ready callback, a real resource load
+      completing asynchronously, ...) this harness doesn't yet supply --
+      genuinely unresolved, not chased further this round. All temporary
+      diagnostic instrumentation added to trace this (several rounds of
+      `git checkout`-reverted printf bracketing in `game_probe.cpp`) was
+      reverted before finishing; no source changes from this follow-up
+      session were kept.
+      **Root-caused, live, on the real desktop**: the user watched the
+      real window directly and reported the true visible behavior this
+      harness's own log-only testing had missed -- a real yellow splash
+      screen for the first ~4-5 real seconds, *then* black, not black
+      from the start. That real timing lines up exactly with the 4 real
+      per-tick timer callbacks found above (each roughly a real second
+      apart). Cross-referencing every real `ISHELL_LoadResDataEx` call
+      this run made (trap 0xf000022c, the 42nd IShell vtable slot) against
+      `allstarcards.bar`'s own real resource-ID directory (via this
+      project's own `bar_inspector` tool) found the same real shape
+      Alien Breaker Deluxe already exposed: **515 real raw content
+      entries in the archive, but only 23 resource-ID directory records
+      mapping any of them to a (type, id) real code can actually look
+      up**. This title's own real loading sequence requests 59 distinct
+      (type, id) pairs across those 4 ticks; only 7 have a real
+      directory entry at all (id=1/9000 type 20480 -- likely the splash
+      background/logo, matching what's actually visible -- plus
+      id=100/501/600/1000/109 type 6). The other 52 -- mostly dense,
+      obviously-sequential id runs (501-509, 600-627, 103/104/110/111/
+      128/130-140, ...) that read exactly like "one id per playing
+      card/UI tile" -- have no directory entry and come back EFAILED.
+      Same real conclusion as Alien Breaker Deluxe, not a new bug: this
+      project's own `.bar` dump for this title is very likely genuinely
+      incomplete relative to what real hardware shipped with (the
+      *archive*'s raw content is all there -- 515 real entries, plenty
+      of real image/audio data -- only the *directory* naming most of
+      it is missing), so this title's own path to further rendering is
+      blocked on source data, not an emulator gap left to fix.
+
+- [ ] **Picked a ninth title, Heavy Weapon** (a PopCap title, same
+      lineage as the already-solid Peggle bring-up) after the user
+      pushed back on "every title hits the same incomplete-data wall" --
+      reasonably, given Alien Breaker Deluxe and Disney All Star Cards
+      both landed there. Wanted a genuinely different outcome to test
+      whether that pattern was real or this project's own blind spot.
+      **Real ClsId `0x010978a2` found the same way as every other
+      title** (thin-wrapper `r0`/`cls_id` clobber). `CreateInstance`
+      immediately hit a real, previously-never-seen interpreter gap:
+      **`REV Rd, Rm`** (ARMv6 byte-reverse-word, real encoding `cond
+      0110 1011 1111 Rd 1111 0011 Rm`, sharing the "media instructions"
+      space with the already-implemented Extend family but
+      disambiguated by `bits[9:4]`), found in a real endian-swap loop
+      over a loaded data block. Implemented, tested (`Cpu.
+      RevByteReversesWord`/`RevOfZeroIsZero`), fixed the one further
+      call this unblocked (**`REV16 Rd, Rm`**, REV's halfword-swap
+      sibling, same encoding family) immediately after -- two real,
+      permanent, generalizable ARM interpreter fixes, the project's
+      first brand-new ARM opcodes since CLZ/SMULxy. 416/416 of this
+      project's own tests pass (the only failures anywhere in the full
+      suite are this repo's unrelated vendored liblzma tests,
+      pre-existing).
+      **With both in place, `CreateInstance`/`HandleEvent(EVT_APP_START)`
+      both succeed cleanly and this title reaches its own real tick
+      loop** -- further than Alien Breaker Deluxe or Disney All Star
+      Cards got. Tick 0's own real per-object update processes a
+      handful of real objects (each with real `LoadResDataEx`/runtime-
+      helper calls matching this project's own established shapes),
+      then genuinely never returns even given a 200,000,000-instruction
+      budget (40x this project's own standard 5,000,000 ceiling) --
+      confirmed, not assumed: two separate runs (5M and 200M budgets)
+      hit the exact identical final HLE call before falling silent, and
+      a live memory-value/CPU-time check confirmed real, if slow,
+      ongoing execution rather than a true OS-level deadlock.
+      **Root-caused, not just bounded**: periodic PC sampling across a
+      50M-step window found execution cycling through a real ARMv6
+      64-bit-division helper (`0x100028`, uses `CLZ` for bit-width
+      normalization -- a genuine compiler runtime routine, not a bug in
+      itself) from exactly one caller, ~1250 times per sampled site.
+      That caller is a straight-line fixed-point trajectory/interpolation
+      routine (`0x10a658`, no internal loop) invoked, in turn, from
+      exactly one real site (`0x1295d0`, confirmed live: 4999/5000
+      sampled calls share this one caller) inside a real, genuinely
+      *finite-by-design* loop: `for (; r4 + 2*r5 < r7; r4 += r5)`.
+      **The bug**: `r5` (the step) comes from a trivial real getter
+      (`0x10d2a4`, literally `return *r0` -- a compiler-outlined
+      accessor, not a bug either) reading a field of a real heap object.
+      That field is 0. **Confirmed live via a direct memory watchpoint**
+      on the exact real runtime address: it reads 0 from the very
+      first step of the whole run and nothing -- no real code anywhere
+      in the entire execution -- ever writes to it. A step of 0 means
+      `r4` never advances, so this otherwise-correctly-terminating real
+      loop spins until this project's own step-budget safety valve
+      aborts it -- genuinely indistinguishable from a true infinite loop
+      within any bounded budget.
+      **Confirmed, not just circumstantial, the next session: traced the
+      exact instructions connecting the resource-directory gap to the
+      unwritten field.** Heavy Weapon's own real `heavyweapon.bar`
+      resource-ID directory covers only **1 of 366** real raw archive
+      entries (`bar_inspector`); the two `LoadResDataEx` calls this exact
+      run makes (real ids 9055/9159) both fail -- neither matches the
+      one directory record this file has (id 9001). A full instruction
+      trace bracketing the real resource-loading wrapper at `0x125870`
+      (called from `0x12418c`, requesting id 9159) shows it exactly
+      matches the bug already documented for Alien Breaker Deluxe: the
+      trap returns real `EFAILED` (`r0=1`), but two instructions later
+      the wrapper reloads `r0` from a stack slot (`ldr r0,[sp,#8]` at
+      `0x1258a0`) and returns *that* unconditionally, discarding the
+      failure code entirely -- and the caller (`0x124190`) just does
+      `mov r9, r0`, no success check at all. On a real success this
+      slot would hold the newly-loaded data's own buffer pointer; on
+      this real failure it's whatever was already there -- freshly
+      allocated, never-written, zeroed memory -- which is exactly the
+      zero that ends up read as the stuck loop's step size. Confirmed
+      via a targeted `git checkout`-reverted instruction trace triggered
+      on this exact malloc'd address, not inferred. Same real shape as
+      Alien Breaker Deluxe, now independently reconfirmed on a *third*
+      title (with Disney All Star Cards) -- strong, converging evidence
+      this project's own dumps aren't unluckily incomplete three
+      separate times; either the real `.bar` resource-directory format
+      has a real fallback/computation this project hasn't found yet, or
+      real hardware's `LoadResDataEx` itself resolves undeclared ids
+      some other way this project hasn't identified.
+      An earlier, separate attempt this round at a general fix (a
+      "declared ids are block starts; undeclared ids in between fall
+      through to sequential archive entries" fallback in `BarArchive`,
+      tested live against Disney All Star Cards) made no visible
+      difference there and wasn't validated against Peggle's own real,
+      independently-confirmed-correct directory (whose id-gap/entry-gap
+      arithmetic doesn't cleanly fit that same theory) -- reverted,
+      not kept, pending either a cleaner test case or the real
+      algorithm being found some other way (e.g. a title whose own
+      real code demonstrably exercises a fallback path we could trace
+      directly, the same way LoadResDataEx's calling convention itself
+      was originally confirmed against a real Peggle call site).
+      All temporary diagnostic instrumentation (multiple rounds of
+      `git checkout`-reverted printf/watchpoint bracketing in
+      `game_probe.cpp`) was reverted before finishing; only the real
+      `REV`/`REV16` interpreter fixes and this write-up are kept.
+      **Next session: found and fixed the real resource-directory
+      algorithm -- a genuine, permanent, generalizable fix -- but it
+      turned out not to be what was stalling Heavy Weapon specifically.**
+      Re-examined the two "meaning unconfirmed" header fields bar.h's
+      own doc comment already flagged (offsets 0/4): offset 0 is a
+      constant format-version marker (`0x10011`) in every real file this
+      project has; offset 4's high 16 bits, cross-checked against all
+      four real samples, exactly equal the directory's own real record
+      count every time -- proving the sparse directories aren't
+      incomplete dumps (the header's own redundant field agrees), they're
+      authored that way on purpose. That reframes the real question: if
+      only a handful of ids are ever declared, real hardware must
+      resolve the rest some other way. Confirmed directly, not
+      inferred: Heavy Weapon's own real code requests ids 54 and 158
+      past its one real directory record (`id 9001 -> entry 0`), and
+      entries 54/158 both start with the real PNG magic
+      (`\x89PNG\r\n\x1a\n`) -- exactly where "declared id is a run's
+      first id; undeclared ids in the same run resolve to sequential
+      entries by simple offset" predicts, not a coincidence.
+      Implemented as the real, permanent `BarArchive::Find` (not a
+      separate experimental method this time): nearest-preceding-
+      same-type record, offset by `id - declared_id`, bounded by the
+      next declared record of that type (or archive end) so it can't
+      wander into unrelated content. 6 new tests (`bar_test.cpp`);
+      420/420 of this project's own tests pass. Verified live against
+      the real archive: `Find(20480, 9055)`/`Find(20480, 9159)` both now
+      resolve to real PNG bytes that previously came back `EFAILED`.
+      **Verified no regression the careful way, not just by assumption**:
+      Peggle hits an unrelated, genuinely pre-existing real null-pointer
+      jump (`pc=0`, 551 steps into `HandleEvent`) -- confirmed via a
+      `git stash` A/B test that this happens *identically* with the old,
+      unmodified `Find()`, so it's not something this fix caused.
+      **But live-testing this fix against Heavy Weapon's own actual
+      stall showed it doesn't resolve it** -- real, important negative
+      result, not a wasted effort: confirmed live that the two
+      previously-failing `LoadResDataEx` calls now genuinely succeed
+      (`real_ret=0`, real buffers written), yet the exact same infinite
+      loop still happens, character-for-character identical. Traced
+      further and found the earlier round's own causal chain had a real
+      error in it: the "wrapper discards `LoadResDataEx`'s return value"
+      finding was real, but the specific *field* chased afterward
+      belongs to a different, unrelated read (this project's own
+      register-name reuse across two different real functions -- both
+      happen to use `r5`/`r6` for unrelated things -- led one round's
+      own tracing to conflate them). The real stuck value traces to
+      `unknown_0x01030766_obj`'s own slot 12 (a real PopCap/Zeebo SDK
+      interface, shared with Peggle, still otherwise unidentified):
+      real code expects it to write a real out-param object whose own
+      offset 20/22 (each a real uint16) hold a width/height-shaped pair
+      that becomes a real, otherwise-correctly-terminating loop's step
+      size. Implemented a bounded, defensible fix (write this project's
+      own already-confirmed-correct real screen dimensions into a fresh
+      object there, instead of leaving the slot as a blind stub) --
+      **but live-tracing that fix showed the specific call this title's
+      own stall depends on doesn't even reach this object**: by the time
+      this exact loop iteration runs, the real field (`applet+48`) has
+      already been reassigned to a *different*, dynamically-created
+      "self-propagating stub" child (the existing placeholder for yet
+      another still-unidentified real class, `0x0101eb0b`) -- a minimal
+      object with only a vtable pointer, never meant to carry
+      width/height data at all. Also found, live, a genuine ordering
+      problem layered on top: the real code that should populate this
+      exact 36-byte object's own field runs at step ~46753 of this same
+      call, but the code that reads it runs at step ~2036 -- the read
+      genuinely precedes the write in this project's own real execution
+      order. Reverted the slot-12 scaffold change (confirmed, live, not
+      to help this specific stall, and risked adding unproven
+      complexity for no confirmed benefit) -- kept only the real,
+      confirmed, permanent `BarArchive::Find` fix and this full,
+      corrected write-up. **Genuinely unresolved**: Heavy Weapon's own
+      stall traces through at least two more layers of unidentified
+      real PopCap/Zeebo SDK classes than this round reached bottom on,
+      plus a real cross-call ordering question this project's own
+      per-tick dispatch may be getting wrong relative to real hardware
+      -- a substantially deeper investigation than a single targeted
+      fix can close, not chased further this round.
+      **Retested Alien Breaker Deluxe against the same real
+      `BarArchive::Find` fix** (deprioritized earlier this session on
+      exactly the "3 of 49 requested ids resolve" signature this fix
+      directly targets) -- real, measurable improvement, not a wash:
+      previously stayed in an indefinite, black-screen idle forever with
+      no crash; now runs 10 real ticks (past its own prior ceiling) doing
+      new real per-tick work before hitting a *new* gap -- a real null
+      object dereference (`obj=0`, not just a missing vtable slot) at a
+      real vtable-dispatch call site matching the same "GetXxx(this,
+      type_or_size)" shape Heavy Weapon's own investigation already
+      named. Traced one level further: the null traces back to a real
+      object field at offset 40 that was never populated -- but unlike
+      Heavy Weapon's single-candidate chain, this exact field has 10+
+      different real write sites across the binary (a common, reused
+      struct offset, not a unique one), meaning isolating the real
+      responsible site needs the same kind of live, targeted tracing
+      Heavy Weapon's own round used.
+      **Followed through anyway, live, and found a real, permanent,
+      generalizable ISHELL interface fix**: traced the real init
+      sequence gating that offset-40 field (`abd.mod` 0x103108) down
+      through two more nested real functions (`0x10125c`, `0x10131c`)
+      to its actual real root: `IShellHle`'s own vtable slot 43 --
+      already flagged in this project's own doc comment as
+      "unconfirmed -- the one real call site found so far" from an
+      earlier Double Dragon disassembly round, now independently
+      reconfirmed by a *second* real title. Real code requires **two**
+      real conditions from this one call, not just "nonzero/success"
+      the way most of this project's confirmed slots work: the literal
+      return value 35 exactly (`cmp r0, #35`), *and* a real 3rd-arg
+      out-param pointer that must end up non-null (confirmed live:
+      returning 35 alone still hit the same real bail-out one
+      instruction later, since real code checks `*pOut != 0` as a
+      separate condition). Implemented both, tested
+      (`IShellHle.Slot43ReturnsTheConfirmedRealLiteral35`/
+      `Slot43AlsoWritesTheRealThirdArgOutParam`); writes this same
+      shell object's own address into `*pOut` (always real, valid, and
+      already fully vtable-built, so any further real call through it
+      lands on genuine working slots) rather than guessing the real
+      object's true identity. 422/422 of this project's own tests
+      pass; verified no regression live against both Double Dragon and
+      Peggle (Peggle's own output byte-for-byte identical to a
+      pre-fix baseline capture).
+      **Confirmed live this really is the right gate, not a
+      coincidence**: with both parts of the fix in place, the deeper
+      function (`0x10131c`) that previously bailed out early (return
+      code 1) now runs substantially further and returns a real,
+      different value (`0x905`) instead -- genuine forward progress
+      through a real, multi-instruction gate, not a guess that happened
+      to not crash. **Still not enough to finish this title**: `0x905`
+      trips a further real check one level back up
+      (`0x10125c`'s own `cmp r0, #0` gate), meaning the real chain
+      continues at least one more level deeper than this round reached
+      bottom on -- each level reached has been a real, confirmed,
+      permanent fix in its own right (the BAR algorithm and now ISHELL
+      slot 43), not a discarded guess.
+      **Kept tracing, live, and found a real reframing of the whole
+      problem, not just one more layer**: `0x905` isn't a wrong/garbage
+      value -- traced its own gating flag (`[r4]`, checked `==1` deep
+      inside `0x10131c`) back to its real write site (`abd.mod`
+      0x103124-0x103128, `mov r0,#1; str r0,[sp]`), confirmed live via
+      a targeted memory watchpoint on the exact runtime stack slot: real
+      code deliberately sets this flag *itself*, immediately before
+      calling the real lookup pair (`0x10ee58`/`0x10eec4`), then reads
+      it back deep inside `0x10131c` to decide behavior -- genuinely
+      intentional real state, not uninitialized memory or an emulation
+      artifact. The specific branch taken from there compares `[r4+8]`
+      (real data) against a real threshold and returns `0x905`
+      ("not there yet") rather than taking the other, `carry-set` exit
+      that skips straight to real success -- reading very much like a
+      real, legitimate "async operation still in progress, real
+      hardware would naturally retry on a later tick" pattern, not a
+      bug in the 35/slot-43 sense the last two fixes were.
+      **This whole init routine is only ever entered *once* in this
+      project's own run** (confirmed live via an entry counter across
+      the full 10-tick session) -- meaning the real retry that would
+      presumably let real hardware eventually succeed never gets a
+      second chance here, because **the crash itself is what prevents
+      it**: real code unconditionally dereferences the still-null
+      result without checking it (the same "real code doesn't check
+      the return value" shape as every other gap this whole session),
+      so this project's own interpreter faithfully crashes on the very
+      first, still-legitimately-incomplete attempt instead of surviving
+      long enough for a real retry to occur.
+      **Genuinely unresolved, not chased further this session** given
+      the time already spent across both this title and Heavy Weapon
+      today -- but the real shape of what's needed next is now much
+      clearer than "one more slot fix": either find what real condition
+      makes `[r4+8]` cross its real threshold (letting this succeed
+      immediately, the same way the last two fixes did), or make this
+      project's own real per-object dispatch survive a real "not ready
+      yet" result gracefully instead of crashing on it, the same way
+      real hardware's own real event loop evidently does.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
