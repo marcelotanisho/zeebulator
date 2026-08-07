@@ -4474,6 +4474,61 @@ playable start-to-finish at full speed, standalone build.
       further this round; no code changes past the already-committed
       four fixes above.
 
+      **Found a real, significant BAR-format bug chasing that manifest
+      question, same session.** Live-traced the successful load's real
+      caller (`abd.mod` 0x10ee58-0x10eeb0): a generic "load resource
+      N into cache slot" wrapper used by every one of these call
+      sites, not special-cased code -- and critically, it **never
+      checks `LoadResDataEx`'s own success/failure return value**,
+      unconditionally returning the `malloc`'d buffer either way. This
+      is the real, concrete explanation for the black screen: the 48
+      failing lookups don't error out from the game's own point of
+      view, they silently hand back real, non-null, zeroed buffers,
+      indistinguishable from "loaded, but empty" -- the game correctly
+      has nothing to draw.
+      Then, checking why so few of the 49 requested IDs have real
+      directory entries at all: manually reinterpreted the bytes this
+      project's own BAR parser was treating as an "unconfirmed,
+      skipped 16-byte sub-header" -- they decode as **two more real,
+      sensible 8-byte resource-ID records**, not padding. Cross-checked
+      against the *other* real sample this project has (Peggle's own
+      `resources.bar`) before touching any code: its own first 16
+      "header" bytes decode the same way, to `id=3000->entry 0` (a
+      real MP3 file) and `id=9000->entry 46` (a real 32768-byte raw
+      texture block, matching that file's own already-documented
+      texture-block shape) -- real, meaningful resources in *both*
+      independent samples, not one coincidental false positive. Fixed
+      `core/loader/bar.{h,cpp}`/`tests/bar_test.cpp`: no sub-header at
+      all, straight 8-byte records from the very start of the
+      sub-table. Alien Breaker Deluxe's own directory grows from 1
+      record to the real 3; Peggle's grows from 60 to the real 62.
+      399/399 tests pass.
+      **Verified live: this real fix alone doesn't unblock rendering
+      for Alien Breaker Deluxe** -- re-ran with the fix in place, same
+      steady-state tick pattern as before (9 distinct shapes, same
+      sizes, still zero real `IDisplay` calls the whole run). The two
+      newly-resolved IDs (9001, 9037) aren't enough to matter: of the
+      49 distinct IDs this title's own code actually requests, only 3
+      now have a real directory entry at all, confirming the earlier
+      theory -- this project's own `data.bar` dump for this specific
+      title is very likely genuinely incomplete relative to what real
+      hardware would have shipped with (not a further parser bug; the
+      *format* is now understood correctly, cross-validated against a
+      second title). Getting this specific title rendering would need
+      either a more complete real dump or reverse-engineering
+      whatever real fallback path real hardware uses when this
+      directory doesn't cover a requested resource -- a genuinely
+      separate, open question from anything fixed this round.
+      **Net result for this title, this session**: a real, substantial
+      list of permanent engine-wide fixes (BAR zero-length entries, a
+      24th runtime-helper slot, VFS exposure for `resources.bar`,
+      order-based HID signal capture, and now the BAR sub-header fix)
+      -- five real, generalizable bugs found and fixed pursuing one
+      title's bring-up, benefiting every title using this format, not
+      just this one -- while this specific title's own path to
+      rendering remains blocked on what looks like incomplete source
+      data rather than anything left to fix in the emulator itself.
+
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
 libretro core in RetroArch, with working save states.
