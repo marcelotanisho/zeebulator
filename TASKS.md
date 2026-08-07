@@ -5191,6 +5191,101 @@ playable start-to-finish at full speed, standalone build.
       at-a-known-address technique this whole investigation has used
       so far) -- a good, concrete starting point for whoever picks this
       up next, not a dead end.
+      **Found the real generic dispatch mechanism itself while tracing
+      that write site, same session, and it reframes the whole
+      investigation.** Right next to the constructor is a tiny, generic
+      2-instruction trampoline (`abd.mod` 0x1005c8: `ldr ip,[r0,#24];
+      bx ip`) -- exactly the "call whatever handler is installed at
+      this object's own field 24" shape already inferred, and (per this
+      project's own established "thin-wrapper" precedent) very likely
+      reused for more than just this one applet. Live-captured every
+      real entry into this exact trampoline with `r0` equal to this
+      run's own real applet pointer, across a full 30-real-second,
+      900+-tick run (not just the first few ticks): **exactly one
+      hit**, `r1=0`, the very same startup call already found. This
+      project's own harness (`tools/game_probe.cpp`) calls
+      `HandleEvent` exactly once, for `EVT_APP_START`, then hands
+      everything else to the self-rearming timer for the rest of the
+      session -- confirmed live, this specific applet's own event
+      dispatch genuinely never receives a second real call of any kind
+      the whole time.
+      **This reframes the real question, generally, not just for this
+      one title**: the missing internal event code `3` isn't
+      necessarily buried in an unidentified deeper real subsystem --
+      it's entirely consistent with this being whatever real, second
+      `HandleEvent` call (a real AVK code this harness has never had
+      reason to send before, since every other title bring-up so far
+      apparently didn't need one) real hardware would deliver after
+      `EVT_APP_START`, that this harness structurally never generates.
+      **Genuinely unresolved, not chased further this session**: this
+      needs either finding the real, specific AVK code Alien Breaker
+      Deluxe's own real code expects next (real BREW reference docs
+      already bundled in `research/docs/`, not more live-tracing, is
+      the right next tool for that), or building a small, targeted live
+      experiment that tries sending a second plausible real
+      `HandleEvent` call and checks whether the applet's own event
+      dispatch receives it. Reverted the temporary trampoline probe
+      (`git diff` on `tools/game_probe.cpp` clean), 426/426 tests still
+      passing.
+      **Did exactly that experiment immediately after, same session --
+      used the real bundled reference docs rather than guessing.**
+      `research/docs/sdk_installer_extract/brew_sdk_headers_reference/
+      brew_1.1_sdk/AEE.h` defines `EVT_APP_SUSPEND 0x2` and
+      `EVT_APP_RESUME 0x3` -- an exact, direct match to the internal
+      codes `2`/`3` this investigation already found gating the real
+      per-tick "enable" flag, not a coincidence (`EVT_APP_START` is
+      also `0`, matching the internal code the object's own dispatcher
+      is confirmed to receive already). This project's own harness
+      (`tools/game_probe.cpp`) called `HandleEvent` exactly once, for
+      `EVT_APP_START`, for every title, ever -- added a second, real
+      `HandleEvent(EVT_APP_RESUME)` call immediately after it (same
+      real `AEEAppStart*` argument the header documents both events
+      sharing).
+      **Confirmed live this is exactly right, down to the exact
+      internal mechanism already traced**: the private dispatcher
+      (`abd.mod` 0x10b5c4) now receives a real second call with
+      internal code `3`, its own `[this+1460]==-1` guard passes, and
+      the real "enable" flag at offset `432` is now `1` on every one of
+      hundreds of sampled ticks (previously always `0`) -- the exact
+      predicted effect, not a guess that happened to not crash. That
+      flag flip visibly unlocks a real, one-time burst of further
+      activity previously never observed at all: a new real
+      `CreateInstance` (ClsId `0x0101eb0b`), three real
+      `LoadResDataEx` calls (ids `9030`/`9073`/`9074`, type `20480`),
+      and a brand-new real object address. Cross-checked those three
+      IDs against this project's own confirmed real `BarArchive::Find`
+      algorithm by hand: all three resolve to valid, in-bounds real
+      entries (`29`/`72`/`73` of 87) -- this real resource load
+      genuinely succeeds, not a repeat of the earlier-documented
+      incomplete-dump problem.
+      **Even with all of that working, this title still never reaches
+      `IDisplay`** -- confirmed live over a full ~30-real-second,
+      925-tick run: the one-time burst completes, and the per-tick
+      pattern settles back to the exact same steady idle shape as
+      before, zero `IDisplay` calls throughout. **Verified this real,
+      permanent addition doesn't regress this project's own two
+      standard verification titles**: Double Dragon and Peggle both
+      accept the real `EVT_APP_RESUME` call cleanly and run
+      identically to their own pre-change baselines (only cosmetic
+      heap-address shifts from the extra real allocation activity the
+      event itself legitimately triggers -- same trap sequences, same
+      terminal states, Peggle's own step-budget-exceeded outcome
+      unchanged). 426/426 tests pass. Kept as a real, permanent,
+      generally-beneficial fix (`tools/game_probe.cpp`), not reverted --
+      this is a real gap in this project's own test harness, not a
+      title-specific hack: any title whose real code waits for
+      `EVT_APP_RESUME` before doing real per-tick work would have hit
+      the same silent no-op idle this one did.
+      **Genuinely unresolved, not chased further this session**: Alien
+      Breaker Deluxe's real remaining blocker is now confirmed to be
+      something *after* this successful resource-load burst -- most
+      likely the newly-created real object (from `CreateInstance
+      (0x0101eb0b)`) needing its own further real trigger before it
+      does anything visible, the same general shape as the gate this
+      round just resolved, one level deeper. A fresh round should
+      start by identifying that new object and tracing what it's
+      waiting on, the same live-tracing methodology this whole
+      investigation has used throughout.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
