@@ -5383,6 +5383,11 @@ playable start-to-finish at full speed, standalone build.
       now smaller: whatever it is, it isn't gated behind this specific
       key-press handler's own logic, so it's somewhere else in the
       applet's own real event/state dispatch this round didn't reach.
+      **Ruled out "just needs more real time" too**: ran a full 3
+      real-minute, 5,592-tick idle session (no simulated input at all)
+      -- no change, `IDisplay` still never called. Whatever this title
+      is waiting for is a real, specific trigger, not a timeout or a
+      splash-screen delay.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
