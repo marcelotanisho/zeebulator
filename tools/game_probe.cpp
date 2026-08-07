@@ -1060,6 +1060,47 @@ int main(int argc, char** argv) {
   // (TASKS.md).
   std::vector<zeebulator::HleRuntime::HleFunction> unknown_0x0103d8ec_methods(
       40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
+  unknown_0x0103d8ec_methods[2] = [&cpu, &hle](zeebulator::IArmCore& core) {
+    // int QueryInterface(iname* _me, AEECLSID clsID, void** ppo) -- real
+    // slot index (offset 8 = INHERIT_IQI's own slot 2, the standard
+    // BREW/COM QueryInterface convention this whole family of scaffolds
+    // already follows for its other confirmed slots). Real Alien Breaker
+    // Deluxe disassembly (`abd.mod` 0x101e4c-0x101e7c) calls this real
+    // slot twice on this exact scaffold, requesting two more real,
+    // unidentified but clearly-related ClsIds (`0x0103d8dd`,
+    // `0x0103d8ea` -- five and eighteen below this scaffold's own
+    // `0x0103d8ec`, evidently the same real class family) -- reached
+    // only once this project's own EVT_APP_RESUME fix let real code get
+    // this far. Left as the generic blind `Stub` above (return 0, touch
+    // nothing else), the real 3rd-arg out-param stays unwritten and real
+    // code -- like every other unchecked-result call site this whole
+    // project has found -- uses it anyway. Writes a fresh, independent,
+    // all-slots-stub scaffold instead, the same safe, deliberately-
+    // unguessed treatment this file already uses for every other
+    // still-unidentified real interface (e.g. `0x01002001` below), so a
+    // real vtable dispatch through the returned object lands on a real
+    // trap instead of a null/garbage pointer. 200 slots, not this
+    // file's usual 40-slot default: real code (`abd.mod` 0x1158d4)
+    // immediately calls real vtable slot 79 (byte offset 0x13c) on the
+    // returned object -- confirmed live (a 40-slot version of this
+    // fix wandered outside the module exactly the same way this file's
+    // own established "needs more slots" precedent, e.g. the HID
+    // device scaffold above, already documents), so generous headroom
+    // here matters, not just correctness for the one slot observed.
+    static uint32_t next_addr = 0x800B0000;
+    uint32_t stub_vtable = next_addr;
+    uint32_t stub_object = next_addr + 0x800;
+    next_addr += 0x1000;
+    std::vector<zeebulator::HleRuntime::HleFunction> stub_methods(
+        200, [](zeebulator::IArmCore& c) { c.SetRegister(zeebulator::kR0, 0); });
+    uint32_t obj = zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, stub_vtable, stub_object,
+                                                     stub_methods);
+    uint32_t out_ptr = core.GetRegister(zeebulator::kR2);
+    if (out_ptr != 0) {
+      cpu.GetMemory().Write32(out_ptr, obj);
+    }
+    core.SetRegister(zeebulator::kR0, 0);
+  };
   unknown_0x0103d8ec_methods[4] = [&cpu](zeebulator::IArmCore& core) {
     uint32_t interface_ptr = core.GetRegister(zeebulator::kR1);
     uint32_t out_ptr = core.GetRegister(zeebulator::kR2);
