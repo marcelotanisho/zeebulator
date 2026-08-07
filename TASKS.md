@@ -5559,6 +5559,44 @@ playable start-to-finish at full speed, standalone build.
       a bug to keep hunting for. Substantially bigger in kind than
       anything else done this session -- flagged here rather than
       started without checking in first.
+      **User left the decision on how to proceed to this project's own
+      judgment; confirmed the hypothesis one round further before
+      deciding, rather than committing to the big implementation on
+      two data points.** Traced two more of the seventeen real slots
+      live: slot 6, called with the literal `0x437F0000` (IEEE-754
+      `255.0`) on all three of its own real arguments -- immediately
+      after slot 4 gets called with all zeros -- inside a single real
+      function (`abd.mod` 0x10547c-0x1054fc) that also calls slots 34
+      and 54 (confirmed via their own real, distinct type parameters,
+      `r0=2` and `r0=5`) plus several more not-yet-mapped trampolines,
+      all before this same final `(255, 255, 255)` call. This is a
+      real, textbook `SetColor(r, g, b)` shape (three equal 255.0
+      channels = white), inside what reads as a single, complete real
+      "draw one element" sequence: geometry, setup, then color, in
+      that order -- not a coincidence layered onto the slot-100
+      bounding-box finding, a second, independent confirmation of the
+      same real conclusion.
+      **Decision**: not starting the rendering-bridge implementation
+      this session. The evidence is now strong enough to trust the
+      diagnosis, but not strong enough to safely design the actual
+      bridge -- only 3 of this engine's own real ~17-slot contract are
+      even roughly understood (geometry, alignment, color), and this
+      project's own established convention throughout this entire
+      investigation has been to confirm structure before building on
+      it, not after. A real implementation attempt built on this
+      partial a picture risks the same kind of costly wrong-structure
+      guess this project has explicitly corrected itself out of before
+      (e.g. the strncpy/strncat precedent cited elsewhere in this
+      file). The responsible next step is scoped, real work for a
+      dedicated round: keep tracing this engine's own remaining real
+      slots (the same live-tracing technique already used for 3 of
+      17) until its actual contract -- not just "it draws things" but
+      the specific real shapes needed to reimplement it -- is
+      understood well enough to safely build a real bridge to this
+      project's own `IDisplay`/GL backend. Not a dead end: a concrete,
+      well-evidenced, appropriately-sized task for whoever picks this
+      up next, with real, permanent progress (six confirmed bug fixes
+      this session alone) already banked and unaffected either way.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
