@@ -4925,6 +4925,41 @@ playable start-to-finish at full speed, standalone build.
       project's own real per-object dispatch survive a real "not ready
       yet" result gracefully instead of crashing on it, the same way
       real hardware's own real event loop evidently does.
+      **Fixed the exact issue just described, live, the same session**:
+      the "real threshold" `[r4+8]` gets compared against was slot 43's
+      own 3rd-arg out-param -- confirmed by checking the comparison's
+      own live operands (`abd.mod` 0x101550: a real handle from an
+      earlier real lookup, `0x163ac`, against this project's own
+      previous fix's chosen out-param value, this same shell object's
+      own address, `0x80001000`). A pointer-sized value there is
+      *always* greater than any real handle, permanently forcing the
+      "not ready" branch no matter what -- the out-param needed to be a
+      small real value, not "any non-null real object" the way
+      Heavy Weapon's own similar-shaped gap wanted. Fixed
+      (`core/brew/ishell.cpp`, writes the small constant `1`), tested,
+      verified no regression (Double Dragon/Peggle both unaffected).
+      **With this fix, real code reaches the real success branch for
+      the first time** (`abd.mod` 0x1016a0, confirmed live) -- genuine,
+      new territory, not a guess that happened not to crash. **Found
+      the real reason it still doesn't finish, live, in that same new
+      territory**: this success path calls vtable slot 43 a *second*
+      time, on the *same* shell object, with the *same* arguments
+      (`this=shell, r1=0`) as the first call -- but this real code path
+      needs it to return `0` here, not `35`, to take its own further
+      real branch (confirmed live: it returns `35` again, since this
+      project's own fix is a fixed value, and the real code's own
+      `bne` skips the rest of the real write logic as a result). Real
+      evidence this is the *same* real "async, not ready yet" shape
+      the `0x905` finding already surfaced, just reached through a
+      different path: the same slot, same arguments, needs a genuinely
+      *different* answer the second time within one real logical
+      operation -- a real stateful/polling contract, not a static
+      value any fixed return can satisfy correctly. **Genuinely
+      unresolved, not chased further this session**: the real fix here
+      needs actual call-sequence-aware behavior (e.g. tracking real
+      call counts or real elapsed state per real logical operation),
+      which is a real design decision this project hasn't made yet,
+      not one more value to discover by tracing.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
