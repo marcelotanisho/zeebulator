@@ -6215,6 +6215,38 @@ playable start-to-finish at full speed, standalone build.
       practice of catching and documenting its own mistakes rather than
       letting a wrong intermediate conclusion stand. No code changes
       kept, 426/426 tests pass.
+      **Found and dumped the real ASCII-to-curated-index charset table
+      in full, same session -- the second of the two concrete remaining
+      tasks this session itself scoped out.** Watchpointed `abd.mod`
+      0x105d90 (`ldr r2,[r4,#20]`, the real table-base load already
+      identified) once, read the real base pointer directly, and
+      dumped all 96 real printable-ASCII entries (`0x20`-`0x7F`, 2
+      bytes each, matching the real `ldrsh` access this session already
+      traced). **Exact, complete, byte-verified match to this session's
+      own hand-derived prediction**: space -> `0`; both `'A'`-`'Z'` and
+      `'a'`-`'z'` -> `1`-`26` (a real, genuinely case-*insensitive*
+      table -- confirmed directly, not inferred from the one
+      mixed-case coincidence ('V' vs 'u') the earlier round flagged);
+      `'0'`-`'9'` -> `27`-`36`; a real, deliberately curated punctuation
+      set beyond that -- `!`=64, `?`=65, `/`=66, `.`=69, `,`=70, `;`=71,
+      `:`=72, `(`=73, `)`=74, `*`=75, `'`=76, `-`=77, `$`=47 -- and
+      every other real ASCII byte in this range (`"#%&+<=>@[\]^_\`{|}~`
+      and DEL) maps to `0`, the same real index as space -- a real,
+      safe "render nothing" fallback for characters this font's real
+      atlas doesn't provide, not a bug or an unmapped gap.
+      **Both concrete tasks this session scoped out after finding real
+      readable text are now fully, exhaustively solved**: the real
+      atlas-addressing formula (`char_index * 16.0`, confirmed) and now
+      the complete real ASCII->`char_index` table (confirmed, all 96
+      printable entries). Any real ASCII string this title might draw
+      can now be mapped to its exact real atlas coordinates end to end.
+      The one remaining real gap to actual glyph *shapes* on screen
+      (rather than the already-confirmed correct cell *positions*) is
+      the real pixel/texture data the atlas offset points into -- not
+      yet located, but now a narrowly-scoped search (a real image
+      resource, likely inside `data.bar`, this project already knows
+      how to parse) rather than an open-ended one. No code changes
+      kept (`git diff` clean), 426/426 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
