@@ -6013,6 +6013,51 @@ playable start-to-finish at full speed, standalone build.
       yet confirmed to be what a real player is actually meant to see
       at this point (could be a real placeholder/debug screen this
       title draws before real content loads, not proven either way).
+      **Found a real, fourth call site into slot 107 -- and it's real
+      text, not another shape.** Widened the live capture (all 200
+      slots on this scaffold, not just 107/6/100) and found real caller
+      `0x105744` firing far more often than the other three (2103 real
+      calls in one 90-real-second run, roughly once a real tick) --
+      decoded its own real struct with the same confirmed 16.16
+      fixed-point layout and got a real, unmistakable pattern: a run of
+      rects each exactly 15px wide and 0px tall, x-adjacent
+      (`32→47→62→...→137`), then a real gap, then a second run
+      (`325→340→...→610`) -- **real, monospace character-cell layout for
+      a text string**, not a shape. This is very plausibly the actual
+      real source of what this session's earlier rounds kept calling
+      "the width mystery": not a missing field to decode, but a whole
+      separate real text-layout call path this session hadn't found
+      yet.
+      **Traced the real call sequence immediately around each cell call
+      (all 200 slots logged in order, dumped on trigger) and found
+      slot 107 is always immediately followed by slot 100 for this real
+      caller too -- but slot 100's own real struct is all-zero, every
+      time (30/30 real samples), unlike the meaningful structs the
+      geometry calls carry.** No other real slot call appears between
+      one character's `107`+`100` pair and the next -- ruling out "the
+      glyph bitmap gets drawn by a nearby, not-yet-mapped sibling slot
+      on this same object" as the explanation.
+      **Checked whether this project's own already-implemented, already-
+      working `IDisplay::DrawText` (used successfully by other titles,
+      e.g. Double Dragon) is secretly the real answer -- it isn't.**
+      Instrumented it directly: zero real calls, the entire run,
+      confirming (not assuming) this title's real glyph rendering
+      doesn't go through this project's existing text path at all.
+      **Honest, real conclusion: this is a genuine second mystery, not
+      a continuation of the first.** Slot 107/100 on this object
+      establish real per-character cell *position* only; the actual
+      real glyph bitmap must be drawn through some other, still
+      unidentified real path this session didn't find -- a real GL/
+      texture blit (this project has some GL support already) and a
+      real device-bitmap interface (`GetDeviceBitmap`, already flagged
+      as dereferenced directly by other real titles) are the two most
+      plausible real candidates, neither traced yet. Reverted all
+      instrumentation (`tools/game_probe.cpp`, a temporary
+      `IDisplayHle::DrawText` probe print) -- `git diff` clean, 426/426
+      tests pass. A well-scoped, genuinely exciting real lead for a
+      future round: finding this title's actual glyph-blit path would
+      likely unlock real, readable on-screen text for the first time in
+      this project's history, not just shapes.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
