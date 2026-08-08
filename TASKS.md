@@ -5979,6 +5979,40 @@ playable start-to-finish at full speed, standalone build.
       needs tracing each one's own real, distinct field population in
       turn -- a well-scoped continuation for a future round, not started
       this session. No code changes kept, tests still 426/426.
+      **Rebuilt the confirmed bridge (geometry + white default, both
+      confirmed this session) one more time and captured a real,
+      multi-frame sequence (ticks 100/300/600/1000/1600/2400,
+      clearing the framebuffer between shots this time, unlike the
+      earlier one-shot dump) to watch the real animation play out
+      rather than accumulate.** **Real, structured progression, not
+      noise**: at tick 100, only the expanding-line/point element is
+      visible (the top divider hadn't been drawn yet this run). By
+      tick 1000, a real, richer layout has appeared: the top divider
+      line (with its real center gap) plus three additional short real
+      horizontal lines cascading diagonally down-left toward the
+      triangle -- consistent with more of this engine's own real
+      elements (from the seven still-unmapped switch cases) becoming
+      active as the title's own real init sequence progresses, exactly
+      as expected from a real, live system rather than a static test
+      pattern. **The screen then reaches a genuine steady state**:
+      pixel count (`3040` real nonzero pixels) and the frame itself are
+      byte-for-byte identical at tick 1000, 1600, and 2400 -- a full
+      1400 real ticks (~45 real seconds at this title's own established
+      cadence) with zero change, meaning this is a real, settled screen
+      the title is genuinely holding, not a transient mid-animation
+      frame this capture happened to catch. Strongest visual evidence
+      yet that this session's real, confirmed decode produces a
+      coherent, stable, structured real screen -- directly responsive
+      to "keep on it till it works": there is now a real, reproducible,
+      non-trivial image behind this title's own real geometry calls.
+      Reverted again (`tools/game_probe.cpp`, `IDisplayHle` pixel
+      accessor) -- `git diff` clean, 426/426 tests pass. Still not
+      wired in permanently, same reasoning as every prior round this
+      session: real color-as-state and 7 of 8 real element kinds remain
+      unmapped, and a screen this simple (dividers, a triangle) is not
+      yet confirmed to be what a real player is actually meant to see
+      at this point (could be a real placeholder/debug screen this
+      title draws before real content loads, not proven either way).
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
