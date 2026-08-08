@@ -6181,6 +6181,40 @@ playable start-to-finish at full speed, standalone build.
       itself). Both are concrete, bounded, well-evidenced tasks for a
       future round -- not further speculation. No code changes kept
       (`git diff` clean), 426/426 tests pass.
+      **Self-correction, same session: the "108-byte struct with an
+      unexplained +16.0-per-block repeat" from the entry just above was
+      wrong -- re-derived the real indexing arithmetic by hand (`abd.mod`
+      0x105d98-0x105dac: `add r2,r0,r0,lsl#1` then `add r0,r2,r0,lsl#3`
+      is `r0*3 + r0*8 = r0*11`, then `add r6,r1,r0,lsl#2` is `+ r0*4` --
+      **`*11*4 = *44`, not `*108`**) and confirmed it directly against
+      already-captured real data: consecutive real character indices
+      sit exactly 44 real bytes apart (`'a'`(1) to `'b'`(2):
+      `0x80301b98-0x80301b6c = 0x2c = 44`; `'b'`(2) to `'c'`(3): `44`
+      again; `'V'`(22) to `'1'`(28), 6 real indices apart:
+      `0x80302010-0x80301f08 = 0x108 = 264 = 6*44` exactly). **The real
+      per-character record is 44 bytes (11 words), laid out as one
+      plain, contiguous, real array indexed by the curated character
+      index this session already decoded** -- not a larger, individually
+      -boxed struct with a mysterious internal repeat. The earlier
+      round's own 108-byte dumps were real memory, correctly read, but
+      spanned 2.45 array entries each -- what looked like "the same
+      field +16.0, three times" was actually **this character's own
+      real offset, then the *next* character's, then the one after
+      that**, each naturally +16.0 apart since adjacent real indices in
+      a monospace atlas differ by exactly one real cell width. Full,
+      now-confirmed 44-byte real record layout (word index -> real
+      value, from `'a'`): words 0-3 = `0` (real, still-unidentified --
+      possibly unused by this particular font/size, not necessarily
+      dead in general), word 4 = real atlas X-offset (`char_index *
+      16.0`), word 5 = `0`, word 6 = real glyph width (`15.0`,
+      constant), word 7 = real constant `25.0` (likely atlas row
+      height/Y-offset), word 8 = `0`, word 9 = real constant `9`
+      (likely a font-size/style id), word 10 = `0`. Corrects, not just
+      adds to, the entry above -- flagged explicitly rather than left
+      silently superseded, matching this whole session's own standing
+      practice of catching and documenting its own mistakes rather than
+      letting a wrong intermediate conclusion stand. No code changes
+      kept, 426/426 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
