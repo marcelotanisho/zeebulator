@@ -6143,6 +6143,44 @@ playable start-to-finish at full speed, standalone build.
       diff` clean), 426/426 tests pass -- pure live investigation, same
       technique (direct PC watchpoints reading real, live memory) this
       project has used successfully throughout this entire session.
+      **Cracked the real 108-byte glyph descriptor's key field, same
+      session, by tagging each live dump with the exact real character
+      it belongs to (correlated against the two known real strings) and
+      comparing across 16 distinct real characters.** Byte offset 16
+      (word 4), decoded the same confirmed 16.16 fixed-point way as
+      every other geometry field this session: a clean multiple of
+      `16.0` for every single character, and the multiples themselves
+      form a real, internally consistent character *index* -- not raw
+      ASCII -- once sorted: `' '=0, 'a'=1, 'b'=2, 'c'=3, ... 'i'=9, ...
+      'm'=13, ... 'o'=15, ... 's'=19, 't'=20, 'u'=21, 'V'=22, ... 'y'=25,
+      ... '1'=28, ... '7'=34, ... '.'=69` (gaps are real, still-unseen
+      characters this session's two sampled strings never used). **Real
+      formula: atlas X-offset = char_index * 16.0** -- a textbook
+      fixed-width font atlas layout (16px per real glyph cell, of which
+      15px are the real glyph width already confirmed at byte offset
+      24/word 6, leaving 1px real inter-glyph padding). Byte offset 28
+      (word 7) is a real constant `25.0` across every character sampled
+      (very plausibly the real atlas row Y-offset or cell height for
+      this one font/size), and byte offset 36 (word 9) is a real
+      constant `9` (plausibly a real font-size/style id). The struct's
+      remaining bytes repeat this same word-4 value three times, each
+      +16.0 apart (e.g. real `V` -> 352.0, 368.0, 384.0) -- a real,
+      not-yet-understood sub-pattern (three atlas columns per glyph?
+      three cached frames?) flagged here rather than guessed at.
+      **Where this leaves it**: this session set out to find *any*
+      real evidence this title draws real text at all, and ends up
+      with a fully reverse-engineered, confirmed real font-atlas
+      addressing formula instead -- the honest remaining gap to real,
+      readable glyphs on screen is no longer "what does this struct
+      mean," it's "find the real pixel/texture data this X-offset
+      indexes into" (a real font atlas image, likely bundled in this
+      title's own `data.bar` or a similar real resource archive this
+      project already knows how to parse) and "find the real charset
+      table mapping ASCII to this curated index" (very plausibly a
+      short, static, greppable byte array somewhere in `abd.mod`
+      itself). Both are concrete, bounded, well-evidenced tasks for a
+      future round -- not further speculation. No code changes kept
+      (`git diff` clean), 426/426 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
