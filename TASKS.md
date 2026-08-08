@@ -5939,6 +5939,46 @@ playable start-to-finish at full speed, standalone build.
       (`git diff` clean again), tests still 426/426 -- this round was
       pure investigation, same disciplined "confirm before building"
       pattern as the rest of this session.
+      **Pushed the color question to an exhaustive negative result, same
+      session: over a full real 60-second run, every single real slot-6
+      call (299 of them) comes from the same one caller (`0x1054f8`)
+      and passes the exact same literal `(255.0, 255.0, 255.0)` every
+      time -- no variation, no other real caller ever invokes it.**
+      Strong, real evidence (not proof, but a full real minute with zero
+      counterexamples) that white is this engine's own real default
+      color for freshly-drawn elements, and the one real caller that
+      does call slot 6 explicitly is just reasserting that same default
+      rather than overriding it to something else. Also traced slot 40
+      (the real per-element "select" step, called once from its own one
+      real site, `0x105490`) -- its three real arguments (`0x5500`,
+      `0x3c00`, `0x8900`) don't decode as a color under any convention
+      already confirmed elsewhere in this engine (not 16.16 fixed-point,
+      not IEEE-754 float, not a 0-255 byte triple), so real color still
+      doesn't have a second, independent real source to point to for the
+      state-carried path -- it's very plausibly a genuine object/type
+      handle into a table this project hasn't identified.
+      **Found the real reason case `104f60` alone produced two visually
+      different real elements (the center point and the expanding
+      line) from a single real call site.** Traced the jump table's own
+      full real target list (`abd.mod` 0x104eb4-0x105008, 21 real
+      entries): five distinct real `sl` values (the switch selector)
+      all target the exact same code, `104f60`, and every other real
+      target (`104f08`, `105044`, `10506c`, `105018`, `104f34`,
+      `104fb8`, `104fe8`, `10509c`) converges back into that same
+      `104f60` tail after populating a different subset of the
+      `sp+4..sp+32` scratch area first (confirmed for `104f08`'s own
+      real path: `b 0x105010` -> `b 0x104f5c` -> falls straight into
+      `104f60`). So this isn't "one case, two real elements by
+      coincidence" -- it's "eight distinct real element *kinds* share
+      one real trampoline call sequence," differentiated only by
+      whatever real data (from the caller's own `r4` object, offsets
+      24/28/32/36) each case's own distinct `sp+4..32` population feeds
+      into slot 100's real alignment math beforehand. This is real,
+      useful structural confirmation, but mapping what each of those
+      eight real cases actually represents (menu item? sprite? divider?)
+      needs tracing each one's own real, distinct field population in
+      turn -- a well-scoped continuation for a future round, not started
+      this session. No code changes kept, tests still 426/426.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
