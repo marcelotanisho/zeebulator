@@ -5844,6 +5844,64 @@ playable start-to-finish at full speed, standalone build.
       source (most likely inside the same not-yet-mapped drawing-engine
       object, possibly alongside real glyph/text data) before building
       a bridge worth keeping.
+      **Found the real width source, same round: the guess was
+      unnecessary -- slot 107's own 16-byte struct already contains it,
+      just not as the 16-bit fields this session's earlier decode
+      assumed.** Set up a proper `game_probe` invocation for this title
+      (real ClsId `0x0108e356` = decimal `17359702`; this title ships
+      no `data.ggz`/`sound.ggz` of its own, so `MergeGgzInto` was given
+      a minimal synthetic empty-GGZ file instead of a real asset) and
+      live-dumped slot 107's raw struct bytes directly, instead of
+      guessing a layout from static disassembly alone. **The struct is
+      16 bytes: four consecutive `int32`s, each real BREW/Zeebo 16.16
+      fixed-point, encoding `{x0, y0, x1, y1}`** (opposite corners, not
+      the `{x, y, dx, dy}` shape this project's own `AEERect` convention
+      uses elsewhere) -- confirmed unambiguously, not inferred: dividing
+      the raw words by 65536 produced exact, clean real numbers matching
+      real screen geometry (`640.0` = the real display width, `320.0`/
+      `240.0` = exactly half of it) across every one of 40 live-captured
+      calls, plus a real, live, per-tick *animation* (a horizontal
+      segment expanding outward from `(320, 240)` by ~2px/tick each
+      side) -- the kind of coherent, structured real data no guessed
+      layout could produce by accident. Real width = `x1-x0`, real
+      height = `y1-y0` (frequently `0` -- real degenerate-height calls
+      draw real horizontal lines, not filled rects, which is exactly
+      why this session's earlier `{x,y,dx,dy}`-shaped decode kept
+      reading a bogus `dx` and had to fall back to a guess: it was
+      reading the wrong bytes as the wrong field width entirely, not
+      reading a genuinely-absent value).
+      **Rebuilt the rendering bridge with this confirmed layout (no
+      guessed width) and captured a second screenshot: real, coherent,
+      structured output** -- a real full-width divider line near the
+      top of the frame with a real gap in the middle (two separate
+      real elements, not one), and a real solid triangle wedge directly
+      below it, apex up, widening toward the bottom. The triangle isn't
+      a separate real shape -- it's this project's own framebuffer
+      correctly, faithfully accumulating 166 real ticks' worth of the
+      real expanding-horizontal-line animation (never cleared between
+      ticks in this quick capture), each real tick's line 2px wider and
+      2px lower than the last -- i.e. the *shape itself* is an artifact
+      of this capture method, but every individual line inside it is
+      real, correctly-decoded per-tick geometry. Strong, first-ever
+      visual proof this session's struct decode is right, not a second
+      lucky-looking guess: unlike the earlier round's screenshot, every
+      number behind this one is confirmed, not assumed.
+      **Still not committing a permanent bridge.** This round confirmed
+      the real shape of exactly one of this engine's own ~17 real
+      slots (107, geometry) -- real color (slot 6 in the general "draw
+      one element" sequence documented earlier this session) isn't
+      wired into this specific call path, so the experimental code
+      used a hardcoded white; and this is still only one real call
+      pattern among several the jump-table-driven caller (`abd.mod`
+      0x104e00-0x105010) supports. Reverted the experimental code
+      (`tools/game_probe.cpp`, the temporary `IDisplayHle` pixel-
+      readback accessor) again, same reasoning as before -- `git diff`
+      clean, 426/426 tests pass. What's different this time, and worth
+      recording precisely: the remaining gap to a real, permanent
+      bridge is no longer "is this struct's layout even understood,"
+      it's "wire up the remaining slots' already-partially-understood
+      contract (color, alignment, per-element setup/teardown) around a
+      geometry decode that's now fully confirmed."
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
