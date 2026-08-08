@@ -5902,6 +5902,43 @@ playable start-to-finish at full speed, standalone build.
       it's "wire up the remaining slots' already-partially-understood
       contract (color, alignment, per-element setup/teardown) around a
       geometry decode that's now fully confirmed."
+      **Went one round further, same session: identified real slot-107's
+      LR is useless for telling its four real call sites apart (`blx`
+      unconditionally overwrites it with the trampoline's own internal
+      return address), but the real caller's actual address survives on
+      the stack one word past the struct pointer** (`ReadStackArg(core,
+      1)`, the trampoline's own `push {r3, lr}` at entry) -- the same
+      technique now applies to every other confirmed generic trampoline
+      in this engine, not just slot 107's. Used it to split this
+      round's captures by real call site instead of treating them as
+      one undifferentiated stream: **caller `0x1054bc`** (the
+      `0x10547c-0x1054fc` "draw one element" function already
+      documented earlier this session) produces only the full-width,
+      zero-height top divider line (`rect=(0,0,640,0)`), and **every
+      single one of its real invocations this round (24/24) is
+      immediately followed by a real `SetColor(255.0, 255.0, 255.0)`
+      call from that exact same caller** (`0x1054f8`, confirmed via the
+      same stack-slot technique on slot 6's own trampoline) -- a clean,
+      one-to-one, real geometry-then-color pairing. **Caller `0x104f84`**
+      (case `104f60` in the jump table, this round's earlier bridge
+      target) produces both the degenerate center point and the
+      expanding-line animation from the *same* real call site -- i.e.
+      one real code path legitimately draws multiple different real
+      elements across a tick, not one call site per element -- and
+      **never had a real slot-6 call of its own anywhere in this
+      round's captures**, meaning its real color is set once elsewhere
+      (very plausibly during this engine's own already-documented
+      "select/begin" step earlier in its 11-slot sequence) and persists
+      as real per-object state rather than being re-sent with every
+      geometry call. This resolves what would otherwise have been a
+      real correctness risk for a future bridge (hardcoding white for
+      every element happened to be right for this round's captures, but
+      not because color is uniformly a constant -- it's because one
+      real path sends it explicitly and the other carries it as real
+      state this project doesn't track yet). No code changes kept
+      (`git diff` clean again), tests still 426/426 -- this round was
+      pure investigation, same disciplined "confirm before building"
+      pattern as the rest of this session.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
