@@ -6247,6 +6247,50 @@ playable start-to-finish at full speed, standalone build.
       resource, likely inside `data.bar`, this project already knows
       how to parse) rather than an open-ended one. No code changes
       kept (`git diff` clean), 426/426 tests pass.
+      **Found the real font atlas image itself, same session -- the
+      last piece, and the whole real rendering pipeline is now
+      confirmed end to end, pixel-perfect.** `data.bar` entry at real
+      offset `3653369` (`bar_inspector`'s own entry list) carries a
+      real ATITC header (`signature=0xcc c4 00 02`, `width=512`,
+      `height=128`, `flags=2` (RGBA), `dataOffset=32` -- the exact real
+      5-field layout this project's own `atitc.h` doc comment already
+      described, now confirmed against a real, concrete sample) --
+      decoded with this project's own existing, already-validated
+      `DecodeAtitc` (no new decoder code needed) into a real, clean,
+      human-readable bitmap font sheet: `A`-`Z`, `0`-`9`, accented
+      letters, then punctuation, laid out left-to-right/top-to-bottom
+      in real 16x16 cells -- 32 columns x 8 rows, matching this
+      session's own confirmed `16.0`-per-index atlas stride exactly.
+      **Pixel-perfect cross-check, not just a visual glance**: cropped
+      the atlas at `(char_index * 16, 0)` for both real characters this
+      session's live-read strings actually used -- `'V'` (confirmed
+      index `22` -> `x=352`) and `'1'` (confirmed index `28` ->
+      `x=448`) -- and both crops show, exactly and unambiguously, a
+      real `V` and a real `1` glyph, respectively. Every independently-
+      derived piece from this entire multi-round investigation --
+      the geometry decode, the white-color default, the per-character
+      loop, the 44-byte array stride, the full ASCII charset table, and
+      now the atlas image itself -- agrees with every other piece,
+      confirmed by direct pixel inspection, not assumption.
+      **This closes out the "find the real glyph source" thread this
+      session opened after ruling out GL/device-bitmap/`IDisplay`**:
+      real, readable on-screen text for this title is no longer a
+      research question, it's an implementation one -- every real fact
+      needed to render it (position, color, per-glyph atlas offset,
+      atlas image, atlas cell size) is now confirmed and in hand.
+      Real next step, deliberately not started this session (same
+      "confirm before building" discipline as every other round): wire
+      this confirmed pipeline into an actual, permanent rendering
+      bridge -- decode this one atlas asset once at load time, sample
+      real 16x16 texel blocks by the confirmed `char_index*16` offset
+      for each real character a title draws, and blit them through
+      this project's own `IDisplay` framebuffer instead of the crude
+      solid-bar placeholder this session's earlier experiments used.
+      A genuine, appropriately-sized feature-implementation task, not
+      further investigation. No code changes kept -- the one-off ATITC-
+      dump helper used to decode and view this atlas lived entirely in
+      the scratch directory, never touched the repo -- `git diff`
+      clean, 426/426 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
