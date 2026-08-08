@@ -6387,6 +6387,73 @@ playable start-to-finish at full speed, standalone build.
       in this project's own tool, not just in an automated screenshot.
       428/428 tests pass; both real fixes from this session (`BlitRgba`
       + `PresentLiveFramebuffer`) are real, permanent, committed code.
+      **Investigated why simulated confirm-button presses produced
+      real, successful HID callback runs with zero visible on-screen
+      response, same session.** First ruled out the obvious real
+      hardware explanation: this environment has no real joystick
+      device node at all (`/dev/input` has no `js*` entries), and this
+      project's own `Sdl2UnifiedBackend::HasController()` is a direct,
+      one-time-at-startup `SDL_NumJoysticks()` check -- so "no real
+      controller detected" is a real, honest environment fact, not a
+      code bug, and (this build has no hotplug support) plugging one in
+      after launch wouldn't be detected either. Confirmed, separately,
+      that the underlying real HID injection plumbing itself works
+      correctly even without a real controller: driving it through
+      keyboard-equivalent injection showed the real captured callback
+      address (`0x101a78`) runs successfully, every real time, with no
+      crash.
+      **Extended the confirmed rendering bridge from text-only to every
+      real slot-107 caller, not just the text one, to see whether a
+      real menu cursor/highlight -- invisible until now, since only
+      text was bridged -- would explain the lack of visible response.**
+      Real geometry-struct layout was already confirmed to be a
+      property of slot 107's own real ABI (not tied to which upstream
+      switch case populated it), so the same confirmed decode + this
+      engine's own confirmed white default now renders for *every*
+      real caller, with the already-working text-glyph path unchanged.
+      **Real, immediate payoff, confirmed live on a real desktop**: real
+      bullet-marker lines appeared next to each real language option
+      (Português, Español, English) that were never visible before --
+      genuine additional real UI structure, not present in the text-
+      only version. Still didn't reveal why the confirm press doesn't
+      advance the screen (no distinct "this one is selected" cursor
+      became visible either -- English's own marker looks doubled
+      versus the other two, but that's not yet confirmed as a real
+      selection indicator rather than coincidental overlap).
+      **Live user feedback caught a second, real, separate bug the same
+      round: a real "LOADING..." string, drawn during boot, was still
+      on screen long after the title had moved on to its own real
+      language-select screen** -- this project's own bridge never
+      clears `framebuffer_` between ticks, so every real element ever
+      drawn since boot accumulates forever (the earlier "triangle"
+      screenshot from this session's own font-atlas milestone was
+      itself this same real effect: many real ticks' worth of a
+      moving line, stacked, never erased -- a real, correct animation
+      being read, at the time, as a static shape). **Tried the obvious
+      fix (`IDisplayHle::ClearLiveFramebuffer`, clearing once per real
+      outer tick before that tick's own real timers run) and reverted
+      it after live, on-desktop testing showed a real regression, not
+      a fix**: the real screen turned into a rapid black/content
+      flicker. Caught specifically because the user watched it live
+      and pushed back on an over-hasty "still just black" read --
+      confirmed by them it was blinking, not solid -- which reframes
+      the real root cause: this engine's own real per-tick redraw does
+      *not* appear to redraw every real visible element every real
+      tick (unlike, e.g., Double Dragon's own confirmed real per-frame-
+      clear convention), so a blind per-tick clear erases real content
+      that was never meant to disappear. **Kept `ClearLiveFramebuffer`
+      itself** (a correct, simple, real primitive either eventual
+      answer will need) **but reverted its only real call site** --
+      the real, honest open question for a future round is whether
+      some *other* single real per-tick call actually does redraw
+      everything (with this project's own bridge simply not yet
+      capturing every real element that redraws alongside it), or
+      whether this engine really means for most real elements to
+      persist, individually erased through some other, not-yet-
+      identified real call only when they actually change. Confirmed
+      live, after reverting, that the real screen is back to its
+      previous stable (if still-accumulating) state, bullet markers
+      included. 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

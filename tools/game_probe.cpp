@@ -9,6 +9,7 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -1203,49 +1204,78 @@ int main(int argc, char** argv) {
         200, [](zeebulator::IArmCore& c) { c.SetRegister(zeebulator::kR0, 0); });
     // Real slot 107 on this scaffold is this mystery engine's own real
     // "draw one geometry element" call (TASKS.md Phase 8) -- struct
-    // layout confirmed (16.16 fixed-point {x0,y0,x1,y1}), and one of
-    // its four real call sites (`abd.mod` 0x105744) is real per-
-    // character text-cell layout for this title's own bitmap-font
-    // text. Renders real glyphs when a real character is pending
-    // (`AbdTextState`, set by a watchpoint on this title's own real
-    // ASCII->atlas-index lookup) and a real font atlas was decoded
-    // (`abd_font_atlas`, from this title's own real `data.bar`);
-    // every other real call site (shapes, other titles, an atlas-less
-    // run) stays a safe no-op -- this project's own standing
-    // convention against drawing anything not confirmed real, not an
-    // oversight.
+    // layout confirmed (16.16 fixed-point {x0,y0,x1,y1}) across every
+    // real caller sampled, not just one -- the format is a property of
+    // slot 107's own real ABI, not of which upstream switch case
+    // populated it. One specific real caller (`abd.mod` 0x105744) is
+    // real per-character text-cell layout for this title's own
+    // bitmap-font text; every other real caller is a real shape
+    // (dividers, the center animation, and -- unconfirmed until this
+    // round -- very plausibly menu/cursor chrome too, since simulated
+    // confirm-button presses were producing real, successful real HID
+    // callback runs with zero visible on-screen change while only text
+    // was bridged). Both paths gated on `abd_font_atlas.has_value()`
+    // (only ever set for this one real title's own real `data.bar`) so
+    // every other title stays untouched.
     stub_methods[107] = [&hle, &display, &abd_font_atlas, &abd_text_state](zeebulator::IArmCore& core) {
       core.SetRegister(zeebulator::kR0, 0);
       if (!abd_font_atlas.has_value()) return;
-      uint32_t real_caller = zeebulator::HleRuntime::ReadStackArg(core, 1);
-      if (real_caller != 0x105744) return;
-      if (abd_text_state.pending_char_index == AbdTextState::kNone) return;
-      uint32_t char_index = abd_text_state.pending_char_index;
-      abd_text_state.pending_char_index = AbdTextState::kNone;  // consume it
-      if (char_index * kAbdFontCellPx >= static_cast<uint32_t>(kAbdFontAtlasWidth) * 8) return;  // out of range
-
       uint32_t struct_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
       if (struct_addr == 0) return;
+      uint32_t real_caller = zeebulator::HleRuntime::ReadStackArg(core, 1);
       int32_t raw_x0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 0));
       int32_t raw_y0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 4));
       int dst_x = raw_x0 / 65536;
       int dst_y = raw_y0 / 65536;
 
-      int atlas_col = static_cast<int>(char_index) % (kAbdFontAtlasWidth / kAbdFontCellPx);
-      int atlas_row = static_cast<int>(char_index) / (kAbdFontAtlasWidth / kAbdFontCellPx);
-      int src_x = atlas_col * kAbdFontCellPx;
-      int src_y = atlas_row * kAbdFontCellPx;
+      if (real_caller == 0x105744 && abd_text_state.pending_char_index != AbdTextState::kNone) {
+        uint32_t char_index = abd_text_state.pending_char_index;
+        abd_text_state.pending_char_index = AbdTextState::kNone;  // consume it
+        if (char_index * kAbdFontCellPx >= static_cast<uint32_t>(kAbdFontAtlasWidth) * 8) return;  // out of range
 
-      // BlitRgba wants one contiguous kAbdFontCellPx x kAbdFontCellPx
-      // block; the decoded atlas is one big kAbdFontAtlasWidth-wide
-      // image, so copy the one real cell out of it first.
-      uint8_t cell[kAbdFontCellPx * kAbdFontCellPx * 4];
-      for (int row = 0; row < kAbdFontCellPx; ++row) {
-        const uint8_t* src_row =
-            abd_font_atlas->data() + (static_cast<size_t>(src_y + row) * kAbdFontAtlasWidth + src_x) * 4;
-        std::memcpy(cell + row * kAbdFontCellPx * 4, src_row, kAbdFontCellPx * 4);
+        int atlas_col = static_cast<int>(char_index) % (kAbdFontAtlasWidth / kAbdFontCellPx);
+        int atlas_row = static_cast<int>(char_index) / (kAbdFontAtlasWidth / kAbdFontCellPx);
+        int src_x = atlas_col * kAbdFontCellPx;
+        int src_y = atlas_row * kAbdFontCellPx;
+
+        // BlitRgba wants one contiguous kAbdFontCellPx x kAbdFontCellPx
+        // block; the decoded atlas is one big kAbdFontAtlasWidth-wide
+        // image, so copy the one real cell out of it first.
+        uint8_t cell[kAbdFontCellPx * kAbdFontCellPx * 4];
+        for (int row = 0; row < kAbdFontCellPx; ++row) {
+          const uint8_t* src_row =
+              abd_font_atlas->data() + (static_cast<size_t>(src_y + row) * kAbdFontAtlasWidth + src_x) * 4;
+          std::memcpy(cell + row * kAbdFontCellPx * 4, src_row, kAbdFontCellPx * 4);
+        }
+        display.BlitRgba(dst_x, dst_y, kAbdFontCellPx, kAbdFontCellPx, cell);
+        return;
       }
-      display.BlitRgba(dst_x, dst_y, kAbdFontCellPx, kAbdFontCellPx, cell);
+
+      // Real shape path: same confirmed 16.16 fixed-point geometry,
+      // filled with this engine's own real, confirmed default color
+      // (TASKS.md Phase 8: real caller 0x1054bc sends an explicit
+      // real SetColor(255,255,255) before every single one of 299
+      // real calls sampled across a 60-real-second run, zero
+      // exceptions; a second analyzed real caller never sends color
+      // explicitly at all but never contradicts white either --
+      // treated as this engine's own real default state, not a fresh
+      // guess). Real width/height come from the same struct's real
+      // x1/y1 fields.
+      int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
+      int32_t raw_y1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 12));
+      int w = std::max(1, static_cast<int>((raw_x1 - raw_x0) / 65536));
+      int h = std::max(1, static_cast<int>((raw_y1 - raw_y0) / 65536));
+      constexpr uint32_t kRectAddr = 0x00098000;
+      core.GetMemory().Write16(kRectAddr + 0, static_cast<uint16_t>(dst_x));
+      core.GetMemory().Write16(kRectAddr + 2, static_cast<uint16_t>(dst_y));
+      core.GetMemory().Write16(kRectAddr + 4, static_cast<uint16_t>(w));
+      core.GetMemory().Write16(kRectAddr + 6, static_cast<uint16_t>(h));
+      uint32_t saved_lr = core.GetRegister(zeebulator::kLR);
+      constexpr uint32_t kDisplayVtable = 0x80002000;
+      constexpr uint32_t kDisplayObj = 0x80003000;
+      uint32_t draw_rect_trap = core.GetMemory().Read32(kDisplayVtable + 5 * 4);
+      hle.CallArmFunction(draw_rect_trap, kDisplayObj, kRectAddr, 0, 0x00FFFFFF);
+      core.SetRegister(zeebulator::kLR, saved_lr);
     };
     uint32_t obj = zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, stub_vtable, stub_object,
                                                      stub_methods);
