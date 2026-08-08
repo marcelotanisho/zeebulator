@@ -6058,6 +6058,52 @@ playable start-to-finish at full speed, standalone build.
       future round: finding this title's actual glyph-blit path would
       likely unlock real, readable on-screen text for the first time in
       this project's history, not just shapes.
+      **Chased the glyph-blit lead one round further, same session, and
+      ruled out every other candidate path before landing on the real,
+      simple answer.** Instrumented this title's real calls to GL
+      (`glDrawArrays`/`glDrawElements`/`glGenTextures`/`glBindTexture`/
+      `glTexImage2D`), the real device-bitmap `QueryInterface` path
+      (`0x01001045`), and every currently-stubbed slot on the real,
+      standard `IDisplay` object itself (`BitBlt`, `CreateDIBitmap`,
+      `SetDestination`, `SetFont`, `SetClipRect`, ...): **zero real
+      calls to any of them**, confirming (not assuming) this title's
+      whole rendering pipeline never touches GL, the device-bitmap
+      interface, or the real standard `IDisplay` object at all -- it is
+      genuinely, entirely self-contained inside the one still-mostly-
+      unmapped mystery engine object.
+      **Tested the simplest remaining real hypothesis directly: extend
+      this session's already-confirmed geometry+white bridge to this
+      4th call site too, instead of assuming a separate glyph-bitmap
+      call must exist.** Live-verified each individual draw does
+      commit real white pixels at the moment it runs (`DebugReadPixel`
+      immediately after the bridged `DrawRect` call, 30/30 samples) and
+      that those pixels **persist** across at least 25 further real
+      ticks afterward (not erased by anything) -- ruling out an early,
+      wrong reading of a same-session accumulated-total check that
+      looked unchanged (an artifact of comparing two differently-
+      configured capture runs, not a real erase).
+      **Result: a real, second, visually confirmed structured line.**
+      A cropped, zoomed capture of the frame's top 70 rows shows the
+      real text-cell row (y=51) rendering directly beneath the already-
+      confirmed real top divider (y=0), **with a matching real gap in
+      the same x-range on both lines** -- strong, real evidence this is
+      a genuine two-line real UI element (e.g. a title + subtitle, or a
+      header + body line), not incidental. The individual character
+      cells render as plain solid bars (no glyph shape) since this
+      bridge still doesn't know the real glyph bitmap source, but the
+      real *layout* -- word boundaries, line position, alignment with
+      the divider above -- is now visually confirmed correct end to
+      end, using only this session's already-confirmed 16.16 fixed-
+      point decode and white default, no new guesses. Reverted again
+      (`tools/game_probe.cpp`, the temporary `IDisplayHle` pixel
+      accessor) -- `git diff` clean, 426/426 tests pass. Real next step
+      for a future round: the actual glyph bitmap source is still
+      unidentified (this round's negative results rule out GL/device-
+      bitmap/standard-IDisplay, but not, e.g., a real embedded font
+      table read directly by this engine's own ARM code and rasterized
+      via plain memory writes this project's HLE trap boundary
+      wouldn't see at all) -- but the real payoff of finding it is now
+      visually proven, not speculative.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
