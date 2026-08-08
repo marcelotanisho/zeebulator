@@ -6454,6 +6454,55 @@ playable start-to-finish at full speed, standalone build.
       live, after reverting, that the real screen is back to its
       previous stable (if still-accumulating) state, bullet markers
       included. 428/428 tests pass.
+      **Tried a second, more targeted real approach the same session,
+      live-caught its own real regression too, and reverted again.**
+      A real human tester found a real crash while exploring the
+      language-select screen's own input handling (a real null-vtable-
+      slot-8 indirect call, `abd.mod` 0x108d98, reached only through
+      the real menu-state switch's own `case 6`) -- deliberately not
+      chased further: the exact real trigger sequence couldn't be
+      reproduced live even with an exact button-for-button replay of
+      the real log (same UIDs, same order), meaning either real
+      per-tick timing (not just button identity/order) matters, or the
+      real tester genuinely selected a real "exit" option rather than
+      hitting a bug -- redirected, correctly, to the real, already-
+      confirmed display problem instead of guessing further at an
+      unreproducible crash.
+      **Surveyed every real slot on the drawing-engine scaffold for a
+      real, distinct "screen clear" call** (all 200 slots, first-call
+      tick + call-frequency logged): a whole cluster (slots 4, 35, 48,
+      88, 89, 91, 106) goes from real, total silence to real, active
+      per-tick calls at the *same* real tick (~600) the title's own
+      real loading screen gives way to the real language-select
+      screen -- a real, solid signal that a genuine new real screen
+      has begun, even though none of them turned out to be an
+      individually-confirmed "clear" primitive (slot 48 alone fires
+      exactly twice, real and distinct, still unidentified; the rest
+      are ordinary real per-tick redraw calls for the new screen, not
+      one-shot setup).
+      **Used that cluster's shared first-appearance as a one-time (not
+      per-tick) real trigger to clear stale content, live-tested it,
+      and it also regressed**: the real "LOADING..."/version/credits
+      text from the old screen correctly disappeared, but so did
+      `"ENGLISH"` and the real `"CHANGE YOUR LANGUAGE"` footer -- both
+      confirmed, after waiting nearly a real minute, never redrawn
+      again. **Real, honest conclusion**: this engine has real
+      elements that draw exactly once per real screen and are meant to
+      persist with no further redraws at all (not a redraw this
+      project's bridge is failing to capture) -- and at least one of
+      them draws *before* this cluster's own first real call within
+      the same real transition sequence, so a clear timed to that
+      cluster destroys real, legitimate content, not just real stale
+      content. Reverted a second time rather than ship a fix that
+      trades one real, visible problem for a different one. **Real,
+      still-open problem for a future round**: distinguishing this
+      engine's real per-tick-redrawn elements from its real draw-once-
+      and-persist elements (and finding the real per-element, not
+      whole-screen, erase this hybrid model implies) is a deeper real
+      question than either clearing strategy tried this session, and
+      needs its own dedicated real investigation, not a third quick
+      attempt. 428/428 tests pass; both attempts fully reverted,
+      `git diff` clean.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
