@@ -5784,6 +5784,66 @@ playable start-to-finish at full speed, standalone build.
       healthy execution the entire way through a real, deliberate
       pause -- not a performance ceiling, a real design this project
       hasn't finished reverse-engineering yet.
+      **Corrected a real mistake in this session's own earlier finding:
+      `AVK_END` doesn't unlock gameplay -- it triggers a real app-exit
+      sequence.** Traced the tail-called slot-6 method flagged above
+      (the real object reached at the end of the disable-per-tick-
+      updates sequence) all the way through: `applet+12` holds
+      `0x80001000`, this project's own real `IShell` object
+      (vtable `0x80000000`), and slot 6 on that real vtable is
+      `ISHELL_CloseApplet`. So the real causal chain this session
+      traced earlier (`AVK_END` -> `applet+1460 = 5` -> countdown
+      reaches 0 -> flags set -> scene transition -> disable per-tick
+      updates -> tail-call) ends in a real, intentional app close, not
+      a "start playing" transition -- consistent with `AVK_END`'s real
+      hardware meaning ("back/hang up"), not a lucky guess that
+      happened not to crash. The earlier finding was still real and
+      still correctly traced -- just mis-labeled at the very last step.
+      **Switched to `AVK_SELECT` (`0xE035`, confirmed against the real
+      bundled AVK table) as the safer key and confirmed live it does
+      not trigger `CloseApplet`:** the self-rearming timer keeps
+      re-arming every tick with no gaps (1238 real `SetTimer` calls
+      across 1238 real ticks in one 40-real-second run), and the still-
+      unidentified drawing-engine object keeps running continuously and
+      healthily the whole time (42,611+ real calls to its highest-
+      frequency slots in the same window). This is now the better real
+      candidate for whatever "start gameplay" trigger this title
+      actually needs -- not yet wired into the default boot sequence,
+      same reasoning as `AVK_END` before it: a title-specific quirk,
+      not a general BREW lifecycle event.
+      **Built and live-verified a proof-of-concept rendering bridge**
+      from the still-unmapped drawing-engine object's real geometry/
+      color calls into this project's own real `IDisplay::DrawRect`,
+      to test whether the real x/y/height data this session already
+      decoded from those calls is genuine layout data or noise.
+      Consolidated the draw call into the same real slot that receives
+      the real geometry struct (avoiding a real ordering mismatch
+      against a separate color-setting slot, which was tried first and
+      produced only one truncated rectangle). Result, captured as a
+      real RGB565 framebuffer dump and inspected visually: solid
+      horizontal bars at multiple distinct real y-positions spaced
+      ~15px apart, spanning the left ~250px of the real 640x480 frame
+      -- a real, structured, visually-verified match for a menu/text-
+      line layout screen, not random noise. **Confirms the real x, y,
+      and height fields decoded earlier this session are genuine
+      layout data.** The real width field is NOT confirmed -- the
+      corresponding struct field consistently reads `0` in every real
+      call observed, so the screenshot used a fixed guessed width
+      (250px); real width is very plausibly computed elsewhere from
+      real text-content length (this drawing call is very plausibly a
+      real text/menu-line draw, not a plain filled rectangle), which
+      this round didn't trace. Experimental bridging code (in
+      `tools/game_probe.cpp`, plus a temporary `IDisplayHle` pixel-
+      readback accessor) was deliberately reverted rather than kept or
+      committed, since it encodes that unconfirmed width guess as if it
+      were real behavior -- `git diff` clean, 426/426 tests pass. This
+      finding is recorded here as a real milestone (first-ever genuine,
+      data-driven pixel output for this title, not a synthetic test
+      pattern) but the rendering bridge itself is not yet a real,
+      permanent feature: next real step is tracing the real width
+      source (most likely inside the same not-yet-mapped drawing-engine
+      object, possibly alongside real glyph/text data) before building
+      a bridge worth keeping.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
