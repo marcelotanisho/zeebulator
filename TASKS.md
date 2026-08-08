@@ -6104,6 +6104,45 @@ playable start-to-finish at full speed, standalone build.
       via plain memory writes this project's HLE trap boundary
       wouldn't see at all) -- but the real payoff of finding it is now
       visually proven, not speculative.
+      **Traced the real per-character loop all the way to its own real
+      source string, same session -- found genuine, human-readable
+      text, not just shape data.** Live-watchpointed the shared "draw
+      one geometry element" helper's own real entry point (`abd.mod`
+      0x105510) to find its one real, live caller during this run
+      (`abd.mod` 0x106508, itself called from exactly one real site,
+      `abd.mod` 0x105db8) -- and found that caller's own real object
+      pointer argument (varying per call: `0x80301f08`, `0x80302010`,
+      `0x8030271c`, ...) is computed as `[r4] + char_code * 108`
+      (`abd.mod` 0x105da0-0x105dac: `add r2,r0,r0,lsl#1` then
+      `add r0,r2,r0,lsl#3`, i.e. `*27`, times the 4-byte word size) --
+      **a real per-glyph descriptor table**, indexed by a real
+      character code read one byte at a time from a real, ordinary
+      null-terminated C string (`abd.mod` 0x105dc8: `ldrb r0,[r7]`,
+      `r7` incremented by 1 and checked against 0 every real
+      iteration -- textbook `strlen`-shaped real code). Watchpointed
+      the containing function's own real entry (`abd.mod` 0x105ba0)
+      to read that string pointer (real `r1`) directly, dereferenced
+      it live, and got two real, live, human-readable strings straight
+      out of this title's own binary: **`"V1.1.7a"`** and **`"music by
+      atomic cat"`**. Not guessed, not reconstructed from font metrics
+      -- read directly from real game memory at the exact address real
+      code itself uses.
+      **This confirms, completely, what this whole multi-round lead
+      was chasing**: the real text-cell calls this session bridged
+      earlier are exactly what they looked like -- a real version
+      string and a real music-credit line, the kind of content a real
+      splash/credits screen shows, not placeholder or debug output.
+      The per-character 108-byte table entries (real glyph metrics,
+      likely width/kerning/bitmap-or-texture-reference data, per this
+      round's own real code: a width value multiplied and accumulated
+      into the running x position, matching this session's earlier-
+      confirmed 15px-per-cell advance) are the concrete, well-scoped
+      next real target -- decoding that one 108-byte struct's real
+      layout would very plausibly unlock genuine glyph shapes, not just
+      cell positions, for the first time. No code changes kept (`git
+      diff` clean), 426/426 tests pass -- pure live investigation, same
+      technique (direct PC watchpoints reading real, live memory) this
+      project has used successfully throughout this entire session.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
