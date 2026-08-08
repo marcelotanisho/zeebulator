@@ -6345,6 +6345,48 @@ playable start-to-finish at full speed, standalone build.
       whoever picks it up next. 428/428 tests pass (426 existing +
       2 new `BlitRgba` tests) -- `git diff` shows real, permanent
       changes this time, not a reverted experiment.
+      **Found and fixed a second real bug the same session, live, on a
+      real desktop -- the previous entry's own feature was invisible
+      in the real, interactive tool despite being demonstrably correct
+      internally.** Launched the real `game_probe` binary against a
+      real X11 display (not a screenshot capture harness) to visually
+      confirm the shipped bridge for a real human -- and the real
+      window showed nothing but black, even though `BlitRgba` was
+      separately confirmed (via direct framebuffer readback in earlier
+      rounds) to be writing correct real glyph pixels every time.
+      **Root cause, traced directly from this project's own existing,
+      already-documented real design**: `IDisplayHle::RepresentLastFrame`
+      deliberately only re-presents a snapshot taken *at a real
+      `IDISPLAY_Update` call* (its own doc comment already explains
+      why -- showing live, uncommitted mid-frame content would be
+      real, incorrect behavior for a title that *does* use the real
+      Update pattern). Alien Breaker Deluxe's real rendering never
+      calls the real `IDisplay` object at all (confirmed earlier this
+      session) -- so `has_presented_` never becomes real `true`, and
+      `RepresentLastFrame` is a permanent, silent no-op for this title
+      specifically, regardless of how much correct real pixel data
+      `BlitRgba` writes into the live framebuffer underneath it.
+      **Fixed with a new, narrowly-scoped real method**,
+      `IDisplayHle::PresentLiveFramebuffer` (`core/brew/idisplay.h`):
+      pushes the *live* framebuffer directly, bypassing the real-
+      Update-commit convention on purpose -- correct specifically for
+      a title with no real commit step to wait for. Wired in
+      `tools/game_probe.cpp`'s main tick loop, gated on
+      `abd_font_atlas.has_value()` (true only for this one real
+      title's own real `data.bar`), so every other title's existing
+      real behavior -- and `RepresentLastFrame`'s own real correctness
+      guarantee -- stays completely untouched.
+      **Confirmed live, on the real desktop, by a real human (not just
+      this project's own automated capture)**: relaunched the real
+      binary after the fix -- the real SDL window now shows Alien
+      Breaker Deluxe's real language-select screen, live, matching the
+      earlier automated capture exactly, including the same specific,
+      already-documented remaining glyph bug (`'M'`, `'O'`, `'.'`).
+      This is the first time in this project's history a real human
+      has visually confirmed real, readable game text rendering live
+      in this project's own tool, not just in an automated screenshot.
+      428/428 tests pass; both real fixes from this session (`BlitRgba`
+      + `PresentLiveFramebuffer`) are real, permanent, committed code.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

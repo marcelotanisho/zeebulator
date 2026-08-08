@@ -77,6 +77,22 @@ class IDisplayHle {
     backend_.PushVideoFrame(last_presented_.data(), width_, height_, PixelFormat::kRGB565);
   }
 
+  // Pushes the *live* framebuffer directly, bypassing the real-Update-
+  // commit convention `RepresentLastFrame` deliberately respects. Only
+  // correct for a title that never calls the real `IDISPLAY_Update` at
+  // all -- Alien Breaker Deluxe's own real font-atlas glyph bridge
+  // (TASKS.md Phase 8) writes real pixels via `BlitRgba` outside any
+  // real ARM call `Update` could hook, so `has_presented_` never
+  // becomes true and `RepresentLastFrame` stays a permanent no-op for
+  // it -- confirmed live: the real SDL window showed nothing but black
+  // even though `BlitRgba` was demonstrably writing real, correct
+  // glyph pixels into `framebuffer_`. A title that *does* use the real
+  // Update pattern should keep using `RepresentLastFrame` instead --
+  // this would show its own real not-yet-committed, mid-frame content.
+  void PresentLiveFramebuffer() {
+    backend_.PushVideoFrame(framebuffer_.data(), width_, height_, PixelFormat::kRGB565);
+  }
+
   // Alpha-composites a real RGBA source image (`w`*`h`*4 bytes,
   // row-major, straight alpha) onto the framebuffer at (`x`, `y`),
   // clipped to the display bounds. Not part of the real BREW IDisplay

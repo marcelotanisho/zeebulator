@@ -2195,6 +2195,17 @@ int main(int argc, char** argv) {
     // became visible until this guard was added.
     if (!backend.HasRealGlActivity()) {
       display.RepresentLastFrame();
+      // Alien Breaker Deluxe's own real font-atlas glyph bridge
+      // (TASKS.md Phase 8) writes real pixels via `BlitRgba` outside
+      // any real IDISPLAY_Update call, so `RepresentLastFrame` above
+      // stays a permanent no-op for it -- confirmed live, a real SDL
+      // window showed nothing but black despite `BlitRgba`
+      // demonstrably writing correct real glyph pixels. Gated on
+      // `abd_font_atlas` (only ever set for this one real title's own
+      // real `data.bar`) so every other title's existing behavior --
+      // and `RepresentLastFrame`'s own real "don't show mid-frame,
+      // uncommitted content" guarantee -- stays untouched.
+      if (abd_font_atlas.has_value()) display.PresentLiveFramebuffer();
     }
     if (std::getenv("ZEEBULATOR_AUTOPRESS")) {
       // Temporary, env-gated: no OS-level input-automation tool
