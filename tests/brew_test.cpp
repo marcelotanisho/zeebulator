@@ -627,6 +627,57 @@ TEST(IDisplayHle, DrawRectWithExplicitRectFillsOnlyThatArea) {
   EXPECT_EQ(backend.last_frame[0], 0u) << "untouched pixel stays black";
 }
 
+TEST(IDisplayHle, BlitRgbaCompositesOpaqueTexelsAndSkipsTransparentOnes) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  TestBackend backend;
+  IDisplayHle display(backend, 4, 4);
+  uint32_t display_obj = display.Build(cpu.GetMemory(), hle, kVtableAddr, kObjectAddr);
+
+  // 2x2 RGBA source: opaque red, opaque green, transparent (alpha=0,
+  // should be skipped, leaving the destination pixel untouched), opaque
+  // blue.
+  const uint8_t rgba[2 * 2 * 4] = {
+      255, 0,   0,   255,  // (0,0) red, opaque
+      0,   255, 0,   255,  // (1,0) green, opaque
+      12,  34,  56,  0,    // (0,1) transparent -- color should be ignored
+      0,   0,   255, 255,  // (1,1) blue, opaque
+  };
+  display.BlitRgba(/*x=*/1, /*y=*/1, /*w=*/2, /*h=*/2, rgba);
+
+  uint32_t update_sentinel = cpu.GetMemory().Read32(kVtableAddr + 7 * 4);
+  hle.CallArmFunction(update_sentinel, display_obj);
+
+  ASSERT_EQ(backend.push_count, 1);
+  EXPECT_EQ(backend.last_frame[1 * 4 + 1], 0xF800u) << "(1,1) red";
+  EXPECT_EQ(backend.last_frame[1 * 4 + 2], 0x07E0u) << "(2,1) green";
+  EXPECT_EQ(backend.last_frame[2 * 4 + 1], 0u) << "(1,2) transparent texel leaves destination untouched";
+  EXPECT_EQ(backend.last_frame[2 * 4 + 2], 0x001Fu) << "(2,2) blue";
+}
+
+TEST(IDisplayHle, BlitRgbaClipsToDisplayBoundsWithoutCrashing) {
+  ArmInterpreter cpu;
+  HleRuntime hle(cpu, kTrapBase, kTrapSize);
+  TestBackend backend;
+  IDisplayHle display(backend, 4, 4);
+  uint32_t display_obj = display.Build(cpu.GetMemory(), hle, kVtableAddr, kObjectAddr);
+
+  // 2x2 fully-opaque white source, positioned so it straddles the
+  // bottom-right corner of a 4x4 display -- half the texels land
+  // outside the real framebuffer bounds.
+  const uint8_t rgba[2 * 2 * 4] = {
+      255, 255, 255, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 255, 255, 255, 255,
+  };
+  display.BlitRgba(/*x=*/3, /*y=*/3, /*w=*/2, /*h=*/2, rgba);
+
+  uint32_t update_sentinel = cpu.GetMemory().Read32(kVtableAddr + 7 * 4);
+  hle.CallArmFunction(update_sentinel, display_obj);
+
+  ASSERT_EQ(backend.push_count, 1);
+  EXPECT_EQ(backend.last_frame[3 * 4 + 3], 0xFFFFu) << "the one real in-bounds texel still draws";
+}
+
 TEST(IDisplayHle, SetColorChangesDrawTextColorAndReturnsPrevious) {
   ArmInterpreter cpu;
   HleRuntime hle(cpu, kTrapBase, kTrapSize);

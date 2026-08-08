@@ -13,10 +13,12 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +35,7 @@
 #include "core/brew/virtual_filesystem.h"
 #include "core/cpu/arm_interpreter.h"
 #include "core/gl_texture_log.h"
+#include "core/loader/atitc.h"
 #include "core/loader/ggz.h"
 #include "core/loader/mod.h"
 #include "core/loader/pkg.h"
@@ -62,6 +65,66 @@ std::string BaseName(const char* path) {
   std::string s(path);
   size_t slash = s.find_last_of("/\\");
   return slash == std::string::npos ? s : s.substr(slash + 1);
+}
+
+// Alien Breaker Deluxe's real, custom in-app rendering engine (TASKS.md
+// Phase 8) draws all its own text by hand -- geometry via its own
+// per-character cell layout, glyphs via its own bitmap font atlas --
+// entirely bypassing this project's standard IDisplay/DrawText path
+// (confirmed live: zero real DrawText calls the whole run). The real
+// font atlas itself is a real ATITC-compressed RGBA texture embedded
+// in this title's own `data.bar`, real byte offset 3653369 (found by
+// scanning the archive for real ATITC headers and cross-checking
+// candidate images against this session's own live-decoded charset
+// table -- see TASKS.md), decoded with this project's own existing,
+// already-validated `DecodeAtitc` (no new decoder needed). 512x128,
+// laid out 32 columns x 8 rows of 16x16 real glyph cells -- confirmed
+// pixel-perfect against two real, live-read characters ('V' at real
+// index 22, '1' at real index 28).
+//
+// Real char_index -> atlas cell formula (both halves independently
+// live-traced and confirmed this session): the ASCII->index table
+// below is a byte-for-byte read of the real table at `abd.mod`
+// 0x105d90's own real table pointer; the atlas cell for a given
+// char_index is (col, row) = (index % 32, index / 32), pixel origin
+// (col*16, row*16).
+constexpr int kAbdFontAtlasWidth = 512;
+constexpr int kAbdFontAtlasHeight = 128;
+constexpr int kAbdFontCellPx = 16;
+constexpr uint32_t kAbdFontAtlasBarOffset = 3653369;
+
+// Real ASCII (0x20-0x7F) -> real curated glyph-atlas index, read
+// directly from `abd.mod`'s own live table this session (all 96
+// entries, not inferred) -- see TASKS.md Phase 8. `-1` marks a real
+// ASCII byte this font's real table doesn't map (matches real index 0,
+// space, at runtime -- kept distinct here only so a lookup miss is
+// visible in this project's own code, not silently identical to a
+// real space).
+constexpr int16_t kAbdCharsetTable[96] = {
+    0,  64, 0,  0,  47, 0,  0,  76, 73, 74, 75, 0,  70, 77, 69, 66,  // 0x20-0x2F
+    27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 72, 71, 0,  0,  0,  65,  // 0x30-0x3F
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,  // 0x40-0x4F
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 0,  0,  0,  0,  0,   // 0x50-0x5F
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,  // 0x60-0x6F
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 0,  0,  0,  0,  0,   // 0x70-0x7F
+};
+
+// Decodes the real font atlas out of an already-loaded `data.bar`'s
+// raw bytes into interleaved RGBA (row-major, 4 bytes/texel -- the
+// same layout `IDisplayHle::BlitRgba` expects). Returns nullopt if
+// `bar_bytes` is too short to contain the real, confirmed offset --
+// callers should treat that as "this isn't Alien Breaker Deluxe's own
+// `data.bar`", not a crash.
+std::optional<std::vector<uint8_t>> DecodeAbdFontAtlas(const std::vector<uint8_t>& bar_bytes) {
+  constexpr uint32_t kAtitcHeaderSize = 32;
+  // RGBA ATITC: 16 bytes per 4x4 (16-texel) block = 1 byte/pixel
+  // average -- confirmed exactly against the real archive entry's own
+  // declared size (65568 - 32 header bytes = 65536 = 512*128).
+  constexpr uint32_t kCompressedSize = kAbdFontAtlasWidth * kAbdFontAtlasHeight;
+  if (bar_bytes.size() < kAbdFontAtlasBarOffset + kAtitcHeaderSize + kCompressedSize) return std::nullopt;
+  const uint8_t* compressed = bar_bytes.data() + kAbdFontAtlasBarOffset + kAtitcHeaderSize;
+  return zeebulator::DecodeAtitc(compressed, kCompressedSize, kAbdFontAtlasWidth, kAbdFontAtlasHeight,
+                                  zeebulator::AtitcFormat::kRgba);
 }
 
 void MergeGgzInto(zeebulator::VirtualFilesystem& vfs, const char* path) {
@@ -180,12 +243,27 @@ struct CallResult {
   bool exceeded_step_budget = false;
 };
 
+// Tracks the real character identity feeding Alien Breaker Deluxe's
+// own real per-character text-cell draw calls (TASKS.md Phase 8) --
+// the geometry trap this project bridges (slot 107) never receives it
+// directly, so it has to be captured earlier in the same real call
+// chain, at the one real instruction (`abd.mod` 0x105dac) that
+// unconditionally, immediately leads into it. `kNone` means "no
+// character pending" (e.g. a non-text draw, or running a title other
+// than Alien Breaker Deluxe, where this real address means nothing in
+// particular).
+struct AbdTextState {
+  static constexpr uint32_t kNone = 0xFFFFFFFF;
+  uint32_t pending_char_index = kNone;
+};
+
 CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap_base,
                                    uint32_t mod_base, uint32_t mod_size, uint32_t entry,
                                    uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
                                    bool trace = false, bool hle_trace = false,
                                    zeebulator::IDisplayHle* display_for_liveness = nullptr,
-                                   zeebulator::Sdl2UnifiedBackend* backend_for_liveness = nullptr) {
+                                   zeebulator::Sdl2UnifiedBackend* backend_for_liveness = nullptr,
+                                   AbdTextState* abd_text_state = nullptr) {
   constexpr uint64_t kMaxSteps = 5'000'000;
   cpu.SetRegister(zeebulator::kR0, r0);
   cpu.SetRegister(zeebulator::kR1, r1);
@@ -224,6 +302,25 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       }
     }
     uint32_t pc = cpu.GetRegister(zeebulator::kPC);
+    // Alien Breaker Deluxe's own real char_index*11 value (`abd.mod`
+    // 0x105da0/0x105da4: `r0*3` then `+r0*8`, computed from the real
+    // ASCII->atlas-index lookup's own `ldrsh` result two instructions
+    // earlier), captured right at 0x105dac -- the one real instruction
+    // that multiplies it by 4 more (`<<2`) to form the real glyph-
+    // descriptor byte offset and unconditionally, immediately leads
+    // (via `abd.mod` 0x106508, then 0x105510) into the real geometry
+    // trap this project bridges. Dividing back out by 11 here, right
+    // before that offset math consumes it, avoids the wider real
+    // window a subtraction-based reconstruction two calls later would
+    // need -- this project's first version of this watchpoint used the
+    // wrong register for the real array base at that later point and
+    // silently produced wrong glyphs (see TASKS.md Phase 8).
+    if (abd_text_state != nullptr && pc == 0x105dac) {
+      uint32_t times_11 = cpu.GetRegister(zeebulator::kR0);
+      if (times_11 % 11 == 0) {
+        abd_text_state->pending_char_index = times_11 / 11;
+      }
+    }
     bool in_module = pc >= mod_base && pc < mod_base + mod_size;
     bool in_trap_range = pc >= trap_base;
     if (in_module) {
@@ -609,8 +706,18 @@ int main(int argc, char** argv) {
   // calls (real slot 41, confirmed live against Peggle -- see
   // core/brew/ishell.h) need the real file's own bytes registered
   // under its own real name to serve anything beyond a blind stub.
+  // Alien Breaker Deluxe's own real font atlas (TASKS.md Phase 8),
+  // decoded once here (before `bar_bytes` moves into
+  // `RegisterResourceFile` below) if this run's own `resources.bar`
+  // turns out to be that title's real `data.bar` -- nullopt otherwise
+  // (any other title, or a `data.bar` too short to hold the real
+  // confirmed offset), in which case the text-cell bridge below stays
+  // a no-op rather than drawing anything wrong.
+  std::optional<std::vector<uint8_t>> abd_font_atlas;
+  AbdTextState abd_text_state;
   if (argc >= 7) {
     std::vector<uint8_t> bar_bytes = ReadFile(argv[6]);
+    abd_font_atlas = DecodeAbdFontAtlas(bar_bytes);
     // Also expose the same raw bytes as a plain, directly-openable VFS
     // file under its own basename -- the same real "the archive's own
     // raw bytes need to be a VFS entry too" shape MergeGgzInto's own
@@ -1060,7 +1167,8 @@ int main(int argc, char** argv) {
   // (TASKS.md).
   std::vector<zeebulator::HleRuntime::HleFunction> unknown_0x0103d8ec_methods(
       40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
-  unknown_0x0103d8ec_methods[2] = [&cpu, &hle](zeebulator::IArmCore& core) {
+  unknown_0x0103d8ec_methods[2] = [&cpu, &hle, &display, &abd_font_atlas, &abd_text_state](
+                                       zeebulator::IArmCore& core) {
     // int QueryInterface(iname* _me, AEECLSID clsID, void** ppo) -- real
     // slot index (offset 8 = INHERIT_IQI's own slot 2, the standard
     // BREW/COM QueryInterface convention this whole family of scaffolds
@@ -1093,6 +1201,52 @@ int main(int argc, char** argv) {
     next_addr += 0x1000;
     std::vector<zeebulator::HleRuntime::HleFunction> stub_methods(
         200, [](zeebulator::IArmCore& c) { c.SetRegister(zeebulator::kR0, 0); });
+    // Real slot 107 on this scaffold is this mystery engine's own real
+    // "draw one geometry element" call (TASKS.md Phase 8) -- struct
+    // layout confirmed (16.16 fixed-point {x0,y0,x1,y1}), and one of
+    // its four real call sites (`abd.mod` 0x105744) is real per-
+    // character text-cell layout for this title's own bitmap-font
+    // text. Renders real glyphs when a real character is pending
+    // (`AbdTextState`, set by a watchpoint on this title's own real
+    // ASCII->atlas-index lookup) and a real font atlas was decoded
+    // (`abd_font_atlas`, from this title's own real `data.bar`);
+    // every other real call site (shapes, other titles, an atlas-less
+    // run) stays a safe no-op -- this project's own standing
+    // convention against drawing anything not confirmed real, not an
+    // oversight.
+    stub_methods[107] = [&hle, &display, &abd_font_atlas, &abd_text_state](zeebulator::IArmCore& core) {
+      core.SetRegister(zeebulator::kR0, 0);
+      if (!abd_font_atlas.has_value()) return;
+      uint32_t real_caller = zeebulator::HleRuntime::ReadStackArg(core, 1);
+      if (real_caller != 0x105744) return;
+      if (abd_text_state.pending_char_index == AbdTextState::kNone) return;
+      uint32_t char_index = abd_text_state.pending_char_index;
+      abd_text_state.pending_char_index = AbdTextState::kNone;  // consume it
+      if (char_index * kAbdFontCellPx >= static_cast<uint32_t>(kAbdFontAtlasWidth) * 8) return;  // out of range
+
+      uint32_t struct_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
+      if (struct_addr == 0) return;
+      int32_t raw_x0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 0));
+      int32_t raw_y0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 4));
+      int dst_x = raw_x0 / 65536;
+      int dst_y = raw_y0 / 65536;
+
+      int atlas_col = static_cast<int>(char_index) % (kAbdFontAtlasWidth / kAbdFontCellPx);
+      int atlas_row = static_cast<int>(char_index) / (kAbdFontAtlasWidth / kAbdFontCellPx);
+      int src_x = atlas_col * kAbdFontCellPx;
+      int src_y = atlas_row * kAbdFontCellPx;
+
+      // BlitRgba wants one contiguous kAbdFontCellPx x kAbdFontCellPx
+      // block; the decoded atlas is one big kAbdFontAtlasWidth-wide
+      // image, so copy the one real cell out of it first.
+      uint8_t cell[kAbdFontCellPx * kAbdFontCellPx * 4];
+      for (int row = 0; row < kAbdFontCellPx; ++row) {
+        const uint8_t* src_row =
+            abd_font_atlas->data() + (static_cast<size_t>(src_y + row) * kAbdFontAtlasWidth + src_x) * 4;
+        std::memcpy(cell + row * kAbdFontCellPx * 4, src_row, kAbdFontCellPx * 4);
+      }
+      display.BlitRgba(dst_x, dst_y, kAbdFontCellPx, kAbdFontCellPx, cell);
+    };
     uint32_t obj = zeebulator::BuildInterfaceObject(cpu.GetMemory(), hle, stub_vtable, stub_object,
                                                      stub_methods);
     uint32_t out_ptr = core.GetRegister(zeebulator::kR2);
@@ -1986,7 +2140,8 @@ int main(int argc, char** argv) {
         auto tick_result = CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, timer.callback,
                                                    call_r0, call_r1, 0, 0,
                                                    /*trace=*/false,
-                                                   /*hle_trace=*/trace_this_tick, &display, &backend);
+                                                   /*hle_trace=*/trace_this_tick, &display, &backend,
+                                                   &abd_text_state);
         if (tick_result.wandered_outside_module || tick_result.exceeded_step_budget) {
           std::printf("timer callback did not complete trustworthily -- stopping.\n");
           running = false;

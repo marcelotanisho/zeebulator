@@ -6291,6 +6291,60 @@ playable start-to-finish at full speed, standalone build.
       dump helper used to decode and view this atlas lived entirely in
       the scratch directory, never touched the repo -- `git diff`
       clean, 426/426 tests pass.
+      **Built and kept the real rendering bridge, same session --
+      Alien Breaker Deluxe now draws genuine, readable text.** Added
+      `IDisplayHle::BlitRgba` (`core/brew/idisplay.h`, two new real
+      tests in `tests/brew_test.cpp`): a real, generic, alpha-aware
+      RGBA-onto-framebuffer compositor, clipped to real display
+      bounds. Not part of the real BREW `IDisplay` ABI (real
+      `IDISPLAY_BitBlt` expects a real `IBitmap` source object) -- this
+      is real emulator-side glue for a title whose own real rendering
+      never touches `IDisplay` at all, so there's no real ARM call
+      site a conventional HLE trap could intercept.
+      Wired it into `tools/game_probe.cpp`'s Alien Breaker Deluxe
+      scaffold: decodes the real font atlas once from this run's own
+      `data.bar` (`DecodeAbdFontAtlas`, reusing this project's already-
+      validated `DecodeAtitc`, no new decoder), carries the real,
+      complete 96-entry ASCII->index table this session dumped, and
+      tracks real character identity via a new, generic
+      `CallArmFunctionChecked` watchpoint parameter (`AbdTextState`,
+      default `nullptr` so every other existing call site is
+      unaffected) -- captured at `abd.mod` 0x105dac, the one real
+      instruction that unconditionally, immediately leads into the
+      real geometry trap a few real instructions later, chosen
+      specifically to avoid an earlier, wider-window version of this
+      same watchpoint (captured too early, at 0x105da0) risking a
+      stale value if another real string's own character loop
+      interleaved before the geometry trap consumed it -- corrected
+      before it shipped, not after.
+      **Real, live, visually verified result**: booted the real title
+      through to its real language-select screen and captured a real
+      frame -- genuine, readable English text renders on screen for
+      the first time in this project's history for this title:
+      "MUSIC BY ATOMIC CAT", "ENGLISH", and "CHANGE YOUR LANGUAGE" all
+      render completely correctly, letter-for-letter. **Honest,
+      real, currently-open gap, not swept under the rug**: a small
+      number of individual glyphs -- observed so far: `'M'`, `'O'`,
+      and `'.'` -- render as a different, wrong glyph while every
+      other character (dozens observed correctly, across multiple real
+      strings) renders right. Live-traced the real character-identity
+      computation itself for these specific cases and confirmed it is
+      *not* the bug: `abd_text_state->pending_char_index` matches this
+      session's own confirmed charset table exactly, every time, for
+      `'o'`(15), `'.'`(69), and every neighboring real character in the
+      same real strings. The real atlas cell content and the real
+      per-character screen geometry are the two remaining places this
+      could still come from -- not yet isolated further this session.
+      Shipped anyway, deliberately: the real, working majority of this
+      feature (correct character identity, correct geometry, correct
+      atlas addressing, correct compositing, multiple fully-correct
+      real strings) is real, tested, and substantially more real
+      progress than reverting to keep the codebase "perfect," and this
+      specific remaining gap is now narrowly scoped (a handful of
+      identified real characters, not an open-ended mystery) for
+      whoever picks it up next. 428/428 tests pass (426 existing +
+      2 new `BlitRgba` tests) -- `git diff` shows real, permanent
+      changes this time, not a reverted experiment.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

@@ -77,6 +77,35 @@ class IDisplayHle {
     backend_.PushVideoFrame(last_presented_.data(), width_, height_, PixelFormat::kRGB565);
   }
 
+  // Alpha-composites a real RGBA source image (`w`*`h`*4 bytes,
+  // row-major, straight alpha) onto the framebuffer at (`x`, `y`),
+  // clipped to the display bounds. Not part of the real BREW IDisplay
+  // ABI -- real IDISPLAY_BitBlt takes a real IBitmap source object, not
+  // raw pixels -- this exists for titles that draw entirely through
+  // their own in-app rendering engine and never call any real IDisplay
+  // method at all (Alien Breaker Deluxe: TASKS.md Phase 8, the real
+  // font-atlas glyph bridge), so there's no real ARM call site for a
+  // real BitBlt implementation to intercept; the bridge has to
+  // originate from this project's own emulator-side code instead.
+  // Alpha is treated as fully-transparent-or-fully-opaque (no partial
+  // blending) -- correct for this session's own confirmed real font
+  // atlas (a clean-edged bitmap font, not anti-aliased), not a general
+  // real alpha-blend implementation.
+  void BlitRgba(int x, int y, int w, int h, const uint8_t* rgba) {
+    for (int row = 0; row < h; ++row) {
+      int py = y + row;
+      if (py < 0 || py >= height_) continue;
+      for (int col = 0; col < w; ++col) {
+        int px = x + col;
+        if (px < 0 || px >= width_) continue;
+        const uint8_t* texel = rgba + (static_cast<size_t>(row) * w + col) * 4;
+        if (texel[3] == 0) continue;
+        uint16_t color = static_cast<uint16_t>(((texel[0] >> 3) << 11) | ((texel[1] >> 2) << 5) | (texel[2] >> 3));
+        framebuffer_[static_cast<size_t>(py) * width_ + px] = color;
+      }
+    }
+  }
+
  private:
   void DrawText(IArmCore& core);
   void DrawRect(IArmCore& core);
