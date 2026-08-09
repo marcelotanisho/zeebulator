@@ -1202,6 +1202,57 @@ int main(int argc, char** argv) {
     next_addr += 0x1000;
     std::vector<zeebulator::HleRuntime::HleFunction> stub_methods(
         200, [](zeebulator::IArmCore& c) { c.SetRegister(zeebulator::kR0, 0); });
+    // Real slot 64's two real callers (`abd.mod` 0x102b00, 0x10ac10)
+    // both pass their own real 48-byte descriptor (r2) into slot 64,
+    // then immediately read *descriptor (offset 0) afterward without
+    // ever writing it themselves -- confirmed via real disassembly
+    // that real slot 64 must write it itself, through the pointer, as
+    // a real side effect: writing the real resolved texture-data
+    // pointer (found at descriptor+44, itself written by a separate
+    // real loader call) into descriptor+0 is what lets real slot 33
+    // (below) start seeing real, non-zero, real-object-matching
+    // texture references instead of a constant zero.
+    //
+    // descriptor+44 isn't always populated yet at real registration
+    // time though (TASKS.md Phase 8: two real objects confirmed
+    // sampled all-zero at real registration, populated only later) --
+    // LOGO/LOGOSTAR specifically hit this live. Tracks every real
+    // descriptor ever seen and re-resolves all of them on every real
+    // slot 64/33 call, not just once, so a late real population still
+    // gets picked up.
+    auto descriptors = std::make_shared<std::vector<uint32_t>>();
+    auto refresh_descriptors = [descriptors](zeebulator::IArmCore& core) {
+      for (uint32_t d : *descriptors) {
+        uint32_t texture_data_ptr = core.GetMemory().Read32(d + 44);
+        if (texture_data_ptr != 0) core.GetMemory().Write32(d + 0, texture_data_ptr);
+      }
+    };
+    stub_methods[64] = [descriptors, refresh_descriptors](zeebulator::IArmCore& core) {
+      uint32_t obj = core.GetRegister(zeebulator::kR2);
+      if (obj != 0) {
+        if (std::find(descriptors->begin(), descriptors->end(), obj) == descriptors->end()) {
+          descriptors->push_back(obj);
+        }
+        refresh_descriptors(core);
+      }
+      core.SetRegister(zeebulator::kR0, 0);
+    };
+    // Real slot 33 (dispatched via a real, generic "resolve this real
+    // graphics-context's own per-object override, else a real
+    // default" utility this whole subsystem shares, `abd.mod`
+    // 0x115354) is this real engine's own real "select the current
+    // real texture" call -- confirmed live tracing every real caller:
+    // its own real r2 argument is always either 0 (no real texture,
+    // plain-color real geometry) or a real pointer exactly matching a
+    // real object already confirmed loaded via slot 64. Stashes it so
+    // slot 107's own real draw call (below) knows which real texture,
+    // if any, is currently real-bound when it fires.
+    auto bound_texture = std::make_shared<uint32_t>(0);
+    stub_methods[33] = [bound_texture, refresh_descriptors](zeebulator::IArmCore& core) {
+      refresh_descriptors(core);
+      *bound_texture = core.GetRegister(zeebulator::kR2);
+      core.SetRegister(zeebulator::kR0, 0);
+    };
     // Real slot 48 is this scaffold's own real "a new real screen is
     // about to begin" signal (TASKS.md Phase 8): silent through this
     // title's own real boot, then fires exactly twice per real screen
@@ -1245,7 +1296,8 @@ int main(int argc, char** argv) {
     // was bridged). Both paths gated on `abd_font_atlas.has_value()`
     // (only ever set for this one real title's own real `data.bar`) so
     // every other title stays untouched.
-    stub_methods[107] = [&hle, &display, &abd_font_atlas, &abd_text_state, kHeight](zeebulator::IArmCore& core) {
+    stub_methods[107] = [&hle, &display, &abd_font_atlas, &abd_text_state, kHeight,
+                          bound_texture](zeebulator::IArmCore& core) {
       core.SetRegister(zeebulator::kR0, 0);
       if (!abd_font_atlas.has_value()) return;
       uint32_t struct_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
@@ -1254,6 +1306,57 @@ int main(int argc, char** argv) {
       int32_t raw_x0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 0));
       int32_t raw_y0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 4));
       int dst_x = raw_x0 / 65536;
+
+      // Real caller 0x104f84 is this engine's own real background/
+      // sprite texture draw call (TASKS.md Phase 8, live-traced): the
+      // real struct here is a real screen-bounds/clip parameter, not
+      // a real per-sprite rect (both real y0 and y1 read identically
+      // -- confirmed via real disassembly of the real anchor-alignment
+      // dispatch one level up, `abd.mod` 0x104db0, which computes this
+      // real struct from real screen width/height, not a real sprite
+      // rect, whenever real mode 9 -- confirmed live for this real
+      // caller -- applies no real centering adjustment). The real
+      // anchor coordinate this real caller actually intends is this
+      // same struct's own real x0/y0 pair, used directly, in this
+      // real mode's own real top-down convention -- confirmed live,
+      // not the real bottom-up flip the real text/shape paths need
+      // (that flip is specific to those two real callers, see their
+      // own doc comments below; applying it here put the real image
+      // fully below the real 480px display, confirmed live, before
+      // this fix).
+      if (real_caller == 0x104f84 && *bound_texture != 0) {
+        auto& mem = core.GetMemory();
+        uint32_t tex = *bound_texture;
+        uint32_t signature = mem.Read32(tex + 0);
+        if (signature == 0xccc40002) {
+          uint32_t width = mem.Read32(tex + 4);
+          uint32_t height = mem.Read32(tex + 8);
+          uint32_t flags = mem.Read32(tex + 12);
+          uint32_t data_offset = mem.Read32(tex + 16);
+          if (width > 0 && width <= 1024 && height > 0 && height <= 1024) {
+            zeebulator::AtitcFormat format =
+                (flags == 2) ? zeebulator::AtitcFormat::kRgba : zeebulator::AtitcFormat::kRgb;
+            uint32_t blocks_w = (width + 3) / 4;
+            uint32_t blocks_h = (height + 3) / 4;
+            size_t bytes_per_block = (format == zeebulator::AtitcFormat::kRgba) ? 16 : 8;
+            size_t compressed_size = static_cast<size_t>(blocks_w) * blocks_h * bytes_per_block;
+            std::vector<uint8_t> compressed(compressed_size);
+            uint32_t data_addr = tex + data_offset;
+            for (size_t i = 0; i < compressed_size; ++i) {
+              compressed[i] = mem.Read8(static_cast<uint32_t>(data_addr + i));
+            }
+            auto decoded = zeebulator::DecodeAtitc(compressed.data(), compressed.size(),
+                                                    static_cast<int>(width),
+                                                    static_cast<int>(height), format);
+            if (decoded.has_value()) {
+              int dst_y = raw_y0 / 65536;
+              display.BlitRgba(dst_x, dst_y, static_cast<int>(width), static_cast<int>(height),
+                                decoded->data());
+              return;
+            }
+          }
+        }
+      }
 
       if (real_caller == 0x105744 && abd_text_state.pending_char_index != AbdTextState::kNone) {
         uint32_t char_index = abd_text_state.pending_char_index;

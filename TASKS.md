@@ -6882,6 +6882,44 @@ playable start-to-finish at full speed, standalone build.
       re-apply the same real decode+select+dispatch bridge with a
       real, evidence-derived position instead of reverting it again.
       428/428 tests pass.
+      **Finished the real position derivation the same session --
+      real backgrounds now render, from a real, live-traced, non-
+      guessed position.** Live-dumped every real stack argument slot
+      107 receives for real_caller=0x104f84 (not just the two this
+      project's own bridge already reads): none of them carry a real
+      per-sprite rect either -- confirmed this real caller's own real
+      struct genuinely is a real screen-bounds/clip parameter, not a
+      real sprite rect, matching the real disassembly read two rounds
+      up. Read the real anchor-alignment dispatch (`abd.mod` 0x104db0)
+      one more level: for this real caller (real mode 9, real r3 !=
+      -1), the real "half-width"/"half-height" registers (r7/r8) end
+      up holding the *real full* screen width/height, not halves --
+      because real mode 9 is a real "no centering adjustment" branch,
+      the real final anchor position handed to slot 107 is just this
+      real caller's own real (X, Y) arguments, unmodified, in this
+      real mode's own real top-down convention. For real TITLE
+      specifically, those real arguments are (0, 0) -- confirmed live
+      the real bottom-up flip formula the real text/shape paths need
+      does *not* apply here (applying it produced dst_y=480, fully off
+      the real 480px display, confirmed live before this fix); using
+      this real struct's own real x0/y0 directly instead put the real
+      texture on screen correctly.
+      **Confirmed live and stable** (two independent runs, screenshots
+      minutes apart, byte-similar): a real, complete sci-fi background
+      -- a planet, a nebula, alien rocky terrain, with a decorative
+      real UI frame baked into the same real image -- renders
+      correctly behind this title's own already-working real text, at
+      a real, evidence-derived position and size, through this
+      project's own already-bridged real slot 107 (not a new, separate
+      rendering path) -- the same real slot this project has used for
+      real text and real shapes all along, just recognizing a real
+      third `real_caller` value it didn't know before this session.
+      Kept this time, unlike the earlier speculative attempt this same
+      session: every step -- the real slot-64 write-through, the real
+      slot-33 selection tracking, the real slot-107 dispatch, and the
+      real destination position -- is grounded in real disassembly
+      cross-checked against real live tracing, not a plausible-looking
+      guess. 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
