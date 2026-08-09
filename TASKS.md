@@ -6612,6 +6612,64 @@ playable start-to-finish at full speed, standalone build.
       side and real data format are now confirmed; only the real
       "how does this get drawn" half remains. No code changes kept,
       `git diff` clean, 428/428 tests pass.
+      **Follow-up round, same session: traced the real callback this
+      title passes back into its own texture-register call (the one
+      the previous round left unidentified) and it resolved to a real,
+      concrete answer -- but a negative one for backgrounds.** A live
+      Dispatch-level trap watch (temporary, reverted) showed that
+      callback firing directly, from two real `abd.mod` call sites
+      (0x00102bec, 0x0010ac6c), for the original five real texture
+      objects *and* nine more with fresh real addresses appearing
+      later in the same real run -- proving real texture registration
+      keeps happening well past boot, not just once, which the
+      previous round's narrower 3000-call window had missed entirely.
+      **First register-numbering mistake, caught and corrected live,
+      not left in**: an early pass mapped global HLE trap index 7 to
+      `IDisplayHle::BitBlt` by assuming `IDisplayHle::Build()` was the
+      very first real `Register()` caller in the program -- it isn't;
+      `ModRuntime::Install()` (the real libc-style helper table BREW
+      modules link against) registers 32 real functions first, so
+      `BitBlt`'s real global index is actually 39, not 7. The
+      mislabeled index 7 turned out to be `GetUpTimeMs`, confirmed two
+      ways: reading the real registered-function-name-to-offset table
+      in `mod_runtime.cpp` directly (`kGetUpTimeMsSlotOffset = 0xb0`),
+      and independently by disassembling the real caller
+      (`abd.mod` 0x10ba00-0x10ba4c), which is an ordinary real
+      get-tick/compute-delta timing routine, not anything related to
+      drawing -- the ~3591 real calls this round first mistook for
+      "background blits" were just this title's own real per-tick
+      animation timer. Re-verified the *correct* real IDisplay trap
+      range (indices 33-58, confirmed live via a one-time vtable dump)
+      and re-ran the same live watch: **zero real calls to any
+      IDisplay method this project doesn't already bridge** (`BitBlt`,
+      `GetSymbol`, `DrawFrame`, `CreateDIBitmap`, etc. all silent)
+      across the real splash/title/language-select sequence. Also
+      checked whether backgrounds might just be large solid-color
+      real shapes going through the already-bridged slot 107 path
+      (this session's earlier, interrupted color-probe question) --
+      instrumented slot 107 to log any real shape struct at least
+      200x200px, and watched every real `SetColor` call with a real
+      (non-reentrant) caller: neither ever fired in the same run.
+      **Ground-truthed all of this against the actual live SDL window,
+      not just logs**: a real screenshot of the real language-select
+      screen (`gnome-screenshot` + crop, `xdotool`/`import` both
+      unavailable in this environment) shows a plain black background
+      behind the real cyan text and real white divider lines -- no
+      color fill, no image, matching every negative result above.
+      **Conclusion for this round**: across the three real screens
+      reachable without simulated input, this title's real drawing
+      engine does not call any texture-consuming or large-fill path
+      this project can see -- the five-plus-nine real texture objects
+      confirmed loaded are either consumed on a real screen further
+      into the game (unreached without real player input, which this
+      session continues to defer per direct instruction), or through
+      a real mechanism entirely outside the vtable/shape surface
+      already traced. All temporary instrumentation (a Dispatch-level
+      trap logger, a vtable dump, a slot-107 size logger) reverted;
+      `git diff` clean; 428/428 `zeebulator_tests` pass (a separate,
+      pre-existing, unrelated set of 16 vendored liblzma test
+      failures is present in the full `ctest` run regardless of this
+      session's own changes -- not this project's own test suite).
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
