@@ -37,6 +37,8 @@ add_library(zeebulator_core STATIC
   loader/midi.h
   loader/atitc.cpp
   loader/atitc.h
+  loader/png.cpp
+  loader/png.h
   audio/mixer.cpp
   audio/mixer.h
   audio/soundfont_synth.cpp

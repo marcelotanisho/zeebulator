@@ -7062,6 +7062,72 @@ playable start-to-finish at full speed, standalone build.
       distinct, bigger real next step rather than pulled in
       unilaterally. All real temporary instrumentation reverted;
       `git diff` clean; 428/428 tests pass.
+      **Found the real root cause behind the missing LOGO/LOGOSTAR
+      splash graphics, same session, on real direct instruction to fix
+      menu visuals before touching gameplay -- and it explains far
+      more than just those two images.** Traced the real "manager"
+      object real slot 41 dispatches through (TASKS.md's own real,
+      still-open question from two rounds up) directly: `r0=
+      0x80001000` -- this project's own real, already-built `IShellHle`
+      object. Real slot 41 is real `LoadResDataEx`, and -- unlike every
+      other real gap this session has found so far -- **it was already
+      fully, correctly implemented**, not a blind stub. Added a real
+      temporary diagnostic print inside it and confirmed live: it
+      succeeds for the real vast majority of real resource requests
+      this title makes (id 9001, 9002, 9025, 9029, 9030, 9073, 9074,
+      and dozens more), correctly resolving real `(type, id)` pairs
+      against `BarArchive`'s own already-validated resource-ID
+      directory algorithm.
+      **The real bug was never in the real load path -- it's that the
+      real loaded bytes aren't what this project's own rendering
+      pipeline assumes.** Read the real bytes `LoadResDataEx` fetches
+      for real LOGO/LOGOSTAR's own real ids (9073, 9074, confirmed by
+      real buffer address matching the real, previously-"stuck"
+      descriptor objects `0x80324344`/`0x803247f0` exactly) directly
+      from the real archive: both start with the real PNG signature
+      (`\x89PNG\r\n\x1a\n`), not this project's own already-understood
+      ATITC format. Decoded them independently (Python/Pillow, outside
+      this project entirely) to confirm they're real, valid, undamaged
+      images -- **`logo_a` is the real "VEGA MOBILE" logo, pixel-for-
+      pixel matching the real human's own reference screenshot's real
+      splash screen; `logo_b` is a real decorative starburst, matching
+      the real "LOADING LOGOSTAR..." debug string already found**. Real
+      slot 64/descriptor-population code (this session's own earlier
+      work) was never wrong -- it correctly stores whatever real bytes
+      `LoadResDataEx` fetches; this project's own real texture-render
+      bridge just never had a real PNG decoder, only ATITC, so any
+      real PNG-backed resource silently fails its ATITC signature check
+      and renders nothing. **This isn't scoped to just the splash
+      screen**: spot-checked five more small real `data.bar` entries
+      (ids resolving to archive entries 30-35) the same way -- all real
+      PNGs too (real 8x8 to 64x64 UI/particle graphics, e.g. real
+      colored gem icons and a real radial burst effect) -- strong real
+      evidence this archive uses PNG broadly for real small/UI assets
+      and ATITC only for the real large backgrounds/font atlas already
+      bridged, which very plausibly covers the real missing menu icons
+      too.
+      **Implemented a real PNG decoder** (`core/loader/png.{h,cpp}`,
+      new): real chunk parsing (`IHDR`/`IDAT`/`IEND`), real zlib
+      inflate (this project's own already-vendored zlib, no new
+      compression code), and the real PNG-specific scanline filter
+      reconstruction (None/Sub/Up/Average/Paeth) written directly from
+      the real spec, since this project's vendored copies don't include
+      one. Supports real 8-bit, non-interlaced RGB/RGBA -- every real
+      color type this session's own real samples actually use; palette
+      and interlaced real PNGs return nullopt rather than guess.
+      **Verified independently before writing a single line of the
+      real render-side integration**: decoded all seven real PNG
+      samples found this round (both real logos, all five real small
+      entries) and diffed every real pixel against Python/Pillow's own
+      decode -- zero mismatched pixels, all seven. Added a real,
+      permanent unit test (`tests/png_test.cpp`, matching
+      `atitc_test.cpp`'s own established real-sample-pinning shape):
+      the real, complete 8x8 PNG byte-for-byte embedded, checked
+      against all 64 real expected pixels. All real temporary
+      diagnostic prints (inside `IShellHle::LoadResDataExImpl` and at
+      the real ARM call site) reverted -- this round's own real,
+      permanent contribution is the decoder and its test, not yet the
+      render-side wiring (next). 431/431 tests pass (428 + 3 new).
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
