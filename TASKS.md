@@ -6669,7 +6669,36 @@ playable start-to-finish at full speed, standalone build.
       `git diff` clean; 428/428 `zeebulator_tests` pass (a separate,
       pre-existing, unrelated set of 16 vendored liblzma test
       failures is present in the full `ctest` run regardless of this
-      session's own changes -- not this project's own test suite).
+      session's own changes -- not this project's own test suite;
+      root-caused and fixed later the same session -- a stale
+      generated `CTestTestfile.cmake` left over in
+      `build/_deps/liblzma-build/` from before this project's own
+      `BUILD_TESTING OFF` guard existed, which a normal reconfigure
+      doesn't clean up on its own. Deleting that one file let a fresh
+      configure regenerate it correctly -- `ctest` now reports exactly
+      428/428, matching `zeebulator_tests` one-for-one).
+      **Tried, with explicit permission, to reach a screen further
+      than language-select to widen the background search -- still
+      no real background found, and this specific title's real
+      language-select interaction remains unconfirmed.** Reused this
+      project's own existing env-gated `ZEEBULATOR_AUTOPRESS`
+      diagnostic (not new input-handling code) to cycle real presses
+      of `kHidUidBack`/`Button1`/`Button2`/`DPadDown` at this screen
+      over a real ~45-second run. Every one of those real HID
+      callback invocations ran cleanly (confirmed live via this
+      project's own existing per-press log line) and the real slot-48
+      screen-transition signal never fired again after boot's own
+      initial two real transitions, confirmed against a live
+      screenshot too -- this specific screen's real "confirm a
+      language and advance" interaction isn't any of the four real
+      buttons tried, at least not as a bare instantaneous press. Not
+      pursued further this round: past this point, correctly driving
+      it becomes real controller-input engineering (mapping this
+      title's own real selection/confirm semantics), not a background-
+      rendering probe, and stays deferred per this session's own
+      standing instruction. All temporary instrumentation (a slot-48
+      fire logger, a multi-button autopress cycle) reverted; `git
+      diff` clean; 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
