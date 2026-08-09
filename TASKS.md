@@ -6982,6 +6982,55 @@ playable start-to-finish at full speed, standalone build.
       TITLE's own success may depend on. No code changes needed for
       this half; documenting the real, confirmed root cause is this
       round's own real contribution. 428/428 tests pass.
+      **Follow-up, same session: a real human sent a real reference
+      screenshot of the real main menu (JOGAR/OPÇÕES/AJUDA/SAIR, four
+      real icon buttons) and confirmed the real missing-icon problem
+      isn't limited to the real developer-logo splash -- reached this
+      real screen live to check.** First had to fix real navigation
+      itself, which had quietly broken: this round's own added real
+      per-tick decode/scale work changed how many real game ticks land
+      per real wall-clock interval, so the existing real outer-loop-
+      count-paced autopress silently drifted out of alignment with
+      real game state (confirmed live: three consecutive real attempts
+      at the old pacing all failed to reach the real target screen,
+      despite every real button genuinely firing). Repaced against
+      real `tick_count` (real processed game ticks) instead of real
+      outer-loop iterations, and delayed the whole real sequence past
+      real tick 360 -- safely clear of the already-known real ~300-
+      tick real splash->language-select boundary the old, unpaced
+      sequence had been overlapping. Confirmed live: reliably reaches
+      a real further screen now (its own real English text reads
+      "ARCADE/CHALLENGE/VERSUS/OPTIONS" -- the real English-language
+      equivalent of the real human's own real Portuguese reference,
+      not a different real screen).
+      **Confirmed the real width-stretch fix generalizes**: this real
+      menu screen has its own real, second full-screen background
+      (`0x804264f8`, distinct from real TITLE's own `0x80324ca8`) and
+      it renders correctly, real edge to real edge, through the exact
+      same real slot-107/real_caller=0x104f84 path and real scaling
+      logic already shipped -- not a one-off fix specific to TITLE.
+      **The real missing icons are confirmed a genuinely separate real
+      gap, not the same real slot-41 resource-loading issue LOGO/
+      LOGOSTAR hit.** Live-traced every real `bound_texture` value
+      real_caller=0x104f84 ever receives across this real run: only
+      three ever appear -- 0 (before a real background resolves), and
+      the two real background textures above. No real icon-shaped
+      texture reference ever reaches this real, already-understood
+      path at all, confirmed live, not merely unresolved the way LOGO/
+      LOGOSTAR's real texture data is. This means the real four icon
+      graphics (gamepad/wrench/question-mark/power) go through a real
+      mechanism this project hasn't identified yet -- not slot 107
+      with a real texture bound the way real backgrounds do, and not
+      a real new `real_caller` value at slot 107 either (checked
+      live, none appeared). A real, open, not-yet-scoped next step:
+      possibly a real, separate "icon glyph" atlas selected similarly
+      to the real bitmap font (this project's own already-confirmed
+      real text mechanism), or an entirely different real drawing
+      call this session hasn't found any evidence of yet. Temporary
+      diagnostic prints reverted; the real tick-paced autopress fix
+      is kept (a real, general improvement to this project's own
+      navigation-probing infrastructure, not exploratory-only).
+      428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

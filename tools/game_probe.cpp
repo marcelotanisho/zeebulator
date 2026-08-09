@@ -2434,33 +2434,43 @@ int main(int argc, char** argv) {
       // having run yet) and the AVK path via `HandleEvent` directly
       // (always callable once `applet_ptr` exists, real evt/wParam
       // shape confirmed against Double Dragon).
-      static uint64_t autopress_loop_count = 0;
-      constexpr uint64_t kAutopressEveryNLoops = 120;
-      if (autopress_loop_count % kAutopressEveryNLoops == 0) {
-        if (*captured_button_callback != 0) {
-          InjectHidButtonEvent(kHidUidBack, true);
-          InjectHidButtonEvent(kHidUidBack, false);
-        }
-        if (applet_ptr != 0) {
-          constexpr uint32_t kEvtKeyDown = 0x101;
-          constexpr uint32_t kEvtKeyUp = 0x102;
-          constexpr uint32_t kAvkConfirm = 0xe021;  // SdlKeyToAvk's own "0" key mapping
-          try {
-            CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn, applet_ptr,
-                                    kEvtKeyDown, kAvkConfirm, 0, /*trace=*/false,
-                                    /*hle_trace=*/false, &display, &backend);
-            CallArmFunctionChecked(cpu, kTrapBase, kBase, mod_size, handle_event_fn, applet_ptr,
-                                    kEvtKeyUp, kAvkConfirm, 0, /*trace=*/false,
-                                    /*hle_trace=*/false, &display, &backend);
-          } catch (const std::exception&) {
-            // Caught and ignored here deliberately: this is an
-            // exploratory probe, and a wander/crash here is itself
-            // informative (this AVK code isn't safe for this title),
-            // not something that should take the whole process down.
+      // Held, once each, not cyclic: a repeated/rapid re-hold of one
+      // real button (specifically Button2) reproduced a real crash
+      // this session already set aside (TASKS.md Phase 8) -- this
+      // pass exists only to reach a real screen past language-select
+      // once, safely, the same way an earlier successful (non-
+      // crashing) round did. Paced by real `tick_count` (real
+      // processed game ticks), not real outer-loop iterations --
+      // confirmed live this round that outer-loop pacing drifts once
+      // this project's own added real per-tick decode/scale work
+      // changes how many real game ticks land within a given real
+      // wall-clock interval, silently misaligning a real loop-count-
+      // paced press against real game state.
+      static const uint32_t kCandidates[] = {kHidUidDPadDown,  kHidUidDPadUp,
+                                              kHidUidDPadLeft,  kHidUidDPadRight,
+                                              kHidUidBack,      kHidUidButton1,
+                                              kHidUidButton2,   kHidUidButton3,
+                                              kHidUidButton4};
+      constexpr uint64_t kStartTick = 360;  // safely past the ~300-tick splash->language-select boundary
+      constexpr uint64_t kHoldTicks = 10;
+      constexpr uint64_t kGapTicks = 30;
+      constexpr uint64_t kSlotTicks = kHoldTicks + kGapTicks;
+      constexpr uint64_t kNumCandidates = sizeof(kCandidates) / sizeof(kCandidates[0]);
+      if (tick_count >= kStartTick && tick_count < kStartTick + kSlotTicks * kNumCandidates) {
+        uint64_t rel = tick_count - kStartTick;
+        uint64_t which = rel / kSlotTicks;
+        uint64_t pos = rel % kSlotTicks;
+        static uint64_t last_pos_acted = ~0ull;
+        if (pos != last_pos_acted && *captured_button_callback != 0) {
+          if (pos == 0) {
+            InjectHidButtonEvent(kCandidates[which], true);
+            last_pos_acted = pos;
+          } else if (pos == kHoldTicks) {
+            InjectHidButtonEvent(kCandidates[which], false);
+            last_pos_acted = pos;
           }
         }
       }
-      ++autopress_loop_count;
     }
     // Elapsed-aware, not flat: this loop feeds a fixed kTickMs of
     // *simulated* time into Tick() every iteration, but the real
