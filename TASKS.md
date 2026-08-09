@@ -6573,6 +6573,45 @@ playable start-to-finish at full speed, standalone build.
       directly from live-traced real data for that exact screen's own
       real string, not inferred from a different one. 428/428 tests
       pass.
+      **Started chasing this title's real background rendering the
+      same session -- found a real, concrete, exciting lead, but not
+      the real draw call itself yet.** This title never calls real GL
+      at all (confirmed earlier this session), so any real background
+      image has to go through this same custom drawing engine; traced
+      the earliest real activity on its scaffold (every real slot, in
+      real call order) looking for a real "load/set texture" call.
+      **Found it, at least the load half**: real slot 64 fires exactly
+      five times during real boot, each time with a fresh real heap
+      object and a real callback-function-pointer argument (into this
+      project's own global HLE trap table, not this scaffold's own --
+      a real, different subsystem's own registered callback, not yet
+      identified). Dumping each real object's own memory directly
+      found a real, complete ATITC header (TASKS.md Phase 8's own
+      already-confirmed 5-field format: signature/width/height/flags/
+      dataOffset) embedded *inline* at a fixed real offset (48 bytes
+      in) inside the object itself -- not a pointer out to `data.bar`,
+      the real compressed texture bytes live directly in this real
+      object's own allocation. **Real, decoded dimensions for the five
+      real objects: 256x256, 512x128, (two real objects with all-zero
+      contents -- not yet loaded at the point this was sampled, or a
+      different real resource type), and 512x512** -- the 512x128 one
+      is an exact real match for this session's own already-confirmed
+      real font atlas dimensions, and 512x512 exactly matches the real
+      background textures already decoded from `data.bar` earlier
+      this session, strong real evidence this is a genuine real
+      texture registry being populated at boot, not a coincidence.
+      **Did not find the real "draw this texture" consumer call**:
+      searched the next 3000 real HLE calls for any later real
+      reference to these five exact real object addresses and found
+      none -- the real consumer either fires much later, references
+      the texture through a real derived/indirect value this session
+      hasn't identified yet (matching the same real pattern slot 107's
+      own text-character identity needed a dedicated watchpoint for),
+      or goes through a real, different interface entirely. A real,
+      well-scoped lead for a future round, not a dead end: the load
+      side and real data format are now confirmed; only the real
+      "how does this get drawn" half remains. No code changes kept,
+      `git diff` clean, 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
