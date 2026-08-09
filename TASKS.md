@@ -6783,6 +6783,28 @@ playable start-to-finish at full speed, standalone build.
       for the same real reason: no clean, crash-free positive test of
       a generalized fix has been achieved yet. All temporary
       instrumentation reverted; `git diff` clean; 428/428 tests pass.
+      **Shipped, then reverted the same session, a speculative
+      background render -- wrong approach, not just an unlucky one.**
+      Decoded every real loaded texture's real ATITC data (real,
+      correctly) but composited it at a *made-up* position (centered,
+      no real evidence), in a *made-up* order (whichever finished
+      decoding last on each real retry won the framebuffer), on a
+      *made-up* trigger (every real screen transition, not the real
+      still-unidentified real draw call). It looked convincing --
+      confirmed live, a real, coherent sci-fi background rendered
+      correctly behind this title's own real text -- which is exactly
+      the problem: a plausible-looking real screen is not real
+      emulation of what real Alien Breaker Deluxe hardware actually
+      does, and this project's own entire methodology (every other
+      bridge in this whole codebase, TASKS.md Phase 3 onward) is built
+      from a real, live-traced, confirmed ARM call site specifically
+      *because* "looks right" and "is right" aren't the same claim.
+      Corrected directly: reverted via `git revert` (commit history
+      keeps the wrong attempt visible, not silently erased), back to
+      the same real, honest "we understand the load side, not the
+      draw side" state two rounds up. The real "draw this texture"
+      ARM call site is still the real, correct next step -- not a
+      substitute for it. 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
