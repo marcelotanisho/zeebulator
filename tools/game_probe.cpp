@@ -1222,12 +1222,81 @@ int main(int argc, char** argv) {
     // early enough to precede that content instead, confirmed live on
     // a real desktop over several real minutes with no flicker and no
     // lost content.
+    // EXPERIMENTAL, speculative background-texture render: real slot 64
+    // (confirmed live, this round) is called `(this=scaffold, flag=1,
+    // object=r2, self_callback=r3)` -- `object` is a fresh real heap
+    // allocation holding a real, complete ATITC header embedded inline
+    // at a fixed offset (48 bytes in), confirmed against known real
+    // asset dimensions (TASKS.md Phase 8: 256x256, 512x128 -- an exact
+    // match for this title's own already-decoded real font atlas --
+    // and 512x512, an exact match for real background textures already
+    // decoded from `data.bar`). No real "draw this texture" consumer
+    // call has been found despite an extensive live search (TASKS.md
+    // Phase 8, several rounds) -- this renders every real object that
+    // decodes successfully directly, at (0,0), the moment its real
+    // data looks valid, as a real, evidence-grounded guess at *what*
+    // to show without real evidence yet for exactly *when*/*where*.
+    // Skips the 512x128 one -- already confirmed to be the font atlas,
+    // handled by its own real, separate, pixel-perfect bridge.
+    auto texture_objects = std::make_shared<std::vector<uint32_t>>();
+    auto try_render_texture = [&display](zeebulator::IArmCore& core, uint32_t obj) {
+      auto& mem = core.GetMemory();
+      constexpr uint32_t kHeaderOffset = 48;
+      uint32_t signature = mem.Read32(obj + kHeaderOffset + 0);
+      if (signature != 0xccc40002) return;  // not populated (yet) or not real ATITC data
+      uint32_t width = mem.Read32(obj + kHeaderOffset + 4);
+      uint32_t height = mem.Read32(obj + kHeaderOffset + 8);
+      uint32_t flags = mem.Read32(obj + kHeaderOffset + 12);
+      uint32_t data_offset = mem.Read32(obj + kHeaderOffset + 16);
+      if (width == 0 || height == 0 || width > 1024 || height > 1024) return;
+      if (width == kAbdFontAtlasWidth && height == kAbdFontAtlasHeight) return;  // the font atlas
+      zeebulator::AtitcFormat format =
+          (flags == 2) ? zeebulator::AtitcFormat::kRgba : zeebulator::AtitcFormat::kRgb;
+      uint32_t blocks_w = (width + 3) / 4;
+      uint32_t blocks_h = (height + 3) / 4;
+      size_t bytes_per_block = (format == zeebulator::AtitcFormat::kRgba) ? 16 : 8;
+      size_t compressed_size = static_cast<size_t>(blocks_w) * blocks_h * bytes_per_block;
+      std::vector<uint8_t> compressed(compressed_size);
+      uint32_t data_addr = obj + kHeaderOffset + data_offset;
+      for (size_t i = 0; i < compressed_size; ++i) {
+        compressed[i] = mem.Read8(static_cast<uint32_t>(data_addr + i));
+      }
+      auto decoded = zeebulator::DecodeAtitc(compressed.data(), compressed.size(),
+                                              static_cast<int>(width), static_cast<int>(height),
+                                              format);
+      if (!decoded.has_value()) return;
+      // Centered, not left-aligned: no real evidence yet for this
+      // title's own intended real placement, but every real texture
+      // found so far is narrower than the real 640px display
+      // (TASKS.md Phase 8) and looks like a complete, self-contained
+      // real background+frame image, not a tile meant to start flush
+      // against an edge -- centering is the more plausible real guess
+      // pending real evidence either way.
+      int dst_x = (kWidth - static_cast<int>(width)) / 2;
+      display.BlitRgba(dst_x, 0, static_cast<int>(width), static_cast<int>(height),
+                        decoded->data());
+    };
+    stub_methods[64] = [texture_objects, try_render_texture](zeebulator::IArmCore& core) {
+      uint32_t obj = core.GetRegister(zeebulator::kR2);
+      if (obj != 0) {
+        texture_objects->push_back(obj);
+        try_render_texture(core, obj);
+      }
+      core.SetRegister(zeebulator::kR0, 0);
+    };
     bool cleared_at_transition = false;
-    stub_methods[48] = [&display, &cleared_at_transition](zeebulator::IArmCore& core) {
+    stub_methods[48] = [&display, &cleared_at_transition, texture_objects,
+                         try_render_texture](zeebulator::IArmCore& core) {
       if (!cleared_at_transition) {
         cleared_at_transition = true;
         display.ClearLiveFramebuffer();
       }
+      // Real texture data can arrive after real registration (TASKS.md
+      // Phase 8: two real objects sampled all-zero at registration
+      // time) -- retry every real object at every real screen-
+      // transition signal so a late-populated one still gets a chance
+      // to render once its real data is ready.
+      for (uint32_t obj : *texture_objects) try_render_texture(core, obj);
       core.SetRegister(zeebulator::kR0, 0);
     };
     // Real slot 107 on this scaffold is this mystery engine's own real

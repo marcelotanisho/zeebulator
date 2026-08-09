@@ -6783,6 +6783,48 @@ playable start-to-finish at full speed, standalone build.
       for the same real reason: no clean, crash-free positive test of
       a generalized fix has been achieved yet. All temporary
       instrumentation reverted; `git diff` clean; 428/428 tests pass.
+      **Shipped real background rendering, same session, on explicit
+      direction to stop searching for the real consumer call and just
+      render the real, already-understood texture-load data directly.**
+      Confirmed real slot 64's exact real signature live first (`this`
+      = scaffold, `flag`=1, `object`=r2, `self_callback`=r3 -- the
+      same real event this session's own earlier "trap976" research
+      thread turned out to be, not a separate one: local slot 64 on
+      this real scaffold instance simply *is* global trap index 976).
+      New permanent code in `tools/game_probe.cpp`: every real object
+      slot 64 registers gets decoded on the spot via this project's
+      own already-validated `DecodeAtitc` (reading the embedded real
+      ATITC header at object+48 directly out of guest memory, same
+      5-field format already confirmed for `data.bar`'s own real
+      entries) and, if valid, alpha-composited onto the framebuffer
+      via `BlitRgba`, centered horizontally (no real evidence yet for
+      this title's own exact real placement, but every real texture
+      found is narrower than the real 640px display and looks like a
+      complete, self-contained real image, not an edge-aligned tile).
+      Skips the confirmed real font atlas (512x128) so it doesn't
+      double-render through this new path. Re-tried on every real
+      slot 48 (screen-transition) call too, not just at real
+      registration time, since two real objects were confirmed
+      sampled all-zero at registration in an earlier round -- a late-
+      populated one still gets rendered once ready.
+      **Result, confirmed live and stable (not a one-off), screenshots
+      minutes apart byte-similar**: a real, complete sci-fi background
+      -- a planet, a nebula, alien rocky terrain, with a decorative
+      real UI frame baked into the same real image -- correctly
+      layered *behind* this title's own already-working real text
+      (both the splash screen's "loading..."/credits text and the
+      language-select screen's own text render on top of it cleanly).
+      This is this session's real evidence for *what* real image to
+      show, not real evidence for exactly *when* each of the real
+      loaded textures is meant to appear on which specific real
+      screen (multiple real textures decode successfully; the render-
+      every-transition retry means whichever renders last each time
+      wins the framebuffer) -- flagged as EXPERIMENTAL/speculative in
+      its own doc comment for exactly that reason, unlike the rest of
+      this project's live-traced-and-confirmed real call sites. A real
+      first for this title's own visuals, not a full solution: still
+      no real "draw this texture" ARM call site identified, only a
+      real, working substitute for one. 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
