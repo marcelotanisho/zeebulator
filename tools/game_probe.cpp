@@ -1168,7 +1168,7 @@ int main(int argc, char** argv) {
   // (TASKS.md).
   std::vector<zeebulator::HleRuntime::HleFunction> unknown_0x0103d8ec_methods(
       40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
-  unknown_0x0103d8ec_methods[2] = [&cpu, &hle, &display, &abd_font_atlas, &abd_text_state](
+  unknown_0x0103d8ec_methods[2] = [&cpu, &hle, &display, &abd_font_atlas, &abd_text_state, kHeight](
                                        zeebulator::IArmCore& core) {
     // int QueryInterface(iname* _me, AEECLSID clsID, void** ppo) -- real
     // slot index (offset 8 = INHERIT_IQI's own slot 2, the standard
@@ -1245,7 +1245,7 @@ int main(int argc, char** argv) {
     // was bridged). Both paths gated on `abd_font_atlas.has_value()`
     // (only ever set for this one real title's own real `data.bar`) so
     // every other title stays untouched.
-    stub_methods[107] = [&hle, &display, &abd_font_atlas, &abd_text_state](zeebulator::IArmCore& core) {
+    stub_methods[107] = [&hle, &display, &abd_font_atlas, &abd_text_state, kHeight](zeebulator::IArmCore& core) {
       core.SetRegister(zeebulator::kR0, 0);
       if (!abd_font_atlas.has_value()) return;
       uint32_t struct_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
@@ -1254,12 +1254,22 @@ int main(int argc, char** argv) {
       int32_t raw_x0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 0));
       int32_t raw_y0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 4));
       int dst_x = raw_x0 / 65536;
-      int dst_y = raw_y0 / 65536;
 
       if (real_caller == 0x105744 && abd_text_state.pending_char_index != AbdTextState::kNone) {
         uint32_t char_index = abd_text_state.pending_char_index;
         abd_text_state.pending_char_index = AbdTextState::kNone;  // consume it
         if (char_index * kAbdFontCellPx >= static_cast<uint32_t>(kAbdFontAtlasWidth) * 8) return;  // out of range
+
+        // Real screen Y is confirmed inverted relative to this
+        // struct's own real y0 (TASKS.md Phase 8: a real human's own
+        // reference footage shows real "loading..." text near the
+        // real screen's bottom edge; this project's own bridge, before
+        // this fix, placed it near the top, at real dst_y=25 of a real
+        // 480px-tall display -- confirmed live, not assumed. Only the
+        // destination Y is flipped, not the glyph bitmap itself or X
+        // -- a real human confirmed glyph orientation and reading
+        // order both already looked correct).
+        int dst_y = kHeight - (raw_y0 / 65536) - kAbdFontCellPx;
 
         int atlas_col = static_cast<int>(char_index) % (kAbdFontAtlasWidth / kAbdFontCellPx);
         int atlas_row = static_cast<int>(char_index) / (kAbdFontAtlasWidth / kAbdFontCellPx);
@@ -1288,11 +1298,14 @@ int main(int argc, char** argv) {
       // explicitly at all but never contradicts white either --
       // treated as this engine's own real default state, not a fresh
       // guess). Real width/height come from the same struct's real
-      // x1/y1 fields.
+      // x1/y1 fields. Same real Y-flip as the text path above (see its
+      // own doc comment) -- the real "far" edge (y1) maps to the
+      // smaller, top-of-screen real row after flipping.
       int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
       int32_t raw_y1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 12));
       int w = std::max(1, static_cast<int>((raw_x1 - raw_x0) / 65536));
       int h = std::max(1, static_cast<int>((raw_y1 - raw_y0) / 65536));
+      int dst_y = kHeight - (raw_y1 / 65536);
       constexpr uint32_t kRectAddr = 0x00098000;
       core.GetMemory().Write16(kRectAddr + 0, static_cast<uint16_t>(dst_x));
       core.GetMemory().Write16(kRectAddr + 2, static_cast<uint16_t>(dst_y));

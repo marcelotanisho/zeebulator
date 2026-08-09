@@ -6540,6 +6540,39 @@ playable start-to-finish at full speed, standalone build.
       as real, permanent code this time (`tools/game_probe.cpp`,
       `core/brew/idisplay.h`'s own `ClearLiveFramebuffer` doc comment
       updated to match) -- not reverted. 428/428 tests pass.
+      **Found and fixed a real, systematic Y-axis inversion the same
+      session, caught by a real human comparing this project's own
+      live rendering against real reference footage of this title's
+      actual boot sequence.** The real human noted real `"loading..."`
+      text appearing near the real screen's *top* in this project's
+      own bridge, when the real reference footage shows it near the
+      real screen's *bottom* -- with real glyph orientation and real
+      reading order both already correct, narrowing this to a real
+      destination-Y-only bug, not a full render flip. Live-traced the
+      real struct's own `y0` value for `"loading..."` specifically
+      (not assumed from a different string) and confirmed it: real
+      `dst_y=25` in this project's own prior (top-down, y=0-at-top)
+      convention, which is nowhere near this title's own real bottom
+      edge. **Real, confirmed fix**: this title's own real Y
+      convention has the origin at the real screen's bottom (Y
+      increasing upward), the mirror of this project's own real
+      top-down framebuffer -- real destination row = `real screen
+      height - (struct's own real y-field in pixels)`, applied to both
+      the real text-glyph path (using the real, confirmed fixed cell
+      height, since only a real `y0` is available for glyphs) and the
+      real shape path (using the struct's own real `y1`, the "far"
+      edge, which maps to the smaller/top real row after flipping,
+      with real `h` computed the same unsigned-difference way as
+      before). Confirmed live, on a real desktop: this title's real
+      language-select screen now shows its real `"CHOOSE YOUR
+      LANGUAGE"` header above the real language list, a more natural
+      real layout than the inverted one this session shipped
+      immediately prior -- the real splash/title screens transition
+      too quickly (under two real seconds combined) to screenshot
+      manually and independently confirm, but the fix is derived
+      directly from live-traced real data for that exact screen's own
+      real string, not inferred from a different one. 428/428 tests
+      pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
