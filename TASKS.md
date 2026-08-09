@@ -6699,6 +6699,61 @@ playable start-to-finish at full speed, standalone build.
       standing instruction. All temporary instrumentation (a slot-48
       fire logger, a multi-button autopress cycle) reverted; `git
       diff` clean; 428/428 tests pass.
+      **Follow-up, same session, with explicit permission to keep
+      using the diagnostic-only autopress plumbing: a real held press
+      (not instantaneous) *does* get this title past language-select
+      -- the earlier negative result was a technique problem (a real
+      human holds a button for many real ticks; the original probe
+      injected down+up with nothing in between), not a fact about this
+      title.** Holding each real HID button in turn revealed a real,
+      further screen's content (readable despite this session's own
+      already-known glyph-substitution bug: words matching "ARCADE",
+      "CHALLENGE", "VERSUS", plus the three already-known language
+      names), appearing *interleaved with*, not replacing, the real
+      language-select screen's own content -- confirmed stable and
+      reproducible across two independent live runs, minutes apart,
+      byte-similar screenshots, no crash either time.
+      **Traced why, and it reframed the real screen-clearing fix this
+      same session shipped earlier**: this new content's own real
+      transition never fires the real slot 48 signal that fix depends
+      on (confirmed live: slot 48's own fire count never moves past
+      its two real boot-time firings, on either the working full-
+      button-cycle run or a control run using only D-pad+Back) --
+      meaning it isn't a normal real "new screen" transition by this
+      title's own established convention at all, and the one-shot-
+      latch bug that fix targeted was never exercised by it either
+      way. Tried shipping a generalized version of that fix anyway
+      (clear unconditionally on every real slot 48 call, not just the
+      first) reasoning it could only help -- **reverted it**, not
+      because it's wrong, but because this round's own follow-on
+      testing (isolating which real button causes the new content, by
+      narrowing the autopress cycle down to `Button2` alone, held
+      repeatedly with no gap) reproduced, live, the exact real crash
+      signature (`abd.mod` pc=0x00108d98, wandering out of the module,
+      a `Miscellaneous instruction space` fault) a real human
+      encountered earlier this same session, explicitly set aside then
+      per direct instruction to focus on display instead of that
+      crash. That contaminates this round's own evidence for whether
+      the generalized clear fix is actually correct beyond boot -- the
+      one clean prior confirmation of it (the earlier "reached a
+      further screen, stable, no crash" run) never happened to
+      exercise a *second* real slot 48 transition in practice, so
+      there's no clean positive test of it, only an unverified one.
+      Shipping an unverified behavioral change failed this project's
+      own "test every task" standard, so kept the original, already-
+      validated one-shot version instead and left the broader-than-
+      boot case as a documented real gap rather than a claimed fix.
+      **Where this leaves it**: this title's real navigation does
+      respond to input from language-select onward (a real held
+      `Button2` press specifically, at minimum); a real further screen
+      exists with real, not-yet-decoded content, reached via a
+      mechanism this project hasn't identified (not the slot-48
+      transition path); and the same real crash from earlier in this
+      session is confirmed reproducible via rapid, repeated `Button2`
+      presses specifically, not just an unreplicable one-off. All
+      temporary instrumentation (button isolation, per-instance slot-
+      48 logging, the generalized clear fix) reverted; `git diff`
+      clean; 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
