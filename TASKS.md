@@ -6754,6 +6754,35 @@ playable start-to-finish at full speed, standalone build.
       temporary instrumentation (button isolation, per-instance slot-
       48 logging, the generalized clear fix) reverted; `git diff`
       clean; 428/428 tests pass.
+      **Follow-up, same session, deliberately avoiding the crash path
+      this time (a single real held-once pass through every real HID
+      button, not a repeated/cyclic one) -- reached a real screen past
+      language-select safely twice more, no crash either time, and
+      still found no real background-image mechanism.** First pass
+      reproduced the earlier real "ARCADE/CHALLENGE/VERSUS"-reading
+      content again. Second pass (same real single-pass technique, a
+      real different outcome purely from this title's own real
+      internal state/timing, not a code change) instead showed the
+      real language list plus this project's own already-understood
+      real geometry-animation triangle (TASKS.md's earlier "geometry
+      engine ... stable steady state" work, a real shape drawn through
+      the already-bridged slot 107/DrawRect path, not a texture) plus
+      real splash-screen text ("V1.1.7a", "music by atomic cat",
+      "loading...") re-appearing. Re-ran the corrected real IDisplay-
+      slot watch (indices 33-58) and the slot-107 large-shape logger
+      across both: **zero** real hits beyond what's already bridged,
+      on either real screen reached. Combined with every prior round's
+      same real negative result on the first three real screens, this
+      is now confirmed across five real distinct on-screen states
+      total, not just the original three -- still no real evidence of
+      a background-image draw call anywhere this project can reach.
+      The real bleed/accumulation bug is confirmed broader than the
+      one-shot clear fix currently ships (different real screen
+      combinations depending on real button-sequence timing, not just
+      the one case found last round) but stays unfixed this round too,
+      for the same real reason: no clean, crash-free positive test of
+      a generalized fix has been achieved yet. All temporary
+      instrumentation reverted; `git diff` clean; 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
