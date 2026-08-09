@@ -6920,6 +6920,68 @@ playable start-to-finish at full speed, standalone build.
       real destination position -- is grounded in real disassembly
       cross-checked against real live tracing, not a plausible-looking
       guess. 428/428 tests pass.
+      **Follow-up, same session: a real human caught the real
+      background not spanning the full real screen width -- traced it
+      to a real, deliberate stretch this project's own bridge wasn't
+      applying yet, not a real bug in the earlier fix.** Live-dumped
+      this real caller's own full real struct (not just the 16 bytes
+      this project's own text/shape paths use): real offset+12 (read
+      as this project's own "y1" elsewhere) turns out to duplicate
+      real y0, not a real "far" edge -- the real destination *height*
+      instead lives at real offset+20, confirmed live as the real full
+      screen height (480) for real TITLE, paired with real offset+8
+      (already read as "x1") holding the real full screen width (640)
+      -- an explicit real stretch target, confirmed live to differ
+      from this real texture's own real native 512x512 size. Real
+      `BlitRgba` has no real scaling support, so added a real nearest-
+      neighbor resample (only engaged when the real destination size
+      differs from the real decoded size, a real no-op cost otherwise)
+      before the real blit. Confirmed live and stable: the real
+      background now spans the real screen edge to edge, matching the
+      real human's own real observation.
+      **The real developer-logo splash screen still doesn't render --
+      traced to a real, different, deeper gap, not the same bug.**
+      Live-dumped real slot 64's own real descriptor fields for every
+      real object this session: two stay real permanently zero for
+      the whole real run (`0x80324344`, `0x803247f0`) -- not "not yet
+      populated" as this project's own live-only evidence from a
+      previous round assumed, but real fully unresolved, confirmed via
+      a real ~15-second run with continuous real per-call retries.
+      These are the real LOGO/LOGOSTAR objects (their own real loader,
+      `abd.mod` 0x10ac10, distinct from real TITLE's own 0x102b00, but
+      confirmed live to route through the exact same real slot 64/33/
+      107 call sites once their own real data resolves -- no separate
+      real_caller value ever appears, ruling that out as the cause).
+      Traced the real reason one level deeper via real disassembly of
+      `abd.mod` 0x10ee58 (the real function whose own real result
+      lands at descriptor+44): it calls a real, generic "get resource
+      size" helper (0x10eec4) that dispatches through a real, distinct
+      interface's own real vtable slot 41 -- confirmed via real
+      disassembly, not this project's own already-understood texture-
+      registry interface -- then reuses that *same* real slot 41 a
+      real second time to actually fill the newly `malloc`'d real
+      buffer. This real slot 41 belongs to a real interface this
+      project has never identified or implemented; every real object
+      routed through it currently gets this project's own generic
+      blind stub (return 0, touch nothing), so the real out-param this
+      real "get size" call needs, and the real buffer this real "load
+      data" call needs filled, both stay untouched. Real TITLE's own
+      real success is not evidence this path works -- it is
+      unexplained by this same theory and worth real, direct
+      suspicion: the most likely real explanation is real memory
+      reuse (this project's own real `malloc_fn` handing real TITLE's
+      buffer an address that still held real, valid `data.bar` bytes
+      from an earlier, unrelated real read), not real correct
+      behavior, though this round didn't confirm that specific real
+      mechanism.
+      A real, well-scoped next step for a future round: identify the
+      real interface real vtable slot 41 belongs to (a real "resource
+      file reader" abstraction distinct from the real texture registry
+      this session already understands), and implement it for real --
+      not by leaning on the same real memory-reuse coincidence real
+      TITLE's own success may depend on. No code changes needed for
+      this half; documenting the real, confirmed root cause is this
+      round's own real contribution. 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

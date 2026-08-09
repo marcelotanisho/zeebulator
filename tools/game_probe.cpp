@@ -1235,6 +1235,13 @@ int main(int argc, char** argv) {
         }
         refresh_descriptors(core);
       }
+      static int n = 0;
+      if (n < 20) {
+        std::fprintf(stderr, "[slot64] obj=0x%08x field0=0x%08x field44=0x%08x\n", obj,
+                     obj ? core.GetMemory().Read32(obj + 0) : 0,
+                     obj ? core.GetMemory().Read32(obj + 44) : 0);
+        ++n;
+      }
       core.SetRegister(zeebulator::kR0, 0);
     };
     // Real slot 33 (dispatched via a real, generic "resolve this real
@@ -1308,20 +1315,23 @@ int main(int argc, char** argv) {
       int dst_x = raw_x0 / 65536;
 
       // Real caller 0x104f84 is this engine's own real background/
-      // sprite texture draw call (TASKS.md Phase 8, live-traced): the
-      // real struct here is a real screen-bounds/clip parameter, not
-      // a real per-sprite rect (both real y0 and y1 read identically
-      // -- confirmed via real disassembly of the real anchor-alignment
-      // dispatch one level up, `abd.mod` 0x104db0, which computes this
-      // real struct from real screen width/height, not a real sprite
-      // rect, whenever real mode 9 -- confirmed live for this real
-      // caller -- applies no real centering adjustment). The real
-      // anchor coordinate this real caller actually intends is this
-      // same struct's own real x0/y0 pair, used directly, in this
-      // real mode's own real top-down convention -- confirmed live,
-      // not the real bottom-up flip the real text/shape paths need
-      // (that flip is specific to those two real callers, see their
-      // own doc comments below; applying it here put the real image
+      // sprite texture draw call (TASKS.md Phase 8, live-traced). Its
+      // real struct is *not* the real {x0,y0,x1,y1} sprite rect the
+      // text/shape paths use -- confirmed via real disassembly of the
+      // real anchor-alignment dispatch one level up (`abd.mod`
+      // 0x104db0) and a real live struct dump: real offset+12 (this
+      // project's own "y1" elsewhere) duplicates real y0, not a real
+      // "far" edge; the real destination *height* instead lives at
+      // real offset+20, confirmed live for this real caller as the
+      // real full screen height (480), paired with real offset+8
+      // (x1) holding the real full screen width (640) -- an explicit
+      // real stretch target, not this real texture's own real native
+      // 512x512 size (real mode 9, confirmed live for this real
+      // caller, applies no real centering, so anchor position is this
+      // same struct's own real x0/y0, used directly, in this real
+      // mode's own real top-down convention -- not the real bottom-up
+      // flip the real text/shape paths need, see their own doc
+      // comments below; applying that flip here put the real image
       // fully below the real 480px display, confirmed live, before
       // this fix).
       if (real_caller == 0x104f84 && *bound_texture != 0) {
@@ -1349,9 +1359,34 @@ int main(int argc, char** argv) {
                                                     static_cast<int>(width),
                                                     static_cast<int>(height), format);
             if (decoded.has_value()) {
+              int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
+              int32_t raw_y_far = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 20));
               int dst_y = raw_y0 / 65536;
-              display.BlitRgba(dst_x, dst_y, static_cast<int>(width), static_cast<int>(height),
-                                decoded->data());
+              int dest_w = std::max(1, (raw_x1 - raw_x0) / 65536);
+              int dest_h = std::max(1, (raw_y_far - raw_y0) / 65536);
+              if (dest_w == static_cast<int>(width) && dest_h == static_cast<int>(height)) {
+                display.BlitRgba(dst_x, dst_y, static_cast<int>(width), static_cast<int>(height),
+                                  decoded->data());
+              } else {
+                // Real destination size differs from this real
+                // texture's own real native size (confirmed live for
+                // real TITLE: native 512x512, real destination
+                // 640x480) -- nearest-neighbor real upscale/downscale
+                // to the real destination rect `BlitRgba` itself
+                // doesn't support.
+                std::vector<uint8_t> scaled(static_cast<size_t>(dest_w) * dest_h * 4);
+                for (int y = 0; y < dest_h; ++y) {
+                  int src_y = static_cast<int>(static_cast<int64_t>(y) * height / dest_h);
+                  for (int x = 0; x < dest_w; ++x) {
+                    int src_x = static_cast<int>(static_cast<int64_t>(x) * width / dest_w);
+                    const uint8_t* src =
+                        decoded->data() + (static_cast<size_t>(src_y) * width + src_x) * 4;
+                    uint8_t* dst = scaled.data() + (static_cast<size_t>(y) * dest_w + x) * 4;
+                    std::memcpy(dst, src, 4);
+                  }
+                }
+                display.BlitRgba(dst_x, dst_y, dest_w, dest_h, scaled.data());
+              }
               return;
             }
           }
