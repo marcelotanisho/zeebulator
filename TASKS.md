@@ -6805,6 +6805,83 @@ playable start-to-finish at full speed, standalone build.
       draw side" state two rounds up. The real "draw this texture"
       ARM call site is still the real, correct next step -- not a
       substitute for it. 428/428 tests pass.
+      **Found the real "draw this texture" call site, same session,
+      properly this time -- real static disassembly of `abd.mod`
+      cross-checked against live tracing at every step, no guessing.**
+      Read the real disassembly at both real slot 64 call sites
+      (`abd.mod` 0x102b00, 0x10ac10) directly: both pass their own
+      real 48-byte descriptor into slot 64, then immediately read
+      *descriptor (offset 0) afterward without ever writing it
+      themselves -- meaning real slot 64 must write it itself, through
+      the pointer, as a real side effect. Confirmed live: writing the
+      real resolved texture-data pointer (the same one already found
+      at descriptor+44) into descriptor+0 makes real slot 33 (reached
+      via a real, generic "resolve this real graphics-context's own
+      per-object override, else a real default" dispatcher this whole
+      subsystem shares, `abd.mod` 0x115354) start receiving real,
+      non-zero, real-object-matching values as its own real texture-
+      reference argument, instead of a constant zero -- this is this
+      engine's own real "select the current real texture" call.
+      Traced one level further: real slot 33's own real dispatcher
+      shape (`abd.mod` 0x115cf4) tail-calls real local slot 107 --
+      *this project's own already-bridged real slot*, confirmed live
+      via a real, previously-unseen third `real_caller` value
+      (0x104f84) showing up 655 times in a real run, distinct from the
+      two already-known ones (real text at 0x105744, real shapes at
+      0x1054bc). **Real backgrounds have been flowing through this
+      project's own existing slot 107 bridge the whole time** -- this
+      project just didn't have real evidence to recognize the third
+      real caller until this round.
+      Confirmed live end to end: with slot 64's write-through and a
+      real per-descriptor "retry on every slot 64/33 call" refresh
+      (needed because, exactly as documented two rounds up, some real
+      objects -- LOGO/LOGOSTAR specifically, confirmed by name this
+      round via real embedded debug strings, see below -- don't have
+      real texture data ready at real registration time, only later),
+      real slot 33 correctly resolves the real TITLE-screen texture
+      (`0x80324c78`, the same real 512x512 object already confirmed
+      matching real `data.bar` background dimensions) and real slot
+      107 fires for it with real_caller=0x104f84, real signature
+      0xccc40002, real decode succeeding.
+      **What's still real and unresolved, not guessed around**: the
+      real destination position. This real caller's own real struct
+      (unlike the text/shape paths) reads as `{x0=0, y0=0, x1=640<<16,
+      y1=0}` -- not a real per-sprite rect, but this real engine's own
+      screen-bounds parameter, used internally for real clipping math,
+      not final placement. Traced the real position back one more
+      level (`abd.mod` 0x10dba0's own real call into 0x104db0, real
+      args r1=0/r2=0 for TITLE specifically) into a real ~20-branch
+      anchor-alignment jump table (`abd.mod` 0x104db0) that computes
+      final position from an anchor mode (confirmed real mode 9 for
+      this real call -- a real "no centering adjustment" case) and a
+      real "half-height" register that, on this exact real code path,
+      is never explicitly set within the function -- meaning its real
+      value depends on real caller-side register context this round
+      didn't finish tracing. Rather than substitute a plausible-
+      looking guess for that one remaining real value (exactly the
+      real mistake corrected earlier this same session), stopped
+      there and reverted the real, working decode+select+dispatch
+      code back out rather than ship it with a provably-wrong position
+      (the untraced case currently computes a real destination fully
+      below the real 480px display, i.e. invisible) -- confirmed via
+      `git diff`, clean.
+      **Real, incidental discovery while reading these real call
+      sites**: `abd.mod`'s own embedded real debug strings
+      (`Sources\VM_outgame.c`/`VM_ingame.c`) name real assets this
+      title loads by their own real names -- "LOADING LOGO...",
+      "LOADING LOGOSTAR...", "LOADING TITLE..." for the real boot
+      sequence already reachable this session, and "LOADING SMALL
+      STAR...", "LOADING FRAGMENT 0/1/2/3...", "LOADING RING64...",
+      "LOADING ICONS..." for real in-game assets not yet reached --
+      real, concrete confirmation of what's still ahead once real
+      input navigation unblocks it, not a guess at this title's own
+      real content.
+      A real, well-scoped next step for a future round: finish tracing
+      the real "half-height" register's own real provenance (or find
+      the real per-title-screen call site that supplies it), then
+      re-apply the same real decode+select+dispatch bridge with a
+      real, evidence-derived position instead of reverting it again.
+      428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
