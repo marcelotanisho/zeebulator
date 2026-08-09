@@ -94,30 +94,23 @@ class IDisplayHle {
     backend_.PushVideoFrame(framebuffer_.data(), width_, height_, PixelFormat::kRGB565);
   }
 
-  // Zeroes the live framebuffer directly. Built to pair with
+  // Zeroes the live framebuffer directly. Pairs with
   // `PresentLiveFramebuffer` for a title with no real commit/clear
   // step of its own to bridge (Alien Breaker Deluxe's own real per-
   // tick redraw, TASKS.md Phase 8, never calls any real `IDisplay`
-  // method at all, so nothing already in this codebase erases a real
-  // element once it stops being relevant -- confirmed live: a real
-  // "LOADING..." string drawn during boot stayed on screen long after
-  // the real title moved on to its own real language-select screen).
-  // Deliberately NOT wired in automatically: calling this once per
-  // real tick was tried and reverted -- confirmed live, on a real
-  // desktop, to turn the real screen into a rapid black/content
-  // flicker instead of fixing the stale-content problem, meaning this
-  // real engine's own per-tick redraw does not appear to redraw every
-  // real visible element every real tick (unlike, e.g., Double
-  // Dragon's own confirmed per-frame-clear convention) -- a real,
-  // still-open question (does *any* one real per-tick call clear
-  // everything, with this project's own bridge simply not yet
-  // capturing every real element that should redraw alongside it? or
-  // does this engine really mean for most elements to persist,
-  // erased individually through some other, not-yet-identified real
-  // call, only when they actually change?) for whoever picks this up
-  // next. Kept as a real, correct, tested primitive either answer
-  // will need, not deleted just because its first, naive real trigger
-  // point was wrong.
+  // method at all, so nothing else in this codebase erases a real
+  // element once it stops being relevant).
+  //
+  // Two real trigger points were tried live before landing on the one
+  // this title's own bridge actually uses (a real, specific slot on
+  // its drawing-engine scaffold that fires right as a new real screen
+  // begins, not a fixed cadence): calling this once per real tick
+  // turned the real screen into a rapid black/content flicker (this
+  // engine does not redraw every real visible element every real
+  // tick), and triggering once on a *later* real per-screen signal
+  // wiped out real, legitimate one-shot content that draws earlier in
+  // the same real transition. Both confirmed live, on a real desktop,
+  // not assumed.
   void ClearLiveFramebuffer() { std::fill(framebuffer_.begin(), framebuffer_.end(), 0); }
 
   // Alpha-composites a real RGBA source image (`w`*`h`*4 bytes,

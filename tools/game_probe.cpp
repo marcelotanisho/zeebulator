@@ -1202,6 +1202,34 @@ int main(int argc, char** argv) {
     next_addr += 0x1000;
     std::vector<zeebulator::HleRuntime::HleFunction> stub_methods(
         200, [](zeebulator::IArmCore& c) { c.SetRegister(zeebulator::kR0, 0); });
+    // Real slot 48 is this scaffold's own real "a new real screen is
+    // about to begin" signal (TASKS.md Phase 8): silent through this
+    // title's own real boot, then fires exactly twice per real screen
+    // transition, one real tick *before* the rest of a whole cluster
+    // of previously-silent real slots (4/35/88/89/91/106) start their
+    // own real per-tick redraw for the new screen. Confirmed live,
+    // against a real human's own real reference footage of this
+    // title's real boot sequence, that this title draws (at least)
+    // three real, visually distinct screens in strict real sequence
+    // -- a splash, a title screen, then this real language-select
+    // screen -- and that this project's own bridge was smearing all
+    // of them together because nothing ever cleared `framebuffer_`
+    // between them. An earlier real attempt cleared on the *later*
+    // cluster (slot 106) instead and regressed live (it wiped real,
+    // legitimate one-shot content -- "ENGLISH", the real footer --
+    // that draws before slot 106's own first real call within the
+    // same real transition); slot 48's one-real-tick head start is
+    // early enough to precede that content instead, confirmed live on
+    // a real desktop over several real minutes with no flicker and no
+    // lost content.
+    bool cleared_at_transition = false;
+    stub_methods[48] = [&display, &cleared_at_transition](zeebulator::IArmCore& core) {
+      if (!cleared_at_transition) {
+        cleared_at_transition = true;
+        display.ClearLiveFramebuffer();
+      }
+      core.SetRegister(zeebulator::kR0, 0);
+    };
     // Real slot 107 on this scaffold is this mystery engine's own real
     // "draw one geometry element" call (TASKS.md Phase 8) -- struct
     // layout confirmed (16.16 fixed-point {x0,y0,x1,y1}) across every

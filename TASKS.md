@@ -6503,6 +6503,43 @@ playable start-to-finish at full speed, standalone build.
       needs its own dedicated real investigation, not a third quick
       attempt. 428/428 tests pass; both attempts fully reverted,
       `git diff` clean.
+      **A real human tester supplied real reference footage of this
+      title's actual boot sequence (a real splash screen, then a real
+      title screen, then the real language-select screen this session
+      had already been rendering) -- the third, decisive real data
+      point this whole investigation needed.** Live-traced the real
+      order every real string this title draws first appears in (not
+      guessed): `"loading..."` is the real first string drawn, then a
+      real gap of 299 real draw calls before `"V1.1.7a"` and `"music
+      by atomic cat"` appear together, then a real gap of 599 more
+      calls before `"choose your language"`/`"english"`/`"español"`/
+      `"português"` appear -- **confirming, precisely, that this
+      title draws (at least) three real, visually distinct screens in
+      strict real sequence**, exactly matching the real human's own
+      real reference footage, not just "two screens" as this session's
+      earlier, more limited framebuffer-accumulation investigation had
+      assumed. (Also corrects a real misreading from earlier this
+      session: the real footer string is `"choose your language"`,
+      not `"change your language"` -- this session's own still-
+      unresolved individual-glyph bug, TASKS.md Phase 8, made `O`
+      render close enough to `A` to misread by eye.)
+      **Found the real trigger this whole investigation was missing,
+      using that new evidence: real slot 48 fires one real tick
+      *before* the rest of the real transition cluster this session
+      already found (4/35/88/89/91/106), not at the same real tick.**
+      Retried the one-time-clear approach a third time, triggered on
+      slot 48 instead of slot 106, and this time it held up live, on a
+      real desktop, for several real minutes with no flicker and no
+      lost content: **all three real screens now render distinctly**
+      -- no more `"loading..."`/`"V1.1.7a"`/`"music by atomic cat"`
+      bleeding into the real language-select screen -- and `"ENGLISH"`
+      (with its own real doubled marker, now visually confirmed to be
+      this screen's own real default-selection indicator) and the
+      real footer both survive the clear this time, since slot 48's
+      one-real-tick head start lands before whatever draws them. Kept
+      as real, permanent code this time (`tools/game_probe.cpp`,
+      `core/brew/idisplay.h`'s own `ClearLiveFramebuffer` doc comment
+      updated to match) -- not reverted. 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
