@@ -7031,6 +7031,37 @@ playable start-to-finish at full speed, standalone build.
       is kept (a real, general improvement to this project's own
       navigation-probing infrastructure, not exploratory-only).
       428/428 tests pass.
+      **Follow-up, same session: pushed the real icon investigation
+      further -- still an open real gap, but with a real, wider
+      negative result and one real, unrelated bonus finding.** Left
+      this real menu screen sitting idle, live, for 100+ real seconds:
+      real slot 64 registered exactly the same real 14 real objects
+      the whole time, zero more -- not a real timing issue, this real
+      title genuinely never attempts to load anything real-icon-shaped
+      on its own while this real screen sits still. Tried real,
+      isolated, single-press real interaction within the real menu
+      itself (real D-pad-down, real confirm, each held once, real
+      gaps of ~2 real seconds between -- not the real repeated/rapid
+      re-hold that reproduced a real crash earlier this session): no
+      real crash, and real navigation genuinely deepened -- reached a
+      real "DO YOU REALLY WANT TO QUIT?" real Yes/No dialog (real
+      "SAIR"/Exit's own real confirmation screen), a real, previously
+      unseen screen, confirming safe real single-press navigation
+      generalizes past the real main menu too. Still zero real icon-
+      shaped texture activity through any real path this session has
+      already instrumented (real slot 64, real slot 33/`bound_texture`,
+      real slot 107 caller values, real glyph indices, real shape
+      sizes -- all checked live again on this real deeper screen too).
+      **Didn't chase this into real "JOGAR"/Play** (which would start
+      real, entirely uncharted real gameplay -- a real, much larger
+      real scope than this real menu-icon question, with real, so-far-
+      unvalidated real crash risk of its own, per the real "LOADING
+      SMALL STAR.../FRAGMENT.../ICONS..." real debug strings already
+      found naming real *gameplay* assets, not real confirmed to be
+      the same real icons this real menu needs) -- flagged as a real,
+      distinct, bigger real next step rather than pulled in
+      unilaterally. All real temporary instrumentation reverted;
+      `git diff` clean; 428/428 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
