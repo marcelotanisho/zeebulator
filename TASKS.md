@@ -8123,6 +8123,80 @@ playable start-to-finish at full speed, standalone build.
       down slightly too (same real shared formula) with no real
       observed overlap or clipping. All real temporary instrumentation
       (the raw_y0 dump) reverted; 431/431 tests pass.
+      **Found and fixed the real root cause of todo item 2 (missing
+      menu icons), same session, on real direct instruction to
+      continue investigating after the font/position fixes above.**
+      Reached the real ARCADE/CHALLENGE/VERSUS/FRONTON menu screen
+      live via this project's own existing `ZEEBULATOR_AUTOPRESS=1`
+      env-gated input-injection path (previously untried this session
+      -- it had just never been enabled) to have a real screen with
+      real missing icons to investigate directly, instead of guessing
+      from static analysis alone.
+      **The earlier "100+ ambiguous call sites" dead end (documented
+      above) is resolved**: added a real, generic live watchpoint that
+      decodes the real ARM `LDR` opcode itself (mask/value derived and
+      cross-checked in Python against a known real instruction) rather
+      than pre-enumerating real candidate addresses from static
+      disassembly, checking each real load's own real computed
+      effective address against the real ICONS descriptor's own real
+      known memory address live, filtered against this real title's
+      own real, already-known `self` pointer. This cleanly separates
+      genuine real hits from the real false positives that made the
+      offset-based static grep useless.
+      **Traced the full real chain.** The real writer side (`abd.mod`
+      0x110258-0x111858) is a real, one-time setup routine building a
+      real 24-entry UV/geometry descriptor array for the real ICONS
+      texture (confirmed live: real texture pointer resolved and non-
+      null, `0x803b6428`/`0x803b6458`, refuting an initial real
+      "resolves late" guess). The real *reader* side -- found via the
+      same live technique, now searching for real reads of the real
+      descriptor array's own real runtime address instead of the real
+      writes -- is `abd.mod` 0x106508: **the exact same real geometry-
+      pack helper real font-glyph draws also go through**, confirmed
+      live it packs a real icon descriptor's fields and calls into real
+      `0x105510`, the same real dispatch text uses.
+      **The actual bug**: real caller `0x105744` (captured at slot 107)
+      is not text-exclusive -- live-correlated (temporary flag set at
+      real `0x106508`'s own real entry when its real argument falls
+      inside the real icon-descriptor array, consumed at the next real
+      slot 107 firing) that real icon draws reach slot 107 through this
+      exact same real caller identity, 4940/4940 samples, with real
+      `bound_texture` resolving to the real ICONS texture every time.
+      This project's own real handling for `0x105744` was gated on a
+      real pending char index (set only by the real font-glyph index
+      watchpoint) -- icon draws never set that, so they silently fell
+      through the whole real textured-draw branch into the real shape
+      path, which fills a real flat color instead of sampling a real
+      texture. No real crash, no real error -- just real invisible (or
+      real flat-colored) icons, exactly matching the reported symptom.
+      **Fixed real `tools/game_probe.cpp`**: real caller `0x105744`
+      without a real pending char index now takes the same real
+      textured-draw branch as backgrounds, reusing the real existing
+      ATITC/PNG decode and `scale_and_blit` machinery. Two real per-
+      caller differences needed, both empirically confirmed live: (1)
+      the real destination-far-edge field lives at real struct
+      offset+12 for this real caller (the real shape struct's own real
+      y1), not offset+20 (the real background struct's own y-far) --
+      using +20 read real garbage; (2) needs the real same bottom-up
+      Y-flip real mode-18 sprites and the real shape path already use.
+      **Confirmed live**: a real, visible change appeared exactly where
+      expected -- the real small dotted-line dividers next to each real
+      menu item (ARCADE/CHALLENGE/VERSUS/FRONTON, and the same element
+      on real language-select) switched from a real flat solid-white
+      line to a real dotted texture pattern, sourced from the real
+      ICONS texture instead of the real shape-path's default fill.
+      Confirmed on both real screens, no real regression on real
+      splash/TITLE/language-select text or positioning. **This is not
+      yet confirmed to be the full real "gamepad/wrench/help/exit" icon
+      set** the user originally described -- those likely live on a
+      real, deeper screen (an options/controls screen) this round
+      didn't navigate to; what's confirmed fixed is the real underlying
+      mechanism (real caller `0x105744` reused for non-text real
+      textured draws), which should apply equally once that real screen
+      is reached. All real temporary instrumentation (the opcode-decode
+      watchpoint, the real_caller enumeration, the icon-draw
+      correlation flag, the autopress tick/press logging) reverted;
+      431/431 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

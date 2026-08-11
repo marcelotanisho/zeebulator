@@ -1506,7 +1506,25 @@ int main(int argc, char** argv) {
       // never real-overwrites the real TITLE/menu screens' own
       // already-working real 0x104f84 backgrounds with a real stale,
       // alpha-discarded, full-screen-stretched real font atlas.
-      if ((real_caller == 0x104f84 || real_caller == 0x1054bc) && *bound_texture != 0) {
+      // Real caller `0x105744` is shared between real font-glyph draws
+      // (gated on a real pending char index, see below) and a *second*,
+      // completely different real use: menu icon draws (confirmed live
+      // this round -- `abd.mod` 0x106508, the exact same real geometry-
+      // pack helper text glyphs also go through, is entered with a real
+      // pointer inside the real icon-descriptor array this project
+      // already tracks the setup of, and it leads here with real
+      // `bound_texture` resolving to the real ICONS texture object
+      // every single time). Previously silently fell through this
+      // whole real textured-draw branch (gated on `0x104f84`/`0x1054bc`
+      // only) into the real shape path below, which fills a real flat
+      // color instead of sampling a real texture -- explaining the
+      // real missing menu icons without any real crash or error to
+      // notice. Included here whenever no real char index is pending,
+      // so a real text-glyph draw through this same caller still takes
+      // the dedicated real glyph path below, unaffected.
+      bool is_icon_draw =
+          real_caller == 0x105744 && abd_text_state.pending_char_index == AbdTextState::kNone;
+      if ((real_caller == 0x104f84 || real_caller == 0x1054bc || is_icon_draw) && *bound_texture != 0) {
         auto& mem = core.GetMemory();
         uint32_t tex = *bound_texture;
         uint32_t signature = mem.Read32(tex + 0);
@@ -1521,7 +1539,14 @@ int main(int argc, char** argv) {
         // fit, since `BlitRgba` itself has no real scaling support.
         auto scale_and_blit = [&](const std::vector<uint8_t>& decoded, int width, int height) {
           int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
-          int32_t raw_y_far = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 20));
+          // Real icon draws use the real shape struct's own real y1
+          // field (offset+12), not the real background struct's own
+          // y-far field (offset+20) -- confirmed live this round: this
+          // real caller's own real struct is what the real shape path
+          // below already reads when it (wrongly) handled these same
+          // real calls, and using offset+20 here instead read garbage.
+          int32_t raw_y_far = static_cast<int32_t>(
+              core.GetMemory().Read32(struct_addr + (is_icon_draw ? 12 : 20)));
           int dest_w = std::max(1, (raw_x1 - raw_x0) / 65536);
           int dest_h = std::max(1, (raw_y_far - raw_y0) / 65536);
           // Real caller `0x104f84` covers both real mode 9 (TITLE --
@@ -1529,12 +1554,14 @@ int main(int argc, char** argv) {
           // own doc comment above) and real mode 18 (LOGO/LOGOSTAR),
           // which needs the same real bottom-up Y-flip the text/shape
           // paths already use (`AbdTextState::anchor_mode_18_this_call`
-          // doc comment has the full real derivation). Scoped strictly
-          // to real caller `0x104f84` -- real caller `0x1054bc` never
-          // reaches real `0x104db0`'s own mode dispatch at all (it
-          // draws through a completely different real call chain), so
-          // this real per-call flag has no real meaning there.
-          int dst_y = (real_caller == 0x104f84 && abd_text_state.anchor_mode_18_this_call)
+          // doc comment has the full real derivation). Real icon draws
+          // need the same real flip too, matching the real shape path's
+          // own already-working convention for this real struct shape.
+          // Real caller `0x1054bc` never reaches real `0x104db0`'s own
+          // mode dispatch at all (it draws through a completely
+          // different real call chain), so this real per-call flag has
+          // no real meaning there, and it stays unflipped.
+          int dst_y = (real_caller == 0x104f84 && abd_text_state.anchor_mode_18_this_call) || is_icon_draw
                           ? kHeight - (raw_y_far / 65536)
                           : raw_y0 / 65536;
           if (dest_w == width && dest_h == height) {
