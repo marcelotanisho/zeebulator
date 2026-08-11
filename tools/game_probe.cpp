@@ -37,6 +37,7 @@
 #include "core/cpu/arm_interpreter.h"
 #include "core/gl_texture_log.h"
 #include "core/loader/atitc.h"
+#include "core/loader/png.h"
 #include "core/loader/ggz.h"
 #include "core/loader/mod.h"
 #include "core/loader/pkg.h"
@@ -88,11 +89,31 @@ std::string BaseName(const char* path) {
 // below is a byte-for-byte read of the real table at `abd.mod`
 // 0x105d90's own real table pointer; the atlas cell for a given
 // char_index is (col, row) = (index % 32, index / 32), pixel origin
-// (col*16, row*16).
+// (col*16, row*<real row pitch, see kAbdFontRowPitch below>).
 constexpr int kAbdFontAtlasWidth = 512;
 constexpr int kAbdFontAtlasHeight = 128;
 constexpr int kAbdFontCellPx = 16;
 constexpr uint32_t kAbdFontAtlasBarOffset = 3653369;
+// Real row pitch is *not* the same as the real 16px column width --
+// found live this round (a real human noticed this project's own
+// atlas dump was visibly clipping glyph bottoms): raw-pixel-dumped
+// every real row-0 glyph's own real content bounds (not just eyeballed
+// a render) and found every one identical, `y=6` through `y=19`
+// (14px tall, not 16, and *not* starting at `y=0`) -- e.g. real 'I'
+// genuinely has a real bottom serif, at `y=16-19`, that a naive
+// `row*16` src-y calculation cuts off entirely (rendering a real "T"-
+// looking shape instead). Real row-to-row spacing measured the same
+// way (comparing successive rows' own content-start `y`) landed on
+// 24-26px depending on which real glyph anchored the measurement
+// (individual real glyphs' own ascenders/accents shift their own
+// bounding box a little) -- averages to exactly 25, which also
+// exactly matches a real, independently-read glyph-descriptor field
+// (`abd.mod` 0x105dac's own real 44-byte descriptor, word7, decodes to
+// a real 16.16 fixed-point `25.0` -- this project doesn't otherwise
+// read that descriptor, see the real per-glyph selection code below,
+// but this one field cross-checks the real pixel measurement exactly).
+constexpr int kAbdFontRowPitch = 25;
+constexpr int kAbdFontGlyphYOffset = 6;
 
 // Real ASCII (0x20-0x7F) -> real curated glyph-atlas index, read
 // directly from `abd.mod`'s own live table this session (all 96
@@ -256,6 +277,49 @@ struct CallResult {
 struct AbdTextState {
   static constexpr uint32_t kNone = 0xFFFFFFFF;
   uint32_t pending_char_index = kNone;
+  // Real shared six-call-site utility `abd.mod` 0x1053ec explicitly
+  // (re)selects a real texture only when its own real `r6` argument is
+  // non-zero (`abd.mod` 0x10543c: `cmp r6, #0; beq 0x10547c`) --
+  // confirmed via disassembly and live tracing (TASKS.md Phase 8).
+  // When it's zero, this project's own `bound_texture` can still be
+  // real, stale-nonzero from an unrelated earlier real selection (the
+  // real splash quad's own known bug: it inherits real TITLE's own
+  // texture from a real, incidental real select inside TITLE's own
+  // real loader). Tracking real `r6`'s own real zero/nonzero state
+  // directly, per real call, is what lets the real draw site tell
+  // "an explicit real texture was chosen this real call" apart from
+  // "whatever's stale is still sitting in `bound_texture`" -- reset to
+  // real false at this real function's own real entry (`pc==0x1053ec`)
+  // and real-set true only if `pc==0x105444` (inside the real `r6 !=
+  // 0` branch) executes before the real draw site reads it.
+  bool splash_texture_selected_this_call = false;
+  // Real anchor-alignment dispatch `abd.mod` 0x104db0 handles real mode
+  // 18 (LOGO/LOGOSTAR both pass this) via a real, explicit centering
+  // subtraction (`abd.mod` 0x104e34: `cmp fp, #18; subeq r5, r5, r7,
+  // asr #1; subeq r6, r6, r8, asr #1`) -- confirmed via disassembly
+  // this executes for *both* LOGO and LOGOSTAR (same real mode), unlike
+  // real mode 9 (TITLE), which skips straight past this subtraction
+  // entirely (`abd.mod` 0x104e48-0x104e4c: `cmp fp, #9; beq 0x104e80`,
+  // no r5/r6 write). This project's own bridge already applies a real
+  // bottom-up Y-flip for the real text/shape paths (`kHeight -
+  // raw_y.../65536`, see their own doc comments) but never for real
+  // caller `0x104f84` -- confirmed live this round that this flip is
+  // *also* needed for real mode 18 specifically: LOGO's own real y
+  // argument (240, screen-vertical-center) is self-symmetric under
+  // this exact flip (`480 - 240 == 240`), which is exactly why its
+  // position looked correct without one, while LOGOSTAR's own real y
+  // argument (320) is not (`480 - 320 == 160`, nowhere near 320) --
+  // confirmed against a real human's own real reference screenshot
+  // showing the real star positioned near the *top* of the screen,
+  // overlapping real LOGO's own text, not below it. Real mode 9
+  // (TITLE) must stay unflipped (already confirmed correct, and its
+  // own doc comment already records that applying this exact flip
+  // there puts it fully off-screen) -- tracked per real call the same
+  // way as `splash_texture_selected_this_call` above: real false at
+  // this real function's own real entry (`pc==0x104db0`), real-set
+  // true only if `pc==0x104e38` (the real mode-18 subtraction itself)
+  // executes before the real draw site reads it.
+  bool anchor_mode_18_this_call = false;
 };
 
 CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap_base,
@@ -321,6 +385,18 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       if (times_11 % 11 == 0) {
         abd_text_state->pending_char_index = times_11 / 11;
       }
+    }
+    if (abd_text_state != nullptr && pc == 0x001053ec) {
+      abd_text_state->splash_texture_selected_this_call = false;
+    }
+    if (abd_text_state != nullptr && pc == 0x00105444) {
+      abd_text_state->splash_texture_selected_this_call = true;
+    }
+    if (abd_text_state != nullptr && pc == 0x00104db0) {
+      abd_text_state->anchor_mode_18_this_call = false;
+    }
+    if (abd_text_state != nullptr && pc == 0x00104e38) {
+      abd_text_state->anchor_mode_18_this_call = true;
     }
     bool in_module = pc >= mod_base && pc < mod_base + mod_size;
     bool in_trap_range = pc >= trap_base;
@@ -1168,8 +1244,8 @@ int main(int argc, char** argv) {
   // (TASKS.md).
   std::vector<zeebulator::HleRuntime::HleFunction> unknown_0x0103d8ec_methods(
       40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
-  unknown_0x0103d8ec_methods[2] = [&cpu, &hle, &display, &abd_font_atlas, &abd_text_state, kHeight](
-                                       zeebulator::IArmCore& core) {
+  unknown_0x0103d8ec_methods[2] = [&cpu, &hle, &display, &backend, &abd_font_atlas, &abd_text_state,
+                                    kHeight](zeebulator::IArmCore& core) {
     // int QueryInterface(iname* _me, AEECLSID clsID, void** ppo) -- real
     // slot index (offset 8 = INHERIT_IQI's own slot 2, the standard
     // BREW/COM QueryInterface convention this whole family of scaffolds
@@ -1202,6 +1278,37 @@ int main(int argc, char** argv) {
     next_addr += 0x1000;
     std::vector<zeebulator::HleRuntime::HleFunction> stub_methods(
         200, [](zeebulator::IArmCore& c) { c.SetRegister(zeebulator::kR0, 0); });
+    // Real vtable slot 40 on this same real rendering-engine object
+    // (already confirmed, TASKS.md Phase 8, as one of 17 real slots in
+    // active use behind these real trampolines) takes no real position/
+    // rect argument at all, only four real values -- confirmed live
+    // this round (real `abd.mod` 0x1053ec -> 0x1154dc -> real slot 40,
+    // return address `0x115520`) fires every real tick with a real,
+    // fixed `r1=0x5500, r2=0x3c00, r3=0x8900` (plus a real fourth value,
+    // `0x10000`, on the stack) -- this real shape (color components,
+    // no geometry) matches a real "set current fill color" state-
+    // setter far better than an immediate draw. Real 16.16 fixed-point
+    // decode: (0x5500, 0x3c00, 0x8900, 0x10000)/65536 = (0.332, 0.234,
+    // 0.535, 1.0) -- as RGBA that's a real dark purple/indigo, matching
+    // this title's own real expected splash backdrop color. Stashed
+    // here for the real draw site (below) to use when this real call's
+    // own real texture-select was skipped (`AbdTextState::
+    // splash_texture_selected_this_call`, set via the real `pc`
+    // watchpoints in `CallArmFunctionChecked` above) instead of
+    // sampling `bound_texture`, which can be real, stale-nonzero from
+    // an unrelated earlier real selection in that exact case.
+    auto pending_fill_color = std::make_shared<std::optional<std::array<uint8_t, 3>>>();
+    stub_methods[40] = [pending_fill_color](zeebulator::IArmCore& core) {
+      auto to_byte = [](uint32_t fixed16_16) {
+        double normalized = static_cast<double>(fixed16_16) / 65536.0;
+        int value = static_cast<int>(normalized * 255.0 + 0.5);
+        return static_cast<uint8_t>(std::clamp(value, 0, 255));
+      };
+      *pending_fill_color = std::array<uint8_t, 3>{to_byte(core.GetRegister(zeebulator::kR1)),
+                                                    to_byte(core.GetRegister(zeebulator::kR2)),
+                                                    to_byte(core.GetRegister(zeebulator::kR3))};
+      core.SetRegister(zeebulator::kR0, 0);
+    };
     // Real slot 64's two real callers (`abd.mod` 0x102b00, 0x10ac10)
     // both pass their own real 48-byte descriptor (r2) into slot 64,
     // then immediately read *descriptor (offset 0) afterward without
@@ -1303,8 +1410,8 @@ int main(int argc, char** argv) {
     // was bridged). Both paths gated on `abd_font_atlas.has_value()`
     // (only ever set for this one real title's own real `data.bar`) so
     // every other title stays untouched.
-    stub_methods[107] = [&hle, &display, &abd_font_atlas, &abd_text_state, kHeight,
-                          bound_texture](zeebulator::IArmCore& core) {
+    stub_methods[107] = [&hle, &display, &backend, &abd_font_atlas, &abd_text_state, kHeight,
+                          bound_texture, pending_fill_color](zeebulator::IArmCore& core) {
       core.SetRegister(zeebulator::kR0, 0);
       if (!abd_font_atlas.has_value()) return;
       uint32_t struct_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
@@ -1313,6 +1420,43 @@ int main(int argc, char** argv) {
       int32_t raw_x0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 0));
       int32_t raw_y0 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 4));
       int dst_x = raw_x0 / 65536;
+
+      // Real caller 0x1054bc's own real texture-select is conditional
+      // on real `r6 != 0` inside its real, shared caller `0x1053ec`
+      // (TASKS.md Phase 8) -- when real `r6 == 0` for this real call
+      // specifically, `bound_texture` can be real, stale-nonzero from
+      // an unrelated earlier real selection (confirmed live: real
+      // TITLE's own texture, selected as a real side effect of its own
+      // real loader, not this real call). Real slot 40 (fired earlier
+      // the same real `0x1053ec` invocation, unconditionally --
+      // `pending_fill_color` above) is this real engine's own real
+      // "set current fill color" call; using it here, instead of
+      // whatever real texture happens to be stale-bound, is what a
+      // real "draw a solid-color real quad, no texture" call actually
+      // needs. Gated strictly on real caller `0x1054bc` (not `0x104f84`
+      // -- LOGO/LOGOSTAR/TITLE reach this real slot through a
+      // completely different real caller, `0x104db0`, never through
+      // real `0x1053ec`, so this real per-call flag isn't meaningful
+      // for them) and on this real call's own real texture-select
+      // state being real false.
+      if (real_caller == 0x1054bc && !abd_text_state.splash_texture_selected_this_call &&
+          pending_fill_color->has_value()) {
+        int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
+        int32_t raw_y_far = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 20));
+        int dst_y = raw_y0 / 65536;
+        int dest_w = std::max(1, (raw_x1 - raw_x0) / 65536);
+        int dest_h = std::max(1, (raw_y_far - raw_y0) / 65536);
+        const auto& color = **pending_fill_color;
+        std::vector<uint8_t> fill(static_cast<size_t>(dest_w) * dest_h * 4);
+        for (size_t i = 0; i < fill.size(); i += 4) {
+          fill[i + 0] = color[0];
+          fill[i + 1] = color[1];
+          fill[i + 2] = color[2];
+          fill[i + 3] = 255;
+        }
+        display.BlitRgba(dst_x, dst_y, dest_w, dest_h, fill.data());
+        return;
+      }
 
       // Real caller 0x104f84 is this engine's own real background/
       // sprite texture draw call (TASKS.md Phase 8, live-traced). Its
@@ -1334,10 +1478,81 @@ int main(int argc, char** argv) {
       // comments below; applying that flip here put the real image
       // fully below the real 480px display, confirmed live, before
       // this fix).
-      if (real_caller == 0x104f84 && *bound_texture != 0) {
+      //
+      // Real caller 0x1054bc is a *second*, real full-screen draw
+      // call, live-traced this round to the real boot sequence
+      // (`abd.mod` 0x1054b4-0x1054b8, `mov r0, #2` then `bl
+      // 0x115cf4`, well before the real TITLE screen's own real
+      // 0x104f84 background draws start) -- its own real struct uses
+      // the identical real {x0=0,y0=0} / real x1@+8 / real height@+20
+      // full-640x480-screen convention confirmed live above for
+      // 0x104f84. Live-dumped this round: its first real invocation
+      // binds a real 512x512 ATITC texture with real flags=1 (RGB,
+      // opaque -- this real engine's own real convention for a real
+      // background with no real alpha channel, confirmed against the
+      // real font atlas's own real flags=2/RGBA). Pixel-dumped this
+      // round (not just decoded blind): this real texture is the real
+      // "ALIEN BREAKER" title splash art itself (ship, 3D grid,
+      // nebula backdrop), not a separate real developer/company logo
+      // -- this project's earlier real assumption that this real
+      // caller was the missing real purple-background splash was
+      // wrong; that real splash (if it renders through this same real
+      // bridge at all) is still unidentified. Real caller 0x1054bc
+      // keeps firing every real frame afterward too, by then real-
+      // bound to the real font atlas (flags=2) from unrelated real
+      // text draws -- gated on real flags==1 here (not merged into
+      // the real 0x104f84 branch's own unconditional real check) so
+      // this new real path only ever draws real opaque backgrounds,
+      // never real-overwrites the real TITLE/menu screens' own
+      // already-working real 0x104f84 backgrounds with a real stale,
+      // alpha-discarded, full-screen-stretched real font atlas.
+      if ((real_caller == 0x104f84 || real_caller == 0x1054bc) && *bound_texture != 0) {
         auto& mem = core.GetMemory();
         uint32_t tex = *bound_texture;
         uint32_t signature = mem.Read32(tex + 0);
+        uint32_t flags_for_gate = mem.Read32(tex + 12);
+        if (real_caller == 0x1054bc && flags_for_gate != 1) return;
+        // Shared by both real formats below: this real caller's own
+        // real destination rect (see this branch's own doc comment
+        // above) doesn't match a real decoded image's own real native
+        // size for every real texture (confirmed live: real TITLE's
+        // real 512x512 native texture against a real 640x480 real
+        // destination) -- nearest-neighbor real upscale/downscale to
+        // fit, since `BlitRgba` itself has no real scaling support.
+        auto scale_and_blit = [&](const std::vector<uint8_t>& decoded, int width, int height) {
+          int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
+          int32_t raw_y_far = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 20));
+          int dest_w = std::max(1, (raw_x1 - raw_x0) / 65536);
+          int dest_h = std::max(1, (raw_y_far - raw_y0) / 65536);
+          // Real caller `0x104f84` covers both real mode 9 (TITLE --
+          // already confirmed correct with no flip, see this branch's
+          // own doc comment above) and real mode 18 (LOGO/LOGOSTAR),
+          // which needs the same real bottom-up Y-flip the text/shape
+          // paths already use (`AbdTextState::anchor_mode_18_this_call`
+          // doc comment has the full real derivation). Scoped strictly
+          // to real caller `0x104f84` -- real caller `0x1054bc` never
+          // reaches real `0x104db0`'s own mode dispatch at all (it
+          // draws through a completely different real call chain), so
+          // this real per-call flag has no real meaning there.
+          int dst_y = (real_caller == 0x104f84 && abd_text_state.anchor_mode_18_this_call)
+                          ? kHeight - (raw_y_far / 65536)
+                          : raw_y0 / 65536;
+          if (dest_w == width && dest_h == height) {
+            display.BlitRgba(dst_x, dst_y, width, height, decoded.data());
+          } else {
+            std::vector<uint8_t> scaled(static_cast<size_t>(dest_w) * dest_h * 4);
+            for (int y = 0; y < dest_h; ++y) {
+              int src_y = static_cast<int>(static_cast<int64_t>(y) * height / dest_h);
+              for (int x = 0; x < dest_w; ++x) {
+                int src_x = static_cast<int>(static_cast<int64_t>(x) * width / dest_w);
+                const uint8_t* src = decoded.data() + (static_cast<size_t>(src_y) * width + src_x) * 4;
+                uint8_t* dst = scaled.data() + (static_cast<size_t>(y) * dest_w + x) * 4;
+                std::memcpy(dst, src, 4);
+              }
+            }
+            display.BlitRgba(dst_x, dst_y, dest_w, dest_h, scaled.data());
+          }
+        };
         if (signature == 0xccc40002) {
           uint32_t width = mem.Read32(tex + 4);
           uint32_t height = mem.Read32(tex + 8);
@@ -1359,36 +1574,37 @@ int main(int argc, char** argv) {
                                                     static_cast<int>(width),
                                                     static_cast<int>(height), format);
             if (decoded.has_value()) {
-              int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
-              int32_t raw_y_far = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 20));
-              int dst_y = raw_y0 / 65536;
-              int dest_w = std::max(1, (raw_x1 - raw_x0) / 65536);
-              int dest_h = std::max(1, (raw_y_far - raw_y0) / 65536);
-              if (dest_w == static_cast<int>(width) && dest_h == static_cast<int>(height)) {
-                display.BlitRgba(dst_x, dst_y, static_cast<int>(width), static_cast<int>(height),
-                                  decoded->data());
-              } else {
-                // Real destination size differs from this real
-                // texture's own real native size (confirmed live for
-                // real TITLE: native 512x512, real destination
-                // 640x480) -- nearest-neighbor real upscale/downscale
-                // to the real destination rect `BlitRgba` itself
-                // doesn't support.
-                std::vector<uint8_t> scaled(static_cast<size_t>(dest_w) * dest_h * 4);
-                for (int y = 0; y < dest_h; ++y) {
-                  int src_y = static_cast<int>(static_cast<int64_t>(y) * height / dest_h);
-                  for (int x = 0; x < dest_w; ++x) {
-                    int src_x = static_cast<int>(static_cast<int64_t>(x) * width / dest_w);
-                    const uint8_t* src =
-                        decoded->data() + (static_cast<size_t>(src_y) * width + src_x) * 4;
-                    uint8_t* dst = scaled.data() + (static_cast<size_t>(y) * dest_w + x) * 4;
-                    std::memcpy(dst, src, 4);
-                  }
-                }
-                display.BlitRgba(dst_x, dst_y, dest_w, dest_h, scaled.data());
-              }
+              scale_and_blit(*decoded, static_cast<int>(width), static_cast<int>(height));
               return;
             }
+          }
+        } else if (static_cast<uint8_t>(signature) == 0x89 &&
+                   static_cast<uint8_t>(signature >> 8) == 0x50) {
+          // Real PNG signature (`PNG...`, first two real bytes
+          // checked here; `DecodePng` itself verifies the full real
+          // 8-byte magic) -- confirmed live this round (TASKS.md Phase
+          // 8) that this real archive stores real small/UI assets (the
+          // real splash logos included) as real PNG, not this real
+          // engine's own real ATITC format used for real large
+          // backgrounds/the real font atlas. `LoadResDataEx` (this
+          // project's own already-working real resource loader) writes
+          // the real, complete, verbatim real PNG file into this real
+          // buffer -- read a real generously-sized window (comfortably
+          // larger than every real sample found so far, topping out
+          // under 5KB) and let `DecodePng`'s own real chunk-length
+          // parsing stop at the real `IEND` chunk rather than needing
+          // this project to separately know the real file's own exact
+          // real length up front.
+          constexpr size_t kMaxPngBytes = 262144;
+          std::vector<uint8_t> raw(kMaxPngBytes);
+          for (size_t i = 0; i < kMaxPngBytes; ++i) {
+            raw[i] = mem.Read8(static_cast<uint32_t>(tex + i));
+          }
+          int width = 0, height = 0;
+          auto decoded = zeebulator::DecodePng(raw.data(), raw.size(), width, height);
+          if (decoded.has_value() && width > 0 && height > 0) {
+            scale_and_blit(*decoded, width, height);
+            return;
           }
         }
       }
@@ -1406,13 +1622,28 @@ int main(int argc, char** argv) {
         // 480px-tall display -- confirmed live, not assumed. Only the
         // destination Y is flipped, not the glyph bitmap itself or X
         // -- a real human confirmed glyph orientation and reading
-        // order both already looked correct).
-        int dst_y = kHeight - (raw_y0 / 65536) - kAbdFontCellPx;
+        // order both already looked correct). Matches the real shape
+        // path's own real flip below (`kHeight - raw_y1/65536`, no
+        // further subtraction) -- confirmed live this round that the
+        // previous, extra `- kAbdFontCellPx` term (a real leftover
+        // from before this project understood the real per-glyph
+        // content offset, TASKS.md Phase 8) was pushing every real
+        // text draw about 16-18px too far from the real bottom edge a
+        // real human's own reference footage shows it hugging.
+        int dst_y = kHeight - (raw_y0 / 65536);
 
         int atlas_col = static_cast<int>(char_index) % (kAbdFontAtlasWidth / kAbdFontCellPx);
         int atlas_row = static_cast<int>(char_index) / (kAbdFontAtlasWidth / kAbdFontCellPx);
         int src_x = atlas_col * kAbdFontCellPx;
-        int src_y = atlas_row * kAbdFontCellPx;
+        // Real row pitch (25px) and the real per-row content offset
+        // (6px) are both distinct from the real 16px column width --
+        // see `kAbdFontRowPitch`'s own doc comment above for the real
+        // pixel-level evidence. A naive `atlas_row * kAbdFontCellPx`
+        // here landed 6-10px too high per row, clipping every real
+        // glyph's own real bottom few pixels (e.g. real 'I' losing its
+        // own real bottom serif, rendering as a real "T"-looking shape
+        // instead) -- confirmed live this round, not assumed.
+        int src_y = atlas_row * kAbdFontRowPitch + kAbdFontGlyphYOffset;
 
         // BlitRgba wants one contiguous kAbdFontCellPx x kAbdFontCellPx
         // block; the decoded atlas is one big kAbdFontAtlasWidth-wide
@@ -1720,8 +1951,25 @@ int main(int argc, char** argv) {
   // separated range, well past every fixed address and far short of
   // FileHle's own region at 0x80100000.
   uint32_t next_self_propagating_addr = 0x80070000;
+  // Real caller `0x10ac10`'s own real "fetch the real decoded PNG
+  // size" call (`abd.mod` 0x10adc8-0x10add8) does not go through the
+  // real self-propagating-stub object real slot 3's own real "feed"/
+  // "terminate" calls below used -- it goes through `self+408`, a
+  // real, separate, already-identified real object this project
+  // already builds: real `ISHELL_CreateInstance(ishell, ClsId=
+  // 0x01030766, &self[408])` (`abd.mod` 0x10da28-0x10da3c, confirmed
+  // live this round -- a real destructor at 0x10d9e8 also real-
+  // releases it via real vtable slot 1, confirming a real, genuine
+  // ref-counted real interface, not a real coincidental register
+  // value). This project's own real `unknown_0x01030766_methods[3]`
+  // (below, in `main`) already exists for this real ClsId; shared
+  // (not per-self-propagating-object) real state here lets it hand
+  // back this real round's own real decoded-size result instead of
+  // its real, existing generic "write a new child" default.
+  auto pending_png_result = std::make_shared<std::optional<std::pair<uint32_t, uint32_t>>>();
   std::function<uint32_t()> build_self_propagating_stub =
-      [&cpu, &hle, &next_self_propagating_addr, &build_self_propagating_stub]() -> uint32_t {
+      [&cpu, &hle, &next_self_propagating_addr, &build_self_propagating_stub,
+       pending_png_result]() -> uint32_t {
     uint32_t vtable_addr = next_self_propagating_addr;
     uint32_t object_addr = next_self_propagating_addr + 0x800;
     next_self_propagating_addr += 0x1000;
@@ -1737,7 +1985,41 @@ int main(int argc, char** argv) {
     std::vector<zeebulator::HleRuntime::HleFunction> methods(
         40, [](zeebulator::IArmCore& core) { core.SetRegister(zeebulator::kR0, 0); });
     methods[2] = propagate_into(zeebulator::kR2);
-    methods[3] = propagate_into(zeebulator::kR1);
+    // Real slot 3, for this real title, is a real image-decode
+    // interface (TASKS.md Phase 8, full derivation there): fed a
+    // real complete PNG buffer+size, then real-terminated with
+    // `(0, 0)`. Detected here by real PNG signature sniffing (the
+    // same real convention this project's own texture-draw bridge
+    // already uses to pick ATITC vs PNG) rather than by real object
+    // identity, since this real scaffold is shared, unidentified
+    // real infrastructure -- any real call that doesn't match this
+    // real shape falls through to the real, original, Peggle-derived
+    // propagate-a-child behavior untouched. The real *fetch* half of
+    // this real interface is handled elsewhere -- see
+    // `unknown_0x01030766_methods[3]`'s own doc comment in `main`.
+    methods[3] = [&cpu, &build_self_propagating_stub,
+                  pending_png_result](zeebulator::IArmCore& core) {
+      auto& mem = cpu.GetMemory();
+      uint32_t r1 = core.GetRegister(zeebulator::kR1);
+      uint32_t r2 = core.GetRegister(zeebulator::kR2);
+      if (r1 != 0 && r2 >= 24 && static_cast<uint8_t>(mem.Read32(r1)) == 0x89 &&
+          static_cast<uint8_t>(mem.Read32(r1) >> 8) == 0x50) {
+        uint32_t descriptor = core.GetRegister(zeebulator::kR4);
+        if (descriptor != 0) mem.Write32(descriptor + 44, r1);
+        // Real PNG IHDR width/height are real 4-byte big-endian
+        // fields (bytes 16-19/20-23) -- real low 16 bits at real
+        // bytes 18-19/22-23 for any real image under 65536px.
+        uint32_t width = (mem.Read8(r1 + 18) << 8) | mem.Read8(r1 + 19);
+        uint32_t height = (mem.Read8(r1 + 22) << 8) | mem.Read8(r1 + 23);
+        *pending_png_result = std::make_pair(width, height);
+        core.SetRegister(zeebulator::kR0, 0);
+        return;
+      }
+      if (r1 != 0) {
+        mem.Write32(r1, build_self_propagating_stub());
+      }
+      core.SetRegister(zeebulator::kR0, 0);
+    };
     // Real slot 4 -- confirmed via a real ClsId this object's own slot 2
     // (QueryInterface) is asked for, `0x0101eb0b` -- is called with no
     // output-pointer argument at all (`this` only) and its *return
@@ -1815,9 +2097,61 @@ int main(int argc, char** argv) {
     if (ppobj != 0) cpu.GetMemory().Write32(ppobj, build_self_propagating_stub());
     core.SetRegister(zeebulator::kR0, 0);
   };
-  unknown_0x01030766_methods[3] = [&cpu, &build_self_propagating_stub](zeebulator::IArmCore& core) {
+  // Real caller `0x10ac10`'s own real "fetch the real decoded PNG
+  // size" call (`abd.mod` 0x10adc8-0x10add8) lands here -- confirmed
+  // live this round: `self+408` (the real field that real call reads
+  // through) is populated by a real, earlier `ISHELL_CreateInstance
+  // (ishell, 0x01030766, &self[408])` (`abd.mod` 0x10da28-0x10da3c),
+  // and real-released via real vtable slot 1 in a real destructor
+  // (`abd.mod` 0x10d9f4-0x10da08) -- a real, genuine ref-counted
+  // real interface reference, not a real coincidental register
+  // value. `pending_png_result` (see `build_self_propagating_stub`'s
+  // own doc comment above) carries the real width/height this real
+  // scaffold's own real "feed a PNG" slot-3 branch already staged.
+  //
+  // The real result this real call hands back isn't a real plain
+  // data struct -- confirmed live this round the hard way (a real
+  // crash): real caller code immediately does `ldr r1,[r0]; ldr
+  // r3,[r1,#48]; blx r3` on it (`abd.mod` 0x10addc-0x10adf0) -- a
+  // real virtual call through real vtable slot 12, not a real field
+  // read. A first, plain-struct version of this real fix had no real
+  // vtable at real offset 0, so that real call jumped through real
+  // NULL and crashed. Reusing `build_self_propagating_stub()` itself
+  // solves this for real: it already builds a real object with a
+  // real, valid, all-40-slots vtable (real slot 12 defaults to a
+  // real safe no-op, since only real slots 2/3/4 are ever
+  // overridden) via `BuildInterfaceObject` -- which (confirmed by
+  // reading its own real implementation) writes only a single real
+  // word (the real vtable pointer) at real object offset+0, leaving
+  // every real byte from +4 onward real free. Real width/height/
+  // pixel-pointer/bpp go into that real free space, at the exact
+  // real offsets `abd.mod` 0x10ae34-0x10b168 actually reads -- one
+  // real object serves as both a real, virtual-call-safe interface
+  // and this real fix's own real data carrier.
+  unknown_0x01030766_methods[3] = [&cpu, &build_self_propagating_stub,
+                                    pending_png_result](zeebulator::IArmCore& core) {
+    auto& mem = cpu.GetMemory();
     uint32_t ppout = core.GetRegister(zeebulator::kR1);
-    if (ppout != 0) cpu.GetMemory().Write32(ppout, build_self_propagating_stub());
+    if (ppout != 0 && pending_png_result->has_value()) {
+      uint32_t width = (*pending_png_result)->first;
+      uint32_t height = (*pending_png_result)->second;
+      uint32_t result_obj = build_self_propagating_stub();
+      static uint32_t next_pixel_addr = 0x80200000;
+      uint32_t pixel_addr = next_pixel_addr;
+      uint32_t pixel_bytes = width * height * 4;
+      next_pixel_addr += pixel_bytes + 64;
+      for (uint32_t i = 0; i < pixel_bytes; ++i) mem.Write8(pixel_addr + i, 0);
+      mem.Write32(result_obj + 8, pixel_addr);
+      mem.Write32(result_obj + 12, 0);
+      mem.Write16(static_cast<uint32_t>(result_obj + 20), static_cast<uint16_t>(width));
+      mem.Write16(static_cast<uint32_t>(result_obj + 22), static_cast<uint16_t>(height));
+      mem.Write8(result_obj + 28, 32);  // real bits-per-pixel: real RGBA8888
+      mem.Write32(ppout, result_obj);
+      pending_png_result->reset();
+      core.SetRegister(zeebulator::kR0, 0);
+      return;
+    }
+    if (ppout != 0) mem.Write32(ppout, build_self_propagating_stub());
     core.SetRegister(zeebulator::kR0, 0);
   };
   uint32_t unknown_0x01030766_obj = zeebulator::BuildInterfaceObject(
@@ -2374,6 +2708,25 @@ int main(int argc, char** argv) {
       // cheap enough (one pass over the log) not to worry about
       // running it this often.
       if (tick_count % 1800 == 0) gl_recorder.CompactLog();
+      // Presents right after *this* real timer's own real content was
+      // drawn, not only once after the whole real due-timer burst
+      // below finishes. `shell_hle.Tick(kTickMs)` can return more than
+      // one real due, one-shot, self-rearming BREW timer per real
+      // outer-loop iteration -- confirmed live this round for real
+      // Alien Breaker Deluxe's own real boot sequence, which fires
+      // several real timers back to back within a single real outer-
+      // loop pass. Presenting only once after the full burst -- the
+      // real, pre-existing behavior -- means every real timer in that
+      // burst except the real last one never actually reaches the
+      // real screen, even though each is its own real, complete,
+      // presentable real frame. On real hardware each real timer fire
+      // is its own real display moment; presenting once per real timer
+      // here matches that instead of only ever showing the real *last*
+      // timer in a real burst.
+      if (!backend.HasRealGlActivity()) {
+        display.RepresentLastFrame();
+        if (abd_font_atlas.has_value()) display.PresentLiveFramebuffer();
+      }
     }
     mixer.Mix(backend, static_cast<size_t>(kAudioSampleRate * kTickMs / 1000));
     // See IDisplayHle::RepresentLastFrame's own doc comment: keeps the

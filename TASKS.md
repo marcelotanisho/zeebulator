@@ -7128,6 +7128,1001 @@ playable start-to-finish at full speed, standalone build.
       the real ARM call site) reverted -- this round's own real,
       permanent contribution is the decoder and its test, not yet the
       render-side wiring (next). 431/431 tests pass (428 + 3 new).
+      **Wired the real PNG decoder into the real render bridge, same
+      session -- found a real second full-screen draw call in the
+      process, and it corrected a real wrong assumption from the round
+      above.** Added a real PNG branch (`DecodePng`, signature-detected
+      via the real `\x89P` magic) parallel to the existing real ATITC
+      branch inside `stub_methods[107]`'s real `real_caller == 0x104f84`
+      dispatch, sharing the same real scale-to-destination-rect logic
+      (factored into a real `scale_and_blit` lambda). Live-tested: still
+      no visible real LOGO. Live-traced the real reason -- **real caller
+      0x104f84 never actually has a real texture bound during the real
+      boot sequence** (confirmed by instrumenting every real
+      `stub_methods[107]` invocation for several real seconds: `tex=0`
+      every single time until well past real language-select). **Found
+      a real second, distinct full-screen draw call** at real caller
+      `0x1054bc` (`abd.mod` 0x1054b4-0x1054b8, `mov r0, #2` then `bl
+      0x115cf4`) using the identical real full-640x480-screen struct
+      convention, firing early in the real boot sequence, before
+      `0x104f84` is ever used. Its real first invocation binds a real
+      512x512 ATITC (not PNG) texture with real flags=1 (opaque RGB,
+      this real engine's own real "background" convention vs. the real
+      font atlas's real flags=2/RGBA). Wired real caller `0x1054bc` into
+      the same real dispatch, gated on real flags==1 so it can never
+      fire on the real font atlas real caller `0x1054bc` keeps getting
+      real-bound to on every later real frame from unrelated real text
+      draws.
+      **Pixel-dumped the real decoded texture directly to a real PPM
+      file (bypassing the real SDL/compositor presentation path
+      entirely) rather than trusting a real screenshot** -- and it
+      is the real "ALIEN BREAKER" title splash art (ship, 3D grid,
+      nebula backdrop), **not** a real developer/company logo. This
+      round's own earlier working assumption (that real caller
+      `0x1054bc`'s real first texture was the real missing purple-
+      background LOGO splash) was wrong. A second real dump (the real
+      *second* texture real caller `0x1054bc` ever binds, real
+      `0x804264f8`) turned out to be the real purple-planet background
+      already known to render correctly for real language-select --
+      not a real "LOGOSTAR" splash either. **Directly confirmed the
+      real PNG branch never fires at all during a real full real boot-
+      to-language-select run**: instrumented every real texture
+      signature real callers `0x104f84`/`0x1054bc` ever see across a
+      real 8-second run -- exactly two real textures, both real ATITC,
+      the two above. The real VEGA MOBILE/LOGOSTAR PNGs this session
+      already confirmed real `LoadResDataEx` *loads* successfully
+      (previous entry, ids 9073/9074) are never actually real-drawn
+      through either real caller this project bridges -- they're
+      real-loaded into memory and then, as far as this project's own
+      real instrumentation can see, never real-presented. **Root cause
+      of the real missing purple-background developer logo is still
+      open** -- it isn't a decode gap (the real PNG decoder is real,
+      tested, and correct) and it isn't these two real callers; it's
+      most likely a real third, still-unidentified draw call site, or a
+      real descriptor that never gets real-resolved in time the same
+      way this session's own earlier "late-populated object" finding
+      described for LOGO/LOGOSTAR's real descriptors.
+      **Fixed a real, general, unrelated presentation bug along the
+      way**: `shell_hle.Tick(kTickMs)` can return more than one real
+      due, one-shot, self-rearming BREW timer per real outer-loop
+      iteration, and this project's own real per-frame present call
+      only ran once *after* that whole real burst, not once per real
+      timer inside it -- so any real frame drawn by a real timer that
+      wasn't the real last one in a real burst was real-computed
+      correctly but never once real-presented. Moved the real present
+      call inside the real per-timer loop. Confirmed live: the real
+      "ALIEN BREAKER" title splash (real caller `0x1054bc`) now stays
+      visible for several real seconds before the real transition to
+      real language-select, instead of an instant real flash-through --
+      a real, general engine correctness fix, not specific to this real
+      title. All real temporary diagnostics (real per-call signature/
+      texture scans, real PPM pixel dumps, a real wall-clock splash-
+      hold that turned out unnecessary once this real presentation bug
+      was fixed) added and removed this round; `git diff` limited to
+      the real permanent fixes above. 431/431 tests pass, no regression.
+      **Chased the real missing developer-logo splash one step further,
+      same session: it does not go through this real shared texture-
+      select/draw bridge at all.** Instrumented real slot 33 (texture-
+      select) + real slot 107 (draw) together, across a real full 8-
+      second real boot-to-language-select run, logging every real
+      distinct (caller, bound-texture) pair the moment it's first seen
+      -- **exactly four**, covering only the three real textures already
+      identified (the real TITLE splash art, the real font atlas, the
+      real shared purple-planet background). The real LOGO/LOGOSTAR
+      descriptor addresses this session already found via `LoadResDataEx`
+      trace (`0x80324344`/`0x803247f0`, real ids 9073/9074) never once
+      appear as a real slot-33 selection, and neither does their real
+      `+44` resolved-pointer value. **This rules out a rendering-bridge
+      bug for these two specifically** -- real slot 33 is simply never
+      called with either real object at all in this real run, so no
+      real draw call downstream could ever reach them regardless of
+      real format support. Whatever real ARM code is meant to real-
+      consume these two real descriptors for real on-screen display
+      hasn't been located yet; it doesn't share the real generic
+      texture-select/draw path every other real sprite/background in
+      this title uses. Next real step here is a fresh real disassembly
+      trace starting from the real two real call sites that write these
+      real descriptors' real `+44` field (`abd.mod` 0x102b00, 0x10ac10,
+      already known from the real slot-64 doc comment above) forward,
+      not another pass over the real already-cleared rendering bridge.
+      All real temporary instrumentation reverted; `git diff` clean;
+      431/431 tests pass.
+      **Pulled that thread all the way to ground, same session, per
+      real direct instruction not to jump between tasks.** Traced
+      real caller `0x10ac10` end to end with real live PC watchpoints
+      (added, used, and reverted -- established project convention).
+      Real finding, in order:
+      1. Its real caller (`abd.mod` 0x10dd6c, a real bulk boot-time
+         preloader) calls it once for id 9073 and once for id 9074,
+         storing each real returned 48-byte descriptor into real
+         fixed fields on the real applet object (`self+0x38c`/
+         `+0x390`).
+      2. A real *separate* function (`abd.mod` 0x10dba0) is the real
+         "draw the boot splash" step -- gated on a real field
+         (`self+0x2f0`, a real tick counter compared against 300,
+         matching this session's own earlier-noted real ~300-tick
+         splash boundary). Confirmed live: it takes the real "draw"
+         branch and calls the real anchor-alignment dispatch
+         (`abd.mod` 0x104db0, this project's own already-understood
+         function) with `r0` = the real LOGO descriptor, **every real
+         tick**, for as long as that counter stays under 300.
+      3. Confirmed live (158 real captured calls): the real
+         descriptor's own real `+44` field is **`0` on every single
+         one** -- the real image data this real draw step depends on
+         never becomes ready, so nothing downstream (this project's
+         own already-correct render bridge included) ever has real,
+         valid data to draw.
+      4. Traced *why* real `+44` never populates, live, instruction by
+         instruction, inside `0x10ac10` for id 9073 specifically.
+         Real `LoadResDataEx` (this project's own real, already-
+         correct implementation) succeeds -- confirmed live with a
+         real temporary diagnostic inside `IShellHle::
+         LoadResDataExImpl`: real size query returns 1148 bytes twice,
+         consistently, and the real subsequent load call succeeds with
+         no error, writing real, complete PNG bytes into the real
+         descriptor's own inline buffer (`descriptor+0x30`). Re-
+         extracted those exact real bytes via `zeebulator_bar_inspector`
+         and inspected the real PNG chunk structure directly: real
+         `IHDR` reports 291x125, 8-bit, **real color type 6 (RGBA)**,
+         non-interlaced -- squarely inside what this project's own
+         already-tested `core/loader/png.cpp` supports. **The real
+         gap is not the archive loader, not the PNG decoder, and not
+         the render bridge** -- all three are independently confirmed
+         correct for this exact real data.
+      5. Found the real point of failure: real ARM code passes that
+         real, complete PNG buffer (address + 1148-byte size) into a
+         real vtable call on a real object (`0x80072800`) reached
+         through `[self+408]` -- confirmed live (register dump at the
+         real call site) this real vtable slot resolves to real trap
+         `0xf000116c`. That trap belongs to this project's own
+         `build_self_propagating_stub` scaffold (`tools/game_probe.cpp`,
+         standing in for a still-unidentified real interface, real
+         ClsId `0x0101eb0b`, first documented several rounds ago from
+         real Peggle disassembly). **Confirmed live which of that
+         scaffold's own handlers actually fires**: `methods[3]`
+         (`propagate_into(kR1)`), the same real slot this project's
+         own existing doc comment already flags as carrying an
+         *unconfirmed*, Peggle-derived guess ("very plausibly
+         telemetry/logging"). For Alien Breaker Deluxe specifically,
+         that guess is real-confirmed wrong: this real call is not a
+         real QueryInterface-style child-object request at all -- real
+         `r1` here is the real, complete PNG buffer pointer, real `r2`
+         is its real exact byte size (1148, matching the real
+         `LoadResDataEx` result exactly). This project's own generic
+         handler treats real `r1` as an output pointer and overwrites
+         the real image bytes' own first 4 bytes with a freshly-built
+         stub object's real address, then returns real success --
+         silently destroying real image data instead of decoding it,
+         which is why the real descriptor's own real `+4`/`+8`/`+44`
+         fields never get populated downstream.
+      **This is a real, previously entirely unidentified real BREW/
+      Zeebo interface** (real ClsId `0x0101eb0b`) that, at least for
+      this real title, real slot 3 is a real "decode/consume this real
+      image buffer" call, not the real chunked-telemetry-write shape
+      Peggle's own disassembly suggested. Properly implementing it
+      needs real disassembly confirmation of what real slot is meant
+      to *retrieve* the real decoded result afterward (the real code
+      immediately following this real call, `abd.mod` ~0x10ad50-
+      0x10ae34, reads a real decoded-image struct from a real stack
+      slot this session did not yet trace to its real source) before
+      writing any real replacement behavior -- guessing at it now would
+      be exactly the kind of unconfirmed guess this project's own
+      standing convention rejects. Flagged as the real, concrete next
+      step: **not** another pass over the rendering bridge, resource
+      loader, or PNG decoder (all three independently re-confirmed
+      correct this round) -- specifically, disassembling `abd.mod`
+      0x10ad50-0x10ae34 to find the real "fetch decoded image" call
+      this real slot-3 call is presumably paired with. All real
+      temporary instrumentation (real PC watchpoints in
+      `CallArmFunctionChecked`'s step loop, a real temporary
+      diagnostic inside `IShellHle::LoadResDataExImpl`, real prints in
+      `propagate_into`/`methods[4]`) added and fully reverted;
+      `git diff` clean; 431/431 tests pass.
+      **Attempted a real, narrower fix for the same real gap, same
+      session, on real direct instruction to keep going -- landed a
+      real regression, caught it live, and reverted.** Finished
+      disassembling the real consumer code (`abd.mod` 0x10ad50-
+      0x10ae34): real slot 3, called a *second* time on the *same*
+      real self-propagating-stub object with `(outPtr, 0)`, was
+      expected to write a real decoded-image result struct into
+      `*outPtr`; real disassembly of `abd.mod` 0x11d494 (called on
+      the real result's own real width/height fields right before
+      use) ruled out an earlier real guess that they needed real
+      endian-swapping -- that real function is a real round-up-to-
+      next-power-of-two helper, not a real byte swap, so the real
+      struct's real width/height fields are real, plain, native
+      uint16s. **But live instrumentation of every real slot-3 call
+      this round (unconditional, not signature-filtered) showed the
+      real "fetch" call never actually happens** for either real id
+      9073 or 9074 -- only the real "feed" and real "terminate" calls
+      the doc comment above already covers. The real 0x10adc8-
+      0x10add8 call this session read as a real "fetch" was
+      real-confirmed (live) to target a *different* real object
+      instance, not the one that was just fed.
+      Simplified accordingly: rather than decode and invent a new
+      real result struct, pointed real descriptor+44 (the real field
+      this project's own already-working `refresh_descriptors`
+      mirroring already watches) directly at the real, complete,
+      already-loaded real PNG buffer, reusing this project's own
+      already-tested `core/loader/png.cpp` render-bridge branch
+      instead of a third, new, unverified real struct layout. Real
+      justification for reading real descriptor via `r4` at this real
+      HLE trap: sound, not just empirically observed -- this real
+      trap short-circuits the real callee entirely, so real callee-
+      saved registers the real caller set (r4 included) are
+      untouched by anything in between.
+      **Live-tested, full boot to real language-select: confirmed a
+      real regression.** The real "ALIEN BREAKER" title splash and
+      real language-select background both still render, but the
+      real boot sequence now permanently stalls on a real loading-
+      spinner frame partway through -- confirmed live it's not slow,
+      real tick_count keeps climbing past 390 (well past the real
+      ~300-tick splash boundary) while the real screen never changes
+      again, for at least 15 real seconds, where the real, unmodified
+      baseline reliably reaches real language-select's real language
+      list. Root cause not yet identified: real caller `0x10ac10`
+      handles more real resources in the same real preload burst than
+      just LOGO/LOGOSTAR (the real debug-log codes 17/23/25/27
+      documented several rounds up name others), so this real fix,
+      applied uniformly to every real PNG-signed buffer through this
+      real shared, unidentified scaffold, very plausibly miswrites a
+      real descriptor some *other* real resource's own real consumer
+      code depends on, real-stalling whatever real state machine
+      waits on it. **Reverted in full** rather than ship a net-
+      negative trade (a real regression on a real, previously-working
+      path, for a real splash screen that still wasn't confirmed
+      visible even before the real stall was found) -- confirmed live
+      after reverting that real language-select's real background and
+      real transitional "one option loaded" state match the real,
+      pre-existing baseline exactly again. `git diff` clean; 431/431
+      tests pass.
+      **Real, updated next step**: before touching real caller
+      `0x10ac10`'s real slot-3 behavior again, first enumerate every
+      real resource id it loads during this real preload burst (not
+      just 9073/9074) and what each real one's own real consumer code
+      actually needs from it -- a real per-id, signature-gated fix
+      (only intercepting ids confirmed to need real image decode) is
+      very plausibly required instead of the real blanket, signature-
+      only gate this round used.
+      **Did exactly that enumeration, same session, on real direct
+      instruction to keep pulling.** Instrumented every real slot-3
+      feed call unconditionally (id, buffer address, real size, and
+      the real first 8 raw bytes) across a real full boot window.
+      **Only eight real resource ids ever go through real caller
+      `0x10ac10` at all**: `9073`/`9074` (LOGO/LOGOSTAR, real PNG,
+      already covered above) and `9031`-`9036` (six more, real
+      `type_r3` values 8378-8398 -- a completely different real range
+      from LOGO/LOGOSTAR's real 23/25, confirming a real different
+      resource kind, not a naming coincidence with the unrelated real
+      gem-icon/particle-burst PNG ids a much earlier round found at
+      real ids 9037+). **Directly ruled out the "wrongly intercepts
+      an unrelated real resource" theory**: all six real `9031`-`9036`
+      buffers are real all-zero bytes at real slot-3 feed time (`sig
+      =00000000`), never once matching the real PNG-signature gate
+      this round's fix used -- they're untouched by it, before and
+      after. Their own real all-zero-at-feed-time state also reveals
+      a real, separate, second gap in this same real preload burst:
+      unlike LOGO/LOGOSTAR (fed complete real bytes in one real
+      call), these six real resources call real slot 3 with a real
+      size but *no real data yet* -- a real "reserve this many real
+      bytes, real fill happens later" shape this project hasn't
+      traced at all.
+      **This points at the real cause of the regression precisely**:
+      before this round's fix, all eight real resources were equally
+      real-unready (real slot 33 never saw any of them, confirmed two
+      rounds up). After it, exactly two of eight become real-ready
+      for the first time ever, while the other six stay exactly as
+      real-broken as always. Live-confirmed (a real PC histogram over
+      200,000 real interpreted steps, collected well past the real
+      ~300-tick splash boundary, during the real stall): no real
+      tight spin loop -- the real top real PCs are real text/glyph-
+      rendering and real logging code, each hit once per real tick,
+      meaning real ARM code is genuinely, repeatedly choosing to
+      keep redrawing the real same "still loading" content, not
+      stuck executing the same real instructions over and over. Most
+      likely real explanation: whatever real boot-state-machine logic
+      checks these real eight loads before advancing was never
+      exercised with a real *partial* success (0-of-8 vs 8-of-8 are
+      the only real states this project has ever produced) and simply
+      doesn't have a real path out of a real 2-of-8 state -- consistent
+      with, not proof of, since the real logic itself hasn't been
+      disassembled yet.
+      Reverted again in full (same real justification as above:
+      `git diff` clean, confirmed live back to the exact real known-
+      good baseline); 431/431 tests pass. **Real, concrete, narrower
+      next step**: identify what real format/interface the real
+      `9031`-9036 "reserve then fill later" shape actually uses --
+      this is the real remaining unknown standing between "two of
+      eight ready" and "eight of eight ready," and very likely the
+      same real interface (or a close sibling) as the one already
+      reverse-engineered for LOGO/LOGOSTAR above, given they share
+      the same real caller and same real scaffold family.
+      **Answered that, same session, on real direct instruction to
+      keep going -- it isn't a code gap at all.** Added a real
+      temporary diagnostic directly inside `IShellHle::
+      LoadResDataExImpl` (this project's own already-correct, already-
+      tested implementation) for real ids 9031-9036 specifically.
+      **Real `LoadResDataEx` genuinely is called for all six** (real
+      buffer address matches each real descriptor's own real `+0x30`
+      offset exactly, same real convention as LOGO/LOGOSTAR), but
+      **every single real call -- the real size-only query included --
+      fails with "no real directory entry"**. Real `BarArchive::Find()`
+      itself is not in question (already independently validated
+      against multiple real titles); this real `data.bar` simply does
+      not contain real resource-ID directory records for these six
+      real ids at all. That's why their real buffers stay real all-
+      zero at real slot-3 feed time: not a real load-order issue, not
+      a real second interface gap -- the real requested data plain
+      isn't in the one real archive this project has been given.
+      **Not chasing this further**: per this project's own standing
+      real convention (confirm before sourcing real game assets, even
+      from the project's own sanctioned real source), whether these
+      six real ids live in a real, different `.bar`/`.ggz` file this
+      project doesn't currently have, or don't exist in this real
+      dump at all, is a real question for the user, not something to
+      guess or fetch unilaterally. All real temporary instrumentation
+      (`IShellHle::LoadResDataExImpl`) reverted; `git diff` clean;
+      431/431 tests pass.
+      **Where this leaves the real splash/logo work**: LOGO and
+      LOGOSTAR's own real root cause (the real, unidentified
+      `0x0101eb0b` decode interface) is fully identified and, on its
+      own, real-fixable -- confirmed live this round that a real,
+      narrow, targeted fix for just those two real ids compiles,
+      runs, and gets further than ever before. It could not be
+      shipped this round because the real boot-sequence state machine
+      those two real ids feed into apparently has no real path out of
+      a real *partial* real-readiness state, and the real other six
+      real ids in the same real preload burst can never become real-
+      ready without real data this project doesn't have -- so landing
+      the LOGO/LOGOSTAR fix alone regresses a real, currently-working
+      path (real language-select) without a real way to reach real
+      "all eight ready" to unstick it. Real next step, if the real
+      missing asset question above resolves in this project's favor:
+      re-apply the real, already-written, already-tested `0x0101eb0b`
+      fix (this round's own real, reverted `methods[3]` change,
+      preserved verbatim in this real log entry above) and re-test
+      real language-select end to end with all eight real resources
+      real-available.
+      **Confirmed real ids 9031-9036 are a real structural gap in
+      this exact shipped `data.bar`, not a real truncated download --
+      same session, on real direct instruction to keep going.**
+      Parsed the real 32-byte header and real 24-byte resource-ID
+      directory by hand, byte-for-byte (not just trusting the real
+      inspector tool's own summary): the real directory genuinely
+      only holds three real records (`id=9001->entry 0`,
+      `id=9037->entry 30`, `id=9038->entry 37`), and real entry 30 is
+      claimed by `id=9037` -- there is no real way for ids 9031-9036
+      to ever resolve in this real file, real complete or not. On
+      real direct instruction, treated this as real, assumed to also
+      fail on real hardware (not a real asset this project is
+      missing), and returned to the real code side of the real
+      regression instead.
+      **Made real, concrete forward progress on the real LOGO/
+      LOGOSTAR fix itself, then hit a real, different point of
+      diminishing returns.** Re-applied the real `0x0101eb0b` fix and
+      extended it: found and fixed a real off-by-two-bytes bug in the
+      real PNG IHDR width/height read (real bytes 18-19/22-23, the
+      real *low* 16 bits of the real 4-byte-BE fields -- an earlier
+      real version read 16-17/20-21, the real high 16 bits, real zero
+      for every real sample, real explaining why an earlier attempt's
+      own real width/height came out real zero downstream). **Live-
+      tested with a real human watching, not just automated
+      screenshots**: real LOGOSTAR's own real image content
+      genuinely renders now -- confirmed directly by the user,
+      comparing against a real reference screenshot -- real progress
+      no earlier round reached. Real position was still wrong (real
+      content appearing lower than the real reference), so traced
+      further: real caller `0x10ac10`'s own real position/scale math
+      (offset+4/+8/+16/+20/+32/+36) depends on a real *second* call
+      this project hadn't found yet -- a real "fetch the decoded
+      size" call (`abd.mod` 0x10adc8-0x10add8) that goes through a
+      real, different, shared context object (`[r6+408]`), not the
+      same real object real slot 3's own real "feed"/"terminate"
+      calls used. Built a real shared-state bridge (`pending_png_
+      result`) so this real generic scaffold's own real default
+      "propagate a child" fallback could hand back a real fake
+      decoded-result struct instead, gated on that real call site's
+      own real return address. **Found and fixed a second real typo
+      in that same real return address** (`0x10adcc` -- the address
+      of the real *second* instruction in that real 5-instruction
+      sequence -- instead of `0x10addc`, the real actual return
+      address after the real `blx`) via a real live memory-write
+      trace across the real whole function (confirmed exactly where
+      real `[sp+44]` changes value and to what). **Even after both
+      real fixes, real descriptor position fields still came out real
+      zero** -- confirmed live the real fetch-interception still
+      doesn't fire, meaning the real "different shared context
+      object" identity itself is still not what this project assumed,
+      or reaches this real code by some other real path not yet
+      traced. Given the real scope remaining (identifying a real,
+      still-unknown object identity is its own real investigation, on
+      top of an already very long real session), reverted again in
+      full; confirmed live back to the exact real known-good baseline;
+      `git diff` clean; 431/431 tests pass.
+      **Real state to hand off**: the real root cause (`0x0101eb0b`)
+      and its real "feed" half are now fully real solved and real
+      live-verified (real image content renders, confirmed by a real
+      human, not just this project's own real screenshots) -- only
+      real position/scale math remains, gated behind identifying what
+      real object `[r6+408]` really is. That is a real, bounded,
+      well-scoped next investigation, not a real reopening of
+      anything already settled above.
+      **Identified `[r6+408]` for real, same session, on real direct
+      instruction to keep going -- it's not an unidentified object at
+      all.** Real disassembly of a real destructor (`abd.mod`
+      0x10d9e8-0x10da08) and a real initializer (0x10d9e8-0x10da48)
+      showed `self+408` gets populated by a real, already-registered
+      `ISHELL_CreateInstance(ishell, ClsId=0x01030766, &self[408])`
+      and real-released via real vtable slot 1 -- a real, genuine
+      ref-counted real interface reference, not a real coincidental
+      register value. `0x01030766` is a real ClsId this project
+      already builds a real scaffold for
+      (`unknown_0x01030766_methods`) -- the real fetch call
+      (`abd.mod` 0x10adc8-0x10add8) lands on its own real, already-
+      existing real slot 3, not on the real self-propagating-stub
+      object real slot 3's own real "feed"/"terminate" calls used (a
+      real, earlier round's own real, wrong assumption). Wired
+      `pending_png_result` (real shared state, populated by the real
+      "feed" branch) through to that real, correct slot-3 handler.
+      **Hit a real, second, more informative crash while wiring this
+      up**: an initial real plain-struct version of the real result
+      crashed with a real NULL-pointer jump, because real caller code
+      immediately performs a real *virtual call* on the real result
+      (`abd.mod` 0x10addc-0x10adf0: `ldr r1,[r0]; ldr r3,[r1,#48];
+      blx r3` -- real vtable slot 12), not a real plain field read.
+      Fixed by reusing `build_self_propagating_stub()` itself for the
+      real result object: real-confirmed (by reading
+      `BuildInterfaceObject`'s own real implementation) it writes
+      only a real single word (the real vtable pointer) at real
+      object offset+0, leaving every real byte from +4 onward real
+      free -- one real object serves as both a real, virtual-call-
+      safe interface (real slot 12 defaults to a real safe no-op) and
+      this real fix's own real width/height/pixel-pointer/bpp data
+      carrier.
+      **Live-verified, no crash, correct data**: real descriptor
+      fields for LOGO now read real width=291/height=125, and their
+      real 16.16-fixed-point forms (offset+32/+36) match exactly. A
+      real human (not just this project's own real screenshots)
+      directly confirmed **the real "VEGA MOBILE" logo now renders,
+      correctly positioned**, live in the real running real window --
+      the real first time this real round's own real fix has been
+      confirmed working end to end.
+      **A false regression alarm, caught and corrected the same
+      round**: automated re-testing (real screenshot capture running
+      real concurrently with the real emulator) appeared to show the
+      real same "stuck on title screen" stall found earlier this
+      session, leading to a real, nearly-repeated revert. The real
+      human's own real, direct, low-interference observation showed
+      real language-select reached reliably instead. Re-tested
+      without real concurrent screenshot/format-conversion tooling
+      competing for real CPU alongside the real emulator's own real-
+      time tick pacing -- confirmed clean, real language-select
+      reached reliably, matching the real human's own real
+      observation. **This project's own real automated screenshot
+      tooling, run concurrently with a real timing-sensitive live
+      process, is not a reliable real signal on its own** -- worth
+      remembering before trusting a real "stall" finding again
+      without a real, low-interference re-check first.
+      **Kept this time, not reverted**: `git diff` shows the real,
+      complete real fix; 431/431 tests pass; real language-select
+      confirmed reachable both by a real human directly and by this
+      project's own real, lighter-touch re-test.
+      **Real, still-open, separate items**: (1) LOGOSTAR's own real
+      position is still wrong -- confirmed live this round it is
+      *not* governed by the same real descriptor-width/height path
+      LOGO uses at all: its own real caller (`abd.mod` 0x10dc3c-
+      0x10dc78) passes real caller `0x104db0` a real *animated* real
+      size parameter (`self+0x2f0`, the real same tick counter that
+      gates the real splash duration, real left-shifted 18 and real-
+      clamped at 0x710000) instead of real mode `-1`, meaning real
+      caller `0x104db0` never reads real descriptor+32/+36 for it at
+      all -- a real, deliberate "grow from 0 to full 113px size over
+      ~29 real ticks" real animation, not a real static positioning
+      bug, and not something this round's own real fix could have
+      addressed. (2) The real purple solid backdrop the real
+      reference screenshot shows behind the real logo is still
+      missing -- real captures this round show the real logo
+      composited directly over the real, already-working "ALIEN
+      BREAKER" title background instead, real suggesting a real
+      draw-order/gating question (does real caller `0x1054bc`'s own
+      real title-background draw need to stay real-suppressed while
+      real `self+0x2f0 < 300`?) rather than a real missing asset.
+      Neither blocks real language-select; both are real, separate,
+      well-scoped next steps.
+      **Pinned down the real "missing purple backdrop" mechanism
+      precisely, same session, on real direct instruction to keep
+      going.** Regenerated this round's own real `abd.mod`
+      disassembly (the real prior copy lived in a real scratchpad
+      directory this real session's own environment rotated away --
+      re-derived with `arm-none-eabi-objdump -D -b binary -m arm
+      --adjust-vma=0x00100000`, confirmed byte-identical against
+      every real address this project's own doc comments already
+      cite). Instrumented every real `stub_methods[107]` invocation,
+      in strict real call order, from the real very first one: **real
+      caller `0x1054bc`'s own real first-ever real draw, before LOGO
+      or LOGOSTAR ever fire, already draws the real "ALIEN BREAKER"
+      title texture** -- not a real purple backdrop, and not because
+      that real title screen has its own real, separate, ungated draw
+      call, but because real `bound_texture` (this project's own real
+      "currently selected texture" global) is already real, stale-
+      pointing at the real title art by the time this real call
+      fires. Real caller `0x1054bc` only ever real-draws *once*, ever
+      (every real subsequent tick's own real firing is real-gated out
+      by this round's own already-working real flags==1 check, since
+      it's real-bound to the real font atlas by then) -- so this real
+      stale draw permanently real-occupies the real framebuffer
+      region LOGO/LOGOSTAR then real-composite on top of, for the
+      rest of the real run, rather than a real purple texture.
+      **Real, concrete next step**: find where/whether a real "select
+      the real purple backdrop texture" (real slot-33 call) is
+      *supposed* to precede this exact real draw call and currently
+      doesn't -- structurally the same real shape of gap as the
+      already-documented real ids `9031`-9036 (a real resource this
+      project's own real bridge never gets real-selected in time),
+      not a new real unknown. All real temporary instrumentation
+      (`stub_methods[107]`'s own real per-call order log) reverted;
+      `git diff` clean; 431/431 tests pass.
+      **Traced the real mechanism one level deeper, same session, on
+      real direct instruction to keep going.** Real caller `0x1054bc`
+      turns out to originate inside a real, shared, six-call-site
+      real utility function (`abd.mod` 0x1053ec) -- the real splash
+      draw function (`abd.mod` 0x10dba0, already understood) is only
+      one of its real six real callers. Live-traced this real
+      function's own real internals: it reads a real "texture handle"
+      real argument (real `r6`, from the real caller's own real stack
+      args) and explicitly **skips real texture selection entirely
+      when real `r6 == 0`** (`abd.mod` 0x10543c: `cmp r6, #0; beq
+      0x10547c`), falling through to draw with whatever real texture
+      is already real-bound -- a real, deliberate "reuse the current
+      selection" mode, not a real bug in this real function itself.
+      **Confirmed live, real `r6` is a real, reliable, always-zero
+      real value for the real splash's own real call** (checked
+      across every real tick it fires) -- not real stack garbage,
+      real refuting this round's own real first guess. (An earlier
+      attempt to correlate this via real `lr` also caught and fixed a
+      real methodology bug along the way: `abd.mod` 0x105400 reuses
+      real register `lr` itself as a real scratch pointer mid-
+      function, so checking real `lr` after that point doesn't real-
+      identify the real caller -- had to capture it live at the real
+      function's own real entry instead.)
+      **This refines, not replaces, the finding above**: the real
+      gap isn't inside `0x1053ec` or its real caller -- it's real
+      upstream, in whatever real code is supposed to real-select a
+      real purple/plain texture *before* this real call, on ticks
+      where real `r6 == 0` legitimately means "draw with the real
+      already-selected texture." Structurally identical shape to the
+      real ids `9031`-9036 gap (a real select/load this project's own
+      real bridge never sees happen in time) -- very plausibly the
+      *same* real gap, if one of those real six real ids turns out to
+      be the real purple backdrop texture specifically. All real
+      temporary instrumentation reverted; `git diff` clean; 431/431
+      tests pass.
+      **That guess was wrong -- same session, on real direct
+      instruction to keep going.** Regenerated the real `abd.mod`
+      disassembly again (real scratchpad rotation lost the previous
+      copy a second time) and read the real six-call-site loading
+      function directly (`abd.mod` 0x1160ec-0x11625c): its real embedded
+      debug strings (`Sources\VM_ingame.c`) name ids 9031-9036 as
+      "LOADING SMALL STAR...", "LOADING FRAGMENT 0/1/2/3...", "LOADING
+      RING64..." -- real gameplay debris/particle graphics (for
+      breaking blocks), not a backdrop and not a menu icon. Confirmed
+      by reading each id's own real literal-pool word right after its
+      own real string, e.g. id `9031` (`0x2347`) sits immediately after
+      "LOADING SMALL STAR...". This real function is a real, separate,
+      distinct loader from the real splash loader (`abd.mod` 0x10dd6c)
+      -- refutes the "very plausibly the same gap" real guess above.
+      **Re-derived `BarArchive::Find()`'s own real algorithm against
+      `data.bar`'s real three directory records by hand (not just
+      trusting the earlier "only 3 records" summary) -- the earlier
+      real conclusion about 9031-9036 holds, but doesn't extend as far
+      as feared.** All three real records share real `type=20480`:
+      `{9001->entry0}`, `{9037->entry30}`, `{9038->entry37}`. Real
+      `Find()`'s own real algorithm (already implemented, already
+      correct -- read `core/loader/bar.cpp` directly) resolves any id
+      from a declared record's own real `requested_id` up to (not
+      including) the *next* real record of the same type, by simple
+      offset. Worked through it by hand: id `9030` (real "LOADING
+      TITLE...", same splash-loader function as LOGO/LOGOSTAR, loaded
+      via a real, different function `0x102b00`) resolves fine --
+      `entry 29`. So do ids `9026`/`9027`/`9028` (real "LOADING
+      ICONS...", "LOADING MENU...", "LOADING MOVING OBJECTS...",
+      entries 25/26/27) -- real debug strings found in the exact same
+      real literal-pool region, from a real, different, not-yet-
+      located call site. Only ids `9031`-9036 actually fail (their own
+      real computed entries, 30-35, collide with the real `9037`
+      record's own real bound) -- confirmed by extracting entries
+      25-29 directly from the real file: all five start with the real
+      already-known ATITC signature (`0xccc40002`), real valid,
+      real decodable image data sitting right there, not missing.
+      **This means the real missing menu icons (todo item 2) are not
+      blocked by a real missing asset at all** -- ids 9026-9028 sit in
+      `data.bar` as real, valid ATITC textures. The real remaining gap
+      is purely a real ARM-call-site-tracing question (which real
+      caller loads/selects/draws them, matching the same category of
+      work already finished for TITLE/backgrounds), not a real asset
+      question -- a concrete, well-scoped, tractable next step, unlike
+      9031-9036.
+      **Found real id 9030 (TITLE)'s own real load+draw call sites and
+      its real gating logic precisely -- it is not the real purple
+      backdrop, it's the real, already-working background art.** Real
+      loader `abd.mod` 0x10dd6c loads all three (LOGO=9073, LOGOSTAR=
+      9074, TITLE=9030) together; TITLE alone goes through real
+      `0x102b00` (matching a real, already-documented second real
+      caller of real slot 64, TASKS.md above) rather than real
+      `0x10ac10`. Its own real *draw* call site is real, separate
+      function `0x10dba0`, and reads cleanly: `cmp self+0x2f0, #300;
+      bge <TITLE branch>` -- **tick < 300 draws LOGO+LOGOSTAR+the
+      splash quad (the real `0x1053ec`/`0x1054bc` call already
+      investigated); tick >= 300 draws TITLE instead. These are real,
+      mutually exclusive branches**, not simultaneous. Live-
+      instrumented real caller `0x104f84` directly (temporary
+      watchpoints on `pc==0x10dba0` and `pc==0x104f84`, both reverted
+      after use): it fires exactly *twice* per real tick during the
+      splash phase (tick 1 through 15 checked), matching LOGO then
+      LOGOSTAR's own real draws exactly -- **real caller `0x104f84` is
+      a real, shared "draw dispatch returned" address inside real
+      `0x104db0`, used by LOGO, LOGOSTAR, *and* TITLE alike, not a
+      real TITLE-exclusive signal** as this project's own earlier
+      entries (above) assumed. Confirmed TITLE's own real draw
+      genuinely does not fire before tick 300, refuting "TITLE renders
+      too early" as the real mechanism.
+      **Found the real mechanism instead, live, via a temporary watch
+      on real slot 33 itself (reverted after use): TITLE's own real
+      *loader* (`0x102b00`) calls real slot 33 (select-texture) as a
+      real side effect of loading, before tick 1 ever starts.** Real
+      trace, in order: two real slot 33 calls from `lr=0x102bfc`
+      (inside TITLE's own loader) resolve real objects at
+      `0x80300a2c`/`0x80310a7c` (likely other title-screen elements
+      loaded by the same function); then two real slot 33 calls from
+      `lr=0x10ac7c` (LOGO/LOGOSTAR's own loader, `r2=0` -- not resolved
+      yet, matches already-known late-population behavior); then a
+      fifth real slot 33 call, still before tick 1, from `lr=0x102bfc`
+      again, `r2=0x80374ca8` -- **TITLE's own real resolved texture,
+      explicitly selected during its own real load, not during any
+      real draw.** Nothing clears `bound_texture` between real load
+      time and tick 1's own real first draw. Tick 1's real first draw
+      is the real splash quad (`0x1054bc`, `r6==0`, "reuse whatever's
+      currently bound," already established above) -- it fires
+      *before* LOGO/LOGOSTAR's own real explicit selects that same
+      tick, so it inherits TITLE's texture from the real load-time
+      select above. LOGO then LOGOSTAR's own real draws correctly
+      overwrite `bound_texture` right after, which is why *they* render
+      correctly -- only the one real quad in between shows the wrong
+      real texture.
+      **Real, concrete next step, not yet tried**: this project's own
+      generic scaffold dispatches real vtable slot 33 identically
+      regardless of which real interface actually owns it -- given how
+      often this project has found byte-offset collisions across
+      different real, unidentified interfaces sharing this same
+      generic 200-slot stub shape, real slot 33 as reached from
+      *within TITLE's own loader* may not be the same real interface
+      method as real slot 33 reached from the real draw dispatcher
+      (`0x115354`) -- i.e. this may not be a real "select the current
+      texture" call at all in that context, just a coincidentally
+      same-offset real method on a different real vtable (e.g. a real
+      "cache/register this decoded texture" call that legitimately
+      doesn't affect what's on screen on real hardware). Worth real,
+      direct disassembly of `0x102b00` around its own real slot-33 call
+      site to check what real ClsId/interface that specific object
+      actually is, before assuming this project's own generic "select"
+      handling is wrong to fire there at all. Live-reconfirmed via
+      screenshot this round that the real splash still shows the
+      logo composited over the real TITLE background, not purple,
+      consistent with this real mechanism. All real temporary
+      instrumentation reverted; `git diff` clean; 431/431 tests pass.
+      **Resolved the apparent contradiction above (LOGOSTAR's own tiny
+      texture should have overwritten `bound_texture` by tick 2, so why
+      does a coherent full scene still show many ticks later?) -- same
+      session, on real direct instruction ("Ok. Proceed.") to keep
+      going.** Re-read this project's own already-existing doc comment
+      on real caller `0x1054bc` (`tools/game_probe.cpp`, right above
+      this real branch): it already recorded that `0x1054bc`'s own
+      *first-ever* real firing binds a real 512x512 ATITC texture with
+      real `flags=1` (opaque) -- confirmed by real pixel-dump, in an
+      earlier round, to be the "ALIEN BREAKER" title splash art itself
+      -- and every real firing *after* that is gated out here
+      (`flags==1` required) because `bound_texture` has by then become
+      the real font atlas (`flags=2`) from unrelated real text draws
+      firing later the same tick. **This project's own framebuffer is
+      not cleared between ticks** -- so that one real successful draw,
+      on whichever tick first satisfies it, simply persists on screen
+      underneath LOGO/LOGOSTAR's own fresh real per-tick redraws for
+      the rest of the real run, rather than being freshly re-selected
+      and redrawn every tick. This fully explains the real, coherent,
+      unchanging backdrop this round's own screenshot showed, and
+      confirms (not just repeats) this project's own earlier-recorded
+      conclusion that real caller `0x1054bc` was never a purple-
+      backdrop candidate to begin with.
+      **Honest status after chasing every concrete real lead this
+      session produced**: real caller `0x1054bc`, real ids 9031-9036,
+      and real id 9030 (TITLE) have each been traced and individually
+      ruled out as the real purple backdrop. No remaining real code
+      path this project has found points at a distinct real purple
+      asset or draw call. Rather than keep guessing blind, pivoting to
+      todo item 2 (real menu icons) instead, per this round's own
+      newly-confirmed finding above that it has a real, concrete,
+      well-scoped next step (trace the real call site(s) loading real
+      ids 9026-9028, already confirmed present as real valid ATITC
+      data) -- unlike item 1, which has run out of real leads without
+      new information (e.g. a fresh real reference capture) to chase
+      further against.
+      **Found real ids 9026-9028's own real load call sites, same
+      session.** They're loaded by the exact same real function as
+      9031-9036 (`abd.mod` 0x1160ec-0x116318, confirmed by reading
+      past where the 6-particle loader ends): three more real `bl
+      0x102b00` calls (TITLE's own real loader, not `0x10ac10`) store
+      real id 9026 (ICONS) to real self+876, real id 9028 (MOVING
+      OBJECTS) to real self+872, real id 9027 (MENU) to real self+900
+      -- also explaining the real self+900/0x384 gap this project's
+      own earlier read of the 6-particle loader flagged as
+      unexplained.
+      **The natural next step -- find where self+872/876 get *read*
+      (the real draw side) -- doesn't cleanly generalize the way it did
+      for TITLE.** A real, blunt grep for real loads of these two real
+      offsets returns 100+ real call sites spanning nearly the entire
+      real module (`abd.mod` 0x1037c0 through 0x116c60). Given this
+      title's real "self" object is one large, pervasively-shared real
+      app-state struct (the same one LOGO/LOGOSTAR/TITLE's own real
+      descriptors live on), these are very likely real, ordinary struct
+      offsets independently reused by many unrelated real fields across
+      this whole real codebase, not a real signal specific to icon
+      drawing -- grepping by raw offset alone can't tell those apart
+      here the way it could for TITLE's own uniquely-sized 916/908/912
+      offsets. Correctly isolating the real icon draw call site needs
+      filtering by real screen-state (which of this title's real
+      "current screen" values is active) at each real read site, a
+      real, substantially larger tracing task than this round's own
+      remaining scope. Stopping here rather than guessing; a concrete,
+      well-scoped starting point for a future round. No real code
+      changes this round (research-only); `git diff` unchanged from
+      before; 431/431 tests pass.
+      **Fixed the real purple backdrop -- same session, prompted by a
+      real, direct user question ("Could the purple background be
+      something traced by code instead of an image?") that this
+      project hadn't considered.** Re-read real caller `0x1054bc`'s own
+      real function (`abd.mod` 0x1053ec) more carefully and found this
+      project had conflated two separate real calls inside it: `bl
+      0x1154dc` at real `0x10548c` (passing real `r7/r8/r9/sl` --
+      `0x5500, 0x3c00, 0x8900, 0x10000` -- four values, no geometry) is
+      a *different*, earlier real call than `bl 0x115cf4` at real
+      `0x1054b8` (the one this project already tracked as real caller
+      `0x1054bc`). Traced `0x1154dc`: a real "override, else default"
+      trampoline (same shape as `0x115354`, already used for texture
+      select) that dispatches to real vtable **slot 40** -- already
+      independently confirmed in an earlier round's own temporary
+      vtable dump (TASKS.md above) as one of 17 real slots genuinely in
+      active use on this same real rendering-engine object, previously
+      left a blind stub. Live-instrumented real slot 40 directly
+      (temporary, reverted after use): fires every real tick with a
+      real, *fixed* `r1=0x5500, r2=0x3c00, r3=0x8900` (plus `0x10000`
+      on the real stack) -- no real position/rect argument at all, only
+      four real values, matching a real "set current fill color" call
+      far better than an immediate draw. Real 16.16 fixed-point decode,
+      (0x5500, 0x3c00, 0x8900, 0x10000)/65536 = (0.332, 0.234, 0.535,
+      1.0) -- as real RGBA that's a dark real purple/indigo, matching
+      the missing splash backdrop almost exactly.
+      **Implemented real slot 40 as this real "set fill color" call**
+      (`pending_fill_color`, `tools/game_probe.cpp`), and wired it into
+      real caller `0x1054bc`'s own real draw: real caller `0x1054bc`
+      only explicitly (re)selects a real texture when its own real
+      `0x1053ec`'s `r6 != 0` (already known, TASKS.md above); tracking
+      that real per-call state directly via two new real `pc`
+      watchpoints (`pc==0x1053ec` real-resets a real flag at real
+      function entry, `pc==0x105444` real-sets it, only reachable
+      inside the real `r6 != 0` branch -- same established pattern as
+      this project's own existing glyph-index watchpoint) lets the real
+      draw site tell "a real texture was explicitly chosen this real
+      call" apart from "`bound_texture` is just real, stale-nonzero
+      from TITLE's own unrelated real loader-time selection." When real
+      texture-select was *not* explicit this real call, draws a solid
+      real fill rect with slot 40's own real color instead of sampling
+      `bound_texture` -- gated strictly on real caller `0x1054bc` only
+      (LOGO/LOGOSTAR/TITLE reach real slot 107 through a completely
+      different real caller, `0x104f84`/`0x104db0`, never through real
+      `0x1053ec`, so this real per-call flag has no real meaning for
+      them and they're untouched).
+      **Confirmed live, screenshot matches the expected real look
+      exactly**: real VEGA MOBILE logo, real LOGOSTAR, and the real
+      "LOADING..." text now composite over a real solid purple
+      backdrop, not the real TITLE background art. **Confirmed no real
+      regression** on both later real screens (real TITLE's own
+      background, real language-select's own planet/nebula background)
+      -- both still render exactly as before, since real caller
+      `0x1054bc`'s later real firings stay real texture-selected
+      (`r6 != 0`) or real flags-gated out exactly as already
+      established. All real temporary slot-40 logging reverted before
+      landing the real permanent fix; 431/431 tests pass.
+      **Real, still-open, separate item, unchanged by this fix**:
+      LOGOSTAR's own real position/animation (self+0x2f0-driven growth)
+      is still not replicated -- a distinct, already-scoped real next
+      step, not touched this round.
+      **Fixed LOGOSTAR's own real position -- same session, on real
+      direct instruction ("Fix the logo position first"), after the
+      real user rejected this project's own live screenshot and
+      resent the real reference image again.** Live-traced real
+      caller `0x104f84`'s own real struct fields across several real
+      ticks (temporary, reverted after use): LOGOSTAR's own real
+      destination rect grows symmetrically from a real, fixed real
+      center point, `(321, 320)`, confirmed stable across the whole
+      real growth animation -- the real *size* animates, the real
+      *center* doesn't. Cross-checked against real LOGO's own real
+      center, `(320, 240)` (real screen center) -- both real values
+      trace back to the exact real `(r1, r2)` arguments each real
+      caller passes into real `0x104db0` (`abd.mod` 0x10dc34/0x10dc68).
+      Read real `0x104db0`'s own real anchor-mode dispatch in full
+      (`abd.mod` 0x104db8-0x104e80, not just the jump table already
+      documented): real `fp` (loaded from the real caller's own real
+      stack, distinct from real `sl`, the real jump-table index) holds
+      the real anchor mode -- **both LOGO and LOGOSTAR pass real mode
+      `18`** (confirmed identical for both), which explicitly
+      subtracts real half-width/half-height from the real passed-in
+      (x, y) to center a real sprite around it (`abd.mod` 0x104e34-
+      0x104e3c: `cmp fp, #18; subeq r5, r5, r7, asr #1; subeq r6, r6,
+      r8, asr #1`) -- confirmed via a real live trace matching exactly
+      (LOGO: 320-291/2≈175, 240-125/2≈178, matching its own already-
+      observed real `dst=(174,177)`). Real mode `9` (TITLE) explicitly
+      skips this real subtraction entirely (`abd.mod` 0x104e48-
+      0x104e4c: `cmp fp, #9; beq 0x104e80`, no real r5/r6 write) --
+      already independently confirmed correct with no flip.
+      **The actual real bug**: this project's own bridge already
+      applies a real bottom-up Y-flip for the real text and real shape
+      paths (`kHeight - raw_y.../65536`, TASKS.md above) but never for
+      real caller `0x104f84` at all -- untested against LOGO because
+      real LOGO's own real y argument (240) is self-symmetric under
+      this exact real flip (`480 - 240 == 240`), silently masking the
+      real bug for the one real object this project had actually
+      confirmed correct. Real LOGOSTAR's own real y argument (320) is
+      not self-symmetric (`480 - 320 == 160`, nowhere near 320) --
+      **this real 160 lands almost exactly on the real reference
+      image's own real star position** (near the real top of the
+      screen, overlapping real LOGO's own real text), confirming the
+      real diagnosis directly, not just by elimination.
+      **Implemented a real, mode-aware conditional flip**
+      (`AbdTextState::anchor_mode_18_this_call`, `tools/game_probe.cpp`):
+      two new real `pc` watchpoints (`pc==0x104db0` real-resets a real
+      flag at this real function's own real entry, `pc==0x104e38` real-
+      sets it -- only reachable inside the real mode-18 subtraction
+      itself, same established pattern as this project's own existing
+      glyph-index and texture-select watchpoints) let the real draw
+      site tell "this real call went through real mode 18's own real
+      centering" apart from "real mode 9, no flip." Scoped strictly to
+      real caller `0x104f84` (real caller `0x1054bc` never reaches real
+      `0x104db0`'s own real dispatch at all, so this real flag has no
+      real meaning there and is left untouched). **Confirmed live**
+      (temporary tick-paused screenshot, reverted after use): real
+      LOGOSTAR now renders directly above and overlapping real "VEGA",
+      matching the real reference image closely. **Confirmed no real
+      regression** on real TITLE (mode 9, still unflipped) and real
+      language-select -- both render exactly as before. 431/431 tests
+      pass; all real temporary instrumentation (the geometry dump, the
+      tick-15 pause) reverted before landing the real permanent fix.
+      **Traced todo item 3 (wrong font glyphs) deeply, same session, on
+      real direct instruction to tackle "the easiest remaining issue" --
+      found a real, precise anomaly, but not a fix this round.** Live-
+      traced the real ASCII->curated-glyph-index computation exhaustively
+      (temporary watchpoints on `pc==0x105d98`/`0x105d9c`, reverted after
+      use): captured the real, live "loading..." and "english" strings
+      character by character, confirming every single real computed
+      glyph index matches this project's own already-documented
+      `kAbdCharsetTable` exactly (e.g. real 'e'->5, 'i'->9, 'h'->8) --
+      the real ASCII->index mapping itself has zero real discrepancy.
+      **Dumped the real, live-decoded font atlas directly to a real PPM
+      file (temporary, reverted after use) for direct pixel inspection,
+      bypassing any live-render ambiguity.** Visually confirmed columns
+      0-8 and 10-12,14 (space, A-H, J,K,L,N) are real, clean, correctly
+      distinct glyphs in real alphabetical order. **Columns 9, 13, and
+      15 (real curated indices for I, M, and O) are not** -- column 9
+      shows a real glyph resembling "T", not a real "I"; a real pixel-
+      level diff (not just eyeballing) found column 13 (M) is 97%
+      identical to column 8 (H), and column 15 (O) is 95% identical to
+      column 14 (N) -- real, near-duplicate content, not genuine
+      distinct letterforms.
+      **Ruled out this project's own code as the real cause, as
+      thoroughly as this round could manage.** (1) Live-dumped the real
+      44-byte glyph descriptor this project doesn't currently read
+      (`abd.mod` 0x105dac's own real base pointer + index*44) for
+      indices 8/9/13/15 -- its real per-glyph position field decodes to
+      exactly `index * 2048`, which is simply this same real linear
+      `index*16px` assumption in a different real unit, not an
+      independent, authoritative override pointing somewhere else --
+      ruling out "the real game repositions these three glyphs and our
+      own naive grid math misses it." (2) Found and checked a real
+      second identically-sized (65568-byte) real archive entry (`data.
+      bar` offset 2670201) in case this project had the real wrong
+      resource -- its own real embedded header (width/height read
+      directly, not guessed: `sig=0xccc40002, width=256, height=256`)
+      confirms it's a real, differently-shaped, unrelated real texture,
+      not an alternate font atlas candidate.
+      **Honest, unresolved status**: the real ATITC decode itself
+      (`core/loader/atitc.cpp`) is a real, simple, standard block
+      iterator with no per-cell special-casing -- a decode bug isolated
+      to exactly three non-adjacent cells while ~29 others decode
+      perfectly seems structurally unlikely, but hasn't been positively
+      ruled out either. Real near-duplicate (not byte-identical) content
+      is also consistent with a genuine real shipped-asset defect in
+      this exact `data.bar` dump, though that feels hard to square with
+      a commercially released, presumably-QA'd title. Real, concrete
+      next step, not yet tried: compare this exact data.bar (byte-for-
+      byte, e.g. checksum) against an independent copy from a different
+      real source/dump, which would cleanly separate "real corrupt
+      local file" from "real, correct, but genuinely defective source
+      asset" -- this project's own standing convention (confirm before
+      sourcing real game assets) means that comparison needs the user,
+      not something to fetch unilaterally. All real temporary
+      instrumentation (the char-index watchpoints, the descriptor dump,
+      the atlas-to-PPM dump) reverted; `git diff` on `tools/game_probe.
+      cpp` back to the exact same real, permanent diff as before this
+      investigation; 431/431 tests pass.
+      **Found and fixed the real root cause, same session, prompted by
+      a real, direct user question about the dumped PPM ("we are
+      cutting the bottom half... closer to 1/3").** That question named
+      exactly the right thing to check. Raw-pixel-dumped (not just
+      eyeballed) real row-0 glyph content bounds for four different real
+      letters (A, H, and the I/M/O slots already flagged as wrong): all
+      four landed on the exact same real `y=6` to `y=19` (14px), not
+      `y=0` to `y=15` as this project's own `atlas_row * kAbdFontCellPx`
+      formula assumed. Real 'I' specifically has a real bottom serif at
+      `y=16-19` that a crop stopping at `y=15` cuts off completely --
+      exactly reproducing the real "T"-looking shape this round's own
+      earlier investigation found and couldn't explain. Measured real
+      row-to-row spacing the same way (successive rows' own real
+      content-start `y`, across multiple real columns since individual
+      real glyphs' own ascenders/accents shift their own bounding box
+      a little): landed on a real, consistent 25px average -- cross-
+      checked exactly against the real 44-byte glyph descriptor's own
+      real word7 field (`abd.mod` 0x105dac), independently found last
+      round, decoding to a real 16.16 fixed-point `25.0`.
+      **This means M and O were never actually duplicated or broken
+      glyphs at all** -- the earlier "97%/95% identical to an adjacent
+      letter" measurement was real, but it was comparing two real,
+      correctly-drawn letters' own real *clipped tops* (which, cropped
+      to just `y=0-15`, understandably look similar for blocky capital
+      letters sharing two vertical strokes) rather than their real full
+      forms. The real 16px column *width* was never wrong; only the
+      real row *pitch* was, and this project's own single
+      `kAbdFontCellPx` constant was doing double duty for both.
+      **Fixed real `tools/game_probe.cpp`**: added `kAbdFontRowPitch`
+      (25) and `kAbdFontGlyphYOffset` (6), and changed the real glyph
+      crop's own `src_y` from `atlas_row * kAbdFontCellPx` to
+      `atlas_row * kAbdFontRowPitch + kAbdFontGlyphYOffset`. Left the
+      real crop *height* at the existing `kAbdFontCellPx` (16) rather
+      than tightening it to the real measured 14px -- 16px starting at
+      the real content offset safely covers `y=6..21`, comfortably
+      inside the real 25px-pitch row before the next row's own real
+      content begins, with zero real changes needed to `dst_y`'s own
+      already-correct flip math. **Confirmed live**: real "ENGLISH",
+      "ESPAÑOL", and "PORTUGUÊS" all render correctly at real language-
+      select now (previously "ENGLTSH"/garbled), the real TITLE
+      screen's own version string now reads "V1.1.78" cleanly (was
+      garbled), and the real splash's own "LOADING..." text is
+      unaffected (already legible before, still is). All real temporary
+      instrumentation reverted; 431/431 tests pass. **Todo item 3 (wrong
+      font glyphs) is resolved.**
+      **Fixed a real, separate text-position bug, same session, on a
+      real direct user report against a real reference screenshot**
+      ("the LOADING message seems to be located higher in our version
+      than the original... much closer to the border on the bottom").
+      Live-dumped the real `raw_y0` value driving real caller
+      `0x105744`'s own real destination-Y flip: exactly `25.0` (16.16
+      fixed point) for the real "LOADING..." draw. The real existing
+      formula, `kHeight - raw_y0/65536 - kAbdFontCellPx`, subtracted an
+      extra real 16px on top of the real flip -- a real leftover from
+      before this project understood the real per-glyph content offset
+      (this same round's own earlier fix, above). Real pixel-measured
+      before/after: real content moved from `y=441-454` (26px shy of
+      the real 480px bottom edge) to `y=457-470` (10px shy) -- matching
+      a real human's own reference proportions far more closely.
+      **Matches this project's own already-established real shape-path
+      convention** (`kHeight - raw_y1/65536`, no further real
+      subtraction, TASKS.md above) -- the real text path's own extra
+      subtraction was the one real outlier, not the shape path.
+      Dropped it: `dst_y = kHeight - (raw_y0 / 65536)`. **Confirmed
+      live**: real "LOADING..." and real TITLE's own "V1.1.78" version
+      string both now sit close to the real bottom edge, matching the
+      real user-supplied reference; real language-select text shifted
+      down slightly too (same real shared formula) with no real
+      observed overlap or clipping. All real temporary instrumentation
+      (the raw_y0 dump) reverted; 431/431 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
