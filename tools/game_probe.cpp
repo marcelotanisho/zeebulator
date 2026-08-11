@@ -320,6 +320,13 @@ struct AbdTextState {
   // true only if `pc==0x104e38` (the real mode-18 subtraction itself)
   // executes before the real draw site reads it.
   bool anchor_mode_18_this_call = false;
+  // The real 44-byte icon descriptor pointer most recently seen
+  // entering `abd.mod` 0x106508, so the real slot 107 draw it leads to
+  // can read that real descriptor's own real source-crop-rect fields
+  // directly -- the real repacked stack struct slot 107 itself
+  // receives only carries real destination-rect fields, not the real
+  // source sub-rect within the shared real icon spritesheet.
+  uint32_t last_icon_descriptor_addr = 0;
 };
 
 CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap_base,
@@ -397,6 +404,9 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
     }
     if (abd_text_state != nullptr && pc == 0x00104e38) {
       abd_text_state->anchor_mode_18_this_call = true;
+    }
+    if (abd_text_state != nullptr && pc == 0x00106508) {
+      abd_text_state->last_icon_descriptor_addr = cpu.GetRegister(zeebulator::kR0);
     }
     bool in_module = pc >= mod_base && pc < mod_base + mod_size;
     bool in_trap_range = pc >= trap_base;
@@ -1537,41 +1547,78 @@ int main(int argc, char** argv) {
         // real 512x512 native texture against a real 640x480 real
         // destination) -- nearest-neighbor real upscale/downscale to
         // fit, since `BlitRgba` itself has no real scaling support.
+        // Real icon draws sample one real sub-rect out of a real,
+        // shared multi-icon spritesheet, not the real whole texture --
+        // live-dumped this round: the real 44-byte icon descriptor
+        // (tracked separately from the real repacked struct slot 107
+        // itself sees, `AbdTextState::last_icon_descriptor_addr`) has
+        // real pixel-space crop fields at offset+16/+20 (source x0,y0)
+        // and offset+24/+28 (source width,height), cross-validated
+        // against its own real normalized 0-1 UV fields at offset+0/
+        // +4/+8/+12 assuming a real 512x512 texture (both real fields
+        // agree exactly). Without this, `scale_and_blit` stretched the
+        // real *entire* spritesheet (every icon at once) into one real
+        // icon-sized destination, rendering a real, unrecognizable
+        // grid of squished icons instead of the one real intended
+        // icon.
+        int crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
+        if (is_icon_draw) {
+          uint32_t desc = abd_text_state.last_icon_descriptor_addr;
+          crop_x = static_cast<int32_t>(mem.Read32(desc + 16)) / 65536;
+          crop_y = static_cast<int32_t>(mem.Read32(desc + 20)) / 65536;
+          crop_w = static_cast<int32_t>(mem.Read32(desc + 24)) / 65536;
+          crop_h = static_cast<int32_t>(mem.Read32(desc + 28)) / 65536;
+        }
         auto scale_and_blit = [&](const std::vector<uint8_t>& decoded, int width, int height) {
+          int cx = is_icon_draw ? crop_x : 0;
+          int cy = is_icon_draw ? crop_y : 0;
+          int cw = is_icon_draw && crop_w > 0 ? crop_w : width;
+          int ch = is_icon_draw && crop_h > 0 ? crop_h : height;
           int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
-          // Real icon draws use the real shape struct's own real y1
-          // field (offset+12), not the real background struct's own
-          // y-far field (offset+20) -- confirmed live this round: this
-          // real caller's own real struct is what the real shape path
-          // below already reads when it (wrongly) handled these same
-          // real calls, and using offset+20 here instead read garbage.
-          int32_t raw_y_far = static_cast<int32_t>(
-              core.GetMemory().Read32(struct_addr + (is_icon_draw ? 12 : 20)));
+          int32_t raw_y_far = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 20));
           int dest_w = std::max(1, (raw_x1 - raw_x0) / 65536);
-          int dest_h = std::max(1, (raw_y_far - raw_y0) / 65536);
+          // Real icon draws (`0x105744`, no pending char index) use a
+          // real, different struct shape from backgrounds -- live-
+          // dumped this round (an earlier guess, offset+12, turned out
+          // to just duplicate offset+4/`raw_y0` byte for byte, which is
+          // why icons rendered as a real 1px-tall sliver): this real
+          // struct's own real offset+20 field is smaller than real
+          // `raw_y0`, not larger (e.g. real y0=332, real far=268,
+          // confirmed live against a real 64x64-looking real icon) --
+          // the real opposite ordering from real mode-18 sprites, whose
+          // own real offset+20 is the larger value. Subtracting the
+          // other way round for icons only.
+          int dest_h = is_icon_draw ? std::max(1, (raw_y0 - raw_y_far) / 65536)
+                                     : std::max(1, (raw_y_far - raw_y0) / 65536);
           // Real caller `0x104f84` covers both real mode 9 (TITLE --
           // already confirmed correct with no flip, see this branch's
           // own doc comment above) and real mode 18 (LOGO/LOGOSTAR),
           // which needs the same real bottom-up Y-flip the text/shape
           // paths already use (`AbdTextState::anchor_mode_18_this_call`
           // doc comment has the full real derivation). Real icon draws
-          // need the same real flip too, matching the real shape path's
-          // own already-working convention for this real struct shape.
-          // Real caller `0x1054bc` never reaches real `0x104db0`'s own
-          // mode dispatch at all (it draws through a completely
-          // different real call chain), so this real per-call flag has
-          // no real meaning there, and it stays unflipped.
-          int dst_y = (real_caller == 0x104f84 && abd_text_state.anchor_mode_18_this_call) || is_icon_draw
-                          ? kHeight - (raw_y_far / 65536)
-                          : raw_y0 / 65536;
-          if (dest_w == width && dest_h == height) {
+          // need a real flip too, but real-anchored on `raw_y0` (the
+          // real *larger* value in this real struct's own real
+          // convention, confirmed live above), not `raw_y_far`. Real
+          // caller `0x1054bc` never reaches real `0x104db0`'s own mode
+          // dispatch at all (it draws through a completely different
+          // real call chain), so this real per-call flag has no real
+          // meaning there, and it stays unflipped.
+          int dst_y;
+          if (is_icon_draw) {
+            dst_y = kHeight - (raw_y0 / 65536);
+          } else if (real_caller == 0x104f84 && abd_text_state.anchor_mode_18_this_call) {
+            dst_y = kHeight - (raw_y_far / 65536);
+          } else {
+            dst_y = raw_y0 / 65536;
+          }
+          if (dest_w == cw && dest_h == ch && cx == 0 && cy == 0 && cw == width && ch == height) {
             display.BlitRgba(dst_x, dst_y, width, height, decoded.data());
           } else {
             std::vector<uint8_t> scaled(static_cast<size_t>(dest_w) * dest_h * 4);
             for (int y = 0; y < dest_h; ++y) {
-              int src_y = static_cast<int>(static_cast<int64_t>(y) * height / dest_h);
+              int src_y = cy + static_cast<int>(static_cast<int64_t>(y) * ch / dest_h);
               for (int x = 0; x < dest_w; ++x) {
-                int src_x = static_cast<int>(static_cast<int64_t>(x) * width / dest_w);
+                int src_x = cx + static_cast<int>(static_cast<int64_t>(x) * cw / dest_w);
                 const uint8_t* src = decoded.data() + (static_cast<size_t>(src_y) * width + src_x) * 4;
                 uint8_t* dst = scaled.data() + (static_cast<size_t>(y) * dest_w + x) * 4;
                 std::memcpy(dst, src, 4);

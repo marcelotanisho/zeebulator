@@ -8197,6 +8197,64 @@ playable start-to-finish at full speed, standalone build.
       watchpoint, the real_caller enumeration, the icon-draw
       correlation flag, the autopress tick/press logging) reverted;
       431/431 tests pass.
+      **The "fixed" icons above were actually a real, wrong-looking
+      1px sliver -- a real human live-watching the real running window
+      caught it ("None of the icons were showing up"), and separately
+      supplied real reference footage of this exact real title
+      (Portuguese release) confirming the real expected look: a real
+      circular badge with a real distinct real symbol inside (a real
+      joystick for ARCADE, a real cube for DESAFIO/Challenge, a real
+      "VS" for CONTRA/Versus, a real gamepad for FRONTON), plus a
+      *separate*, real top-level real menu (JOGAR/OPÇÕES/AJUDA/SAIR --
+      Play/Options/Help/Exit) with its own real gamepad/wrench/help/
+      exit icon set, one level up from the real screen this project's
+      own real navigation had been testing on.**
+      **Found the real destination-rect bug first**: this round's own
+      earlier offset+12 guess for the real icon struct's own "far Y"
+      field was wrong -- live re-dumped all real struct fields and
+      found offset+12 byte-for-byte duplicates offset+4 (`raw_y0`), not
+      a real independent value, so `dest_h` always computed to real
+      zero (clamped to 1px). The real independent far-Y field is at
+      offset+20, but with the real *opposite* subtraction order from
+      real mode-18 sprites (`raw_y0 - raw_y_far`, not `raw_y_far -
+      raw_y0`) and the real flip anchored on `raw_y0` (the real larger
+      value here), not `raw_y_far`. Fixed; confirmed live the real
+      destination rect is now correctly real ~64x64-sized and real
+      correctly positioned (even the real dashed "currently selected"
+      ring around ARCADE's own real icon lines up).
+      **Found a second, real, separate bug once the real rect was
+      right**: the real icon still rendered as a real flat, solid
+      color circle, no real symbol detail at all. Root cause: real
+      icons share one real multi-icon spritesheet texture, and
+      `scale_and_blit` was decoding and stretching the real *entire*
+      real texture into each real icon's own small real destination --
+      every real icon at once, squished together, reads as a real flat
+      average color at this real scale. **Found the real per-icon
+      source crop rect live**: added a real, separate live watchpoint
+      tracking the real 44-byte icon descriptor's own real pointer
+      (captured at `abd.mod` 0x106508's own real entry, since the real
+      repacked stack struct real slot 107 itself receives only ever
+      carried real destination-rect fields, confirmed by dumping it in
+      full) -- that real original descriptor has real pixel-space crop
+      fields at offset+16/+20 (source x0,y0) and offset+24/+28 (source
+      width,height), independently cross-validated against its own
+      real normalized 0-1 UV fields at offset+0/+4/+8/+12 assuming a
+      real 512x512 source texture (both real fields agree exactly
+      across multiple real samples).
+      **Fixed real `tools/game_probe.cpp`**: `scale_and_blit` now
+      crops the real decoded texture to this real per-icon source rect
+      before real nearest-neighbor scaling into the real destination,
+      for real icon draws only. **Confirmed live**: real icon badges
+      now render at the real correct size/position with the real
+      correct dashed-selection-ring behavior, a real, dramatic
+      improvement from the real 1px sliver -- but the real interior is
+      still a real flat solid fill, no real visible symbol (joystick/
+      cube/VS/gamepad) yet. **Honest, still-open status**: the real
+      missing symbol detail and the real separate top-level JOGAR/
+      OPÇÕES/AJUDA/SAIR menu (not yet reached by this project's own
+      real navigation) are both real, concrete, well-scoped next steps
+      for a future round, not yet solved. 431/431 tests pass; the real
+      geometry/crop fix itself is real, verified, and kept.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
