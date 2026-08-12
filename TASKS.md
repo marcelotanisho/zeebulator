@@ -8312,15 +8312,49 @@ playable start-to-finish at full speed, standalone build.
       inside the already-known real init function, `abd.mod`
       0x1160ec-0x116318) genuinely does not execute, unlike its two
       sibling calls (9026, 9028), which both fire and register
-      successfully. **Concrete, well-scoped next step for a future
-      round**: find out *why* that third call doesn't fire -- real
-      disassembly of the real init function around where the third
-      `bl 0x102b00` should sit, checking for a real conditional guard
-      this project's own emulation isn't satisfying (a language check, a
-      device-capability check, or similar), rather than assuming id 9027
-      is simply unused. All temporary instrumentation reverted after
-      use; `git diff --stat` clean; 431/431 tests pass throughout
-      (research-only round, no real code changes landed).
+      successfully. **Same round, resolved -- real id 9027's own loader
+      call does fire, and this project's earlier "never registered"
+      read was wrong.** Real disassembly of the real init function
+      (`abd.mod` 0x1160ec-0x116318) shows it's entirely real straight-
+      line code -- no conditional branch anywhere, all three real `bl
+      0x102b00` calls (ICONS, MOVING OBJECTS, MENU, in that real order)
+      unconditionally execute every time this real function runs at
+      all. Live-watched all three real call sites directly (temporary,
+      reverted after use): **real id 9027's own call returns a real,
+      valid, non-null descriptor** (`0x804764c8`) -- it just happens to
+      resolve to the exact same real texture (`0x804764f8`) this
+      project had already dumped and independently identified as
+      "TITLE/menu background art" (the planet/nebula/teal-frame image
+      behind every real menu screen). **Real id 9027 ("MENU") is the
+      real menu background scene, not icon symbols** -- this project's
+      own earlier label was inferred from a real debug string
+      ("LOADING MENU...") and never actually verified against what the
+      texture contains until now. All six real descriptors this whole
+      real run ever registers are now fully, individually, visually
+      confirmed; none of them contain the real joystick/dice/VS/gamepad
+      symbols. Also gave the real 512x1024 MOVING OBJECTS sheet a full,
+      careful section-by-section pass (not just the earlier top-corner
+      glance) -- confirmed real gameplay bubble/alien/turret assets
+      throughout, no real menu icon symbols hiding in an unexamined
+      region either.
+      **Honest, real conclusion after exhausting every texture-based
+      lead**: the real joystick/dice/VS/gamepad menu icons are not
+      present in any real texture this project's own emulation ever
+      loads during a full real boot-through-ARCADE-menu run, and every
+      real draw call reaching them already goes through this project's
+      own confirmed-working, unified real draw path (no missing caller,
+      no missing texture load). The real remaining possibility this
+      project hasn't investigated: these specific real icons may be
+      drawn as real **vector/procedural shapes** (several real simple
+      fill/line draws composited per icon) rather than sampled from any
+      real texture asset at all -- a genuinely different, larger real
+      undertaking (tracing multiple real shape-draw calls per icon,
+      not one real texture crop) than everything chased so far. Not
+      attempted this round -- a real, concrete decision point for
+      whoever picks this up next, not a dead end disguised as one. All
+      temporary instrumentation reverted after use; `git diff --stat`
+      clean; 431/431 tests pass throughout (research-only round, no
+      real code changes landed).
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
