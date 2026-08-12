@@ -8278,6 +8278,49 @@ playable start-to-finish at full speed, standalone build.
       -169/+97 lines, a real simplification, not just a refactor. **The
       real joystick/dice/VS/gamepad menu-icon symbols themselves are
       still not found** -- unrelated to this round's fix, still open.
+      **Follow-up round, same session, on real direct user instruction to
+      pause the generic-engine effort and focus on making Alien Breaker
+      Deluxe itself fully work first.** Two real, concrete negative
+      results, both narrowing the search:
+      **(1) No hidden fifth real caller.** Live-logged every distinct
+      real caller reaching real slot 107 during a full boot+ARCADE-menu
+      run (temporary, reverted after use) -- only the three already-
+      handled values ever appear (`0x104f84`, `0x1054bc`, `0x105744`).
+      The real menu icon draws are *not* silently falling through to the
+      real shape-fill fallback under an unrecognized caller; they already
+      go through this project's own real, unified `0x105744` path
+      confirmed working above. The remaining gap is purely which real
+      texture/descriptor is being sampled, not a missing code path.
+      **(2) Every real texture Alien Breaker Deluxe actually loads
+      during this run has been dumped and visually inspected -- none of
+      them are the menu icons.** Six distinct real ATITC textures (plus
+      the two already-known real PNG logos) get real-selected across a
+      full boot+ARCADE-menu run: the two real font atlases, the real
+      "ALIEN BREAKER" splash art, real id 9026 (ICONS -- the real
+      zone-marker dot sheet, already ruled out), a real 512x1024 sheet
+      (id 9028, MOVING OBJECTS -- confirmed live to be real gameplay
+      assets: colored bubble/alien sprites with face icons, turret
+      enemies, explosion/spark effects, a swirling vortex/wormhole
+      effect, small colored power-up markers -- not menu UI), and the
+      real TITLE/menu background art (planet/nebula/frame). **Went
+      further: logged every real descriptor real slot 64 ever registers
+      (not just ones real slot 33 later selects) -- still only these
+      same 8 real objects, zero exceptions.** Real id 9027 ("MENU",
+      documented earlier as loading into real `self+900`) is not just
+      unselected, it's **never registered at all** during this whole
+      real run -- its own real loader call (the third `bl 0x102b00`
+      inside the already-known real init function, `abd.mod`
+      0x1160ec-0x116318) genuinely does not execute, unlike its two
+      sibling calls (9026, 9028), which both fire and register
+      successfully. **Concrete, well-scoped next step for a future
+      round**: find out *why* that third call doesn't fire -- real
+      disassembly of the real init function around where the third
+      `bl 0x102b00` should sit, checking for a real conditional guard
+      this project's own emulation isn't satisfying (a language check, a
+      device-capability check, or similar), rather than assuming id 9027
+      is simply unused. All temporary instrumentation reverted after
+      use; `git diff --stat` clean; 431/431 tests pass throughout
+      (research-only round, no real code changes landed).
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
