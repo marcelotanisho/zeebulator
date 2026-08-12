@@ -217,6 +217,56 @@ on-screen content through this same generic Phase B implementation, with
       interface hiding behind the same ClsId) rather than silently adding
       Peggle-specific matching — that would defeat the point of this file
 
+**Attempted, same round. Blocked before reaching this engine's own draw
+calls at all — a real, pre-existing, already-documented Peggle issue,
+not something today's ABD refactor touched.** Ran `peggle.mod` (real
+ClsId `17407190`/`0x01099cd6`, the folder number `278962` does *not*
+work — see `tools/game_probe.cpp`'s own usage text) the same way as
+ABD. Real boot proceeds normally (13,861 real HLE calls logged, no
+errors) and then hits one real call that runs 5,000,000 real interpreter
+steps without returning, tripping this project's own step-budget
+safety abort (`CallArmFunctionChecked`'s own guard) and stopping the
+whole run before a screenshot could be taken — no window was even left
+open to check. This matches a real, already-documented, separate Peggle
+blocker from earlier in this project's history (`TASKS.md`, the
+"romset loading remains the next real undertaking" entry): a real
+second wait loop that genuinely needs ROM-data readiness, not just
+elapsed time, to resolve — this project's existing clock-advance fix
+only resolves the *first* such loop. **Not a regression from today's
+work, and not evidence against the shared-engine hypothesis either —
+Peggle simply doesn't run long enough yet, on its own, independent of
+this file's own scope, to reach the tick range where its own menu/UI
+drawing would fire.**
+
+Also worth correcting this section's own original exit criterion
+while it's fresh: even once Peggle *does* run far enough, "zero new
+Peggle-specific code" was optimistic as originally scoped. Phase B's
+own implementation still classifies which draws are textured
+(`real_caller == 0x104f84 || 0x1054bc || 0x105744`) by Alien Breaker
+Deluxe's own literal compiled ARM addresses -- meaningless in
+`peggle.mod`'s own, separately-compiled binary. Real Phase C, once
+Peggle runs far enough, will still need Peggle's own equivalent
+addresses traced (the same category of work already done for ABD, not
+avoidable yet) *unless* a follow-on phase finds a way to classify
+"is this a textured/glyph draw" from real, address-independent state
+alone (e.g. `bound_texture != 0`, already tracked) instead of by
+caller identity -- a real, concrete, not-yet-attempted next step, not
+this round's own scope.
+
+- [ ] Real, concrete blocker to clear first, not this file's own scope:
+      resolve Peggle's own separate romset/ROM-data-readiness wait loop
+      (`TASKS.md`) so it reaches real gameplay/menu ticks at all
+- [ ] Once unblocked, trace Peggle's own real equivalent addresses for
+      select-texture/draw call sites (same category of work as ABD's,
+      unavoidable under the current caller-identity classification)
+- [ ] Longer-term, real alternative worth investigating instead of
+      repeating per-title address tracing forever: classify "textured
+      draw" purely from address-independent real state (`bound_texture
+      != 0`, a real descriptor having just been consumed) rather than
+      caller identity -- would need care not to reintroduce the real
+      "stale nonzero `bound_texture`" bug this project already found and
+      fixed once for real caller `0x1054bc` specifically
+
 ## Regression guard
 
 - [ ] Double Dragon (separate real GL/EGL pipeline) smoke-tested after
