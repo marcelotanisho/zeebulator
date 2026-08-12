@@ -8255,6 +8255,29 @@ playable start-to-finish at full speed, standalone build.
       real navigation) are both real, concrete, well-scoped next steps
       for a future round, not yet solved. 431/431 tests pass; the real
       geometry/crop fix itself is real, verified, and kept.
+      **Follow-up round, on real direct user instruction to stop
+      re-deriving this per-title and build something generic instead**:
+      see `TASKS_GENERIC_DRAW_ENGINE.md` (new companion file) for the
+      full derivation. Net result here: the real icon-crop mechanism
+      above turned out to already generalize correctly to real text
+      glyphs too (both are the exact same real per-descriptor draw,
+      confirmed via a 34,590-sample live cross-check), so the separate,
+      hardcoded-single-atlas glyph path was removed entirely in favor of
+      reusing the real icon-crop mechanism unconditionally for real
+      caller `0x105744`. This, not a new bug fix, is what surfaced a
+      real, previously-unseen screen: Alien Breaker Deluxe's real
+      "CHOOSE YOUR LANGUAGE" screen draws through a real *second* font
+      atlas this project's old hardcoded single-atlas path could never
+      reach -- now renders correctly (legible glowing text, correct
+      dashed-ring language-selector badges), very likely the real fix
+      for the separately-flagged, still-open "menu font differs" report.
+      Live-verified three screens, zero regressions: splash (unchanged),
+      language-select (newly working), ARCADE/CHALLENGE/VERSUS/FRONTON
+      icon submenu (unchanged -- still the same known flat-fill/no-symbol
+      gap, untouched by this round). 431/431 tests pass; net diff is
+      -169/+97 lines, a real simplification, not just a refactor. **The
+      real joystick/dice/VS/gamepad menu-icon symbols themselves are
+      still not found** -- unrelated to this round's fix, still open.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

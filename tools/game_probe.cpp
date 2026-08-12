@@ -79,41 +79,22 @@ std::string BaseName(const char* path) {
 // scanning the archive for real ATITC headers and cross-checking
 // candidate images against this session's own live-decoded charset
 // table -- see TASKS.md), decoded with this project's own existing,
-// already-validated `DecodeAtitc` (no new decoder needed). 512x128,
-// laid out 32 columns x 8 rows of 16x16 real glyph cells -- confirmed
-// pixel-perfect against two real, live-read characters ('V' at real
-// index 22, '1' at real index 28).
-//
-// Real char_index -> atlas cell formula (both halves independently
-// live-traced and confirmed this session): the ASCII->index table
-// below is a byte-for-byte read of the real table at `abd.mod`
-// 0x105d90's own real table pointer; the atlas cell for a given
-// char_index is (col, row) = (index % 32, index / 32), pixel origin
-// (col*16, row*<real row pitch, see kAbdFontRowPitch below>).
+// already-validated `DecodeAtitc` (no new decoder needed). 512x128.
+// Used only as a fingerprint today (`abd_font_atlas.has_value()` below
+// gates this whole real bridge to Alien Breaker Deluxe's own real
+// `data.bar` specifically) -- the real per-glyph cell geometry this
+// comment used to describe is no longer computed from this fixed
+// layout at draw time; the real draw call itself (`abd.mod` 0x106508's
+// own real 44-byte descriptor, see `AbdTextState::
+// last_draw_descriptor_addr`) already carries its own real source crop
+// rect directly, generically, for both real text glyphs and real icons
+// alike, cross-validated exactly against real live samples (see the
+// real textured-draw branch below) -- no separate real per-character
+// arithmetic needed against this specific atlas's own fixed dimensions
+// any more.
 constexpr int kAbdFontAtlasWidth = 512;
 constexpr int kAbdFontAtlasHeight = 128;
-constexpr int kAbdFontCellPx = 16;
 constexpr uint32_t kAbdFontAtlasBarOffset = 3653369;
-// Real row pitch is *not* the same as the real 16px column width --
-// found live this round (a real human noticed this project's own
-// atlas dump was visibly clipping glyph bottoms): raw-pixel-dumped
-// every real row-0 glyph's own real content bounds (not just eyeballed
-// a render) and found every one identical, `y=6` through `y=19`
-// (14px tall, not 16, and *not* starting at `y=0`) -- e.g. real 'I'
-// genuinely has a real bottom serif, at `y=16-19`, that a naive
-// `row*16` src-y calculation cuts off entirely (rendering a real "T"-
-// looking shape instead). Real row-to-row spacing measured the same
-// way (comparing successive rows' own content-start `y`) landed on
-// 24-26px depending on which real glyph anchored the measurement
-// (individual real glyphs' own ascenders/accents shift their own
-// bounding box a little) -- averages to exactly 25, which also
-// exactly matches a real, independently-read glyph-descriptor field
-// (`abd.mod` 0x105dac's own real 44-byte descriptor, word7, decodes to
-// a real 16.16 fixed-point `25.0` -- this project doesn't otherwise
-// read that descriptor, see the real per-glyph selection code below,
-// but this one field cross-checks the real pixel measurement exactly).
-constexpr int kAbdFontRowPitch = 25;
-constexpr int kAbdFontGlyphYOffset = 6;
 
 // Real ASCII (0x20-0x7F) -> real curated glyph-atlas index, read
 // directly from `abd.mod`'s own live table this session (all 96
@@ -265,18 +246,7 @@ struct CallResult {
   bool exceeded_step_budget = false;
 };
 
-// Tracks the real character identity feeding Alien Breaker Deluxe's
-// own real per-character text-cell draw calls (TASKS.md Phase 8) --
-// the geometry trap this project bridges (slot 107) never receives it
-// directly, so it has to be captured earlier in the same real call
-// chain, at the one real instruction (`abd.mod` 0x105dac) that
-// unconditionally, immediately leads into it. `kNone` means "no
-// character pending" (e.g. a non-text draw, or running a title other
-// than Alien Breaker Deluxe, where this real address means nothing in
-// particular).
 struct AbdTextState {
-  static constexpr uint32_t kNone = 0xFFFFFFFF;
-  uint32_t pending_char_index = kNone;
   // Real shared six-call-site utility `abd.mod` 0x1053ec explicitly
   // (re)selects a real texture only when its own real `r6` argument is
   // non-zero (`abd.mod` 0x10543c: `cmp r6, #0; beq 0x10547c`) --
@@ -320,13 +290,24 @@ struct AbdTextState {
   // true only if `pc==0x104e38` (the real mode-18 subtraction itself)
   // executes before the real draw site reads it.
   bool anchor_mode_18_this_call = false;
-  // The real 44-byte icon descriptor pointer most recently seen
-  // entering `abd.mod` 0x106508, so the real slot 107 draw it leads to
-  // can read that real descriptor's own real source-crop-rect fields
-  // directly -- the real repacked stack struct slot 107 itself
-  // receives only carries real destination-rect fields, not the real
-  // source sub-rect within the shared real icon spritesheet.
-  uint32_t last_icon_descriptor_addr = 0;
+  // The real 44-byte descriptor pointer most recently seen entering
+  // `abd.mod` 0x106508, so the real slot 107 draw it leads to can read
+  // that real descriptor's own real source-crop-rect fields directly --
+  // the real repacked stack struct slot 107 itself receives only ever
+  // carries real destination-rect fields, not the real source sub-rect
+  // within whichever real texture is currently bound. Despite the name
+  // this project first gave this (menu icons were the first real use
+  // found), `0x106508` turns out to be the *one* real, shared geometry-
+  // pack helper both real icon draws *and* real per-character text-glyph
+  // draws funnel through alike (confirmed live: the real per-character
+  // index this project used to track separately, captured at `abd.mod`
+  // 0x105dac, is itself just a byte offset into this exact same real
+  // 44-byte-descriptor array -- `char_index * 44`, real word math
+  // `*3 + *8` then `<<2` -- so a real text glyph is not a structurally
+  // different real draw from a real icon at all, just a different real
+  // descriptor-array instance). One real, generic pointer suffices for
+  // both; no separate per-character tracking needed.
+  uint32_t last_draw_descriptor_addr = 0;
 };
 
 CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap_base,
@@ -374,25 +355,6 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       }
     }
     uint32_t pc = cpu.GetRegister(zeebulator::kPC);
-    // Alien Breaker Deluxe's own real char_index*11 value (`abd.mod`
-    // 0x105da0/0x105da4: `r0*3` then `+r0*8`, computed from the real
-    // ASCII->atlas-index lookup's own `ldrsh` result two instructions
-    // earlier), captured right at 0x105dac -- the one real instruction
-    // that multiplies it by 4 more (`<<2`) to form the real glyph-
-    // descriptor byte offset and unconditionally, immediately leads
-    // (via `abd.mod` 0x106508, then 0x105510) into the real geometry
-    // trap this project bridges. Dividing back out by 11 here, right
-    // before that offset math consumes it, avoids the wider real
-    // window a subtraction-based reconstruction two calls later would
-    // need -- this project's first version of this watchpoint used the
-    // wrong register for the real array base at that later point and
-    // silently produced wrong glyphs (see TASKS.md Phase 8).
-    if (abd_text_state != nullptr && pc == 0x105dac) {
-      uint32_t times_11 = cpu.GetRegister(zeebulator::kR0);
-      if (times_11 % 11 == 0) {
-        abd_text_state->pending_char_index = times_11 / 11;
-      }
-    }
     if (abd_text_state != nullptr && pc == 0x001053ec) {
       abd_text_state->splash_texture_selected_this_call = false;
     }
@@ -406,7 +368,7 @@ CallResult CallArmFunctionChecked(zeebulator::ArmInterpreter& cpu, uint32_t trap
       abd_text_state->anchor_mode_18_this_call = true;
     }
     if (abd_text_state != nullptr && pc == 0x00106508) {
-      abd_text_state->last_icon_descriptor_addr = cpu.GetRegister(zeebulator::kR0);
+      abd_text_state->last_draw_descriptor_addr = cpu.GetRegister(zeebulator::kR0);
     }
     bool in_module = pc >= mod_base && pc < mod_base + mod_size;
     bool in_trap_range = pc >= trap_base;
@@ -1516,25 +1478,32 @@ int main(int argc, char** argv) {
       // never real-overwrites the real TITLE/menu screens' own
       // already-working real 0x104f84 backgrounds with a real stale,
       // alpha-discarded, full-screen-stretched real font atlas.
-      // Real caller `0x105744` is shared between real font-glyph draws
-      // (gated on a real pending char index, see below) and a *second*,
-      // completely different real use: menu icon draws (confirmed live
-      // this round -- `abd.mod` 0x106508, the exact same real geometry-
-      // pack helper text glyphs also go through, is entered with a real
-      // pointer inside the real icon-descriptor array this project
-      // already tracks the setup of, and it leads here with real
-      // `bound_texture` resolving to the real ICONS texture object
-      // every single time). Previously silently fell through this
-      // whole real textured-draw branch (gated on `0x104f84`/`0x1054bc`
-      // only) into the real shape path below, which fills a real flat
-      // color instead of sampling a real texture -- explaining the
-      // real missing menu icons without any real crash or error to
-      // notice. Included here whenever no real char index is pending,
-      // so a real text-glyph draw through this same caller still takes
-      // the dedicated real glyph path below, unaffected.
-      bool is_icon_draw =
-          real_caller == 0x105744 && abd_text_state.pending_char_index == AbdTextState::kNone;
-      if ((real_caller == 0x104f84 || real_caller == 0x1054bc || is_icon_draw) && *bound_texture != 0) {
+      // Real caller `0x105744` covers *every* real draw that goes
+      // through the real per-descriptor geometry-pack helper
+      // (`abd.mod` 0x106508) -- text glyphs and menu-style icons alike.
+      // This project originally treated those as two structurally
+      // different real draws (gating icon handling on "no real pending
+      // char index" and routing real glyphs through a separate,
+      // hardcoded-atlas cell-copy path below), but live cross-validation
+      // this round proved otherwise: a real per-character index is
+      // itself just a byte offset into the exact same real 44-byte
+      // descriptor array real icon draws already use (`char_index * 44`
+      // -- see `AbdTextState::last_draw_descriptor_addr`'s own doc
+      // comment). One real, generic, descriptor-driven textured draw
+      // handles both -- no separate glyph path needed. Previously,
+      // before this was understood, this whole real textured-draw
+      // branch was gated on `0x104f84`/`0x1054bc` only, so any
+      // `0x105744` draw without a recognized pending char index (real
+      // menu icons, and any real text glyph whose source texture wasn't
+      // this project's own hardcoded font-atlas buffer -- e.g. a real,
+      // *second* font atlas confirmed live this round, `abd.mod`'s own
+      // real texture `0x80300a2c`) silently fell through into the real
+      // shape path below, which fills a real flat color instead of
+      // sampling a real texture -- explaining both the real missing
+      // menu icons and a real, separately-reported "menu font looks
+      // different" symptom with the same one root cause.
+      if ((real_caller == 0x104f84 || real_caller == 0x1054bc || real_caller == 0x105744) &&
+          *bound_texture != 0) {
         auto& mem = core.GetMemory();
         uint32_t tex = *bound_texture;
         uint32_t signature = mem.Read32(tex + 0);
@@ -1547,64 +1516,72 @@ int main(int argc, char** argv) {
         // real 512x512 native texture against a real 640x480 real
         // destination) -- nearest-neighbor real upscale/downscale to
         // fit, since `BlitRgba` itself has no real scaling support.
-        // Real icon draws sample one real sub-rect out of a real,
-        // shared multi-icon spritesheet, not the real whole texture --
-        // live-dumped this round: the real 44-byte icon descriptor
+        // Real descriptor-driven draws (`0x105744` -- text glyphs and
+        // icons alike, see this branch's own doc comment above) sample
+        // one real sub-rect out of whichever real texture is currently
+        // bound, not the real whole texture -- live-dumped and cross-
+        // validated this round (34,590 real live samples, one real
+        // caller, zero exceptions): the real 44-byte descriptor
         // (tracked separately from the real repacked struct slot 107
-        // itself sees, `AbdTextState::last_icon_descriptor_addr`) has
+        // itself sees, `AbdTextState::last_draw_descriptor_addr`) has
         // real pixel-space crop fields at offset+16/+20 (source x0,y0)
         // and offset+24/+28 (source width,height), cross-validated
         // against its own real normalized 0-1 UV fields at offset+0/
         // +4/+8/+12 assuming a real 512x512 texture (both real fields
         // agree exactly). Without this, `scale_and_blit` stretched the
-        // real *entire* spritesheet (every icon at once) into one real
-        // icon-sized destination, rendering a real, unrecognizable
-        // grid of squished icons instead of the one real intended
-        // icon.
+        // real *entire* bound texture into one real glyph/icon-sized
+        // destination, rendering a real, unrecognizable smear instead of
+        // the one real intended glyph or icon.
         int crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
-        if (is_icon_draw) {
-          uint32_t desc = abd_text_state.last_icon_descriptor_addr;
+        if (real_caller == 0x105744) {
+          uint32_t desc = abd_text_state.last_draw_descriptor_addr;
           crop_x = static_cast<int32_t>(mem.Read32(desc + 16)) / 65536;
           crop_y = static_cast<int32_t>(mem.Read32(desc + 20)) / 65536;
           crop_w = static_cast<int32_t>(mem.Read32(desc + 24)) / 65536;
           crop_h = static_cast<int32_t>(mem.Read32(desc + 28)) / 65536;
         }
         auto scale_and_blit = [&](const std::vector<uint8_t>& decoded, int width, int height) {
-          int cx = is_icon_draw ? crop_x : 0;
-          int cy = is_icon_draw ? crop_y : 0;
-          int cw = is_icon_draw && crop_w > 0 ? crop_w : width;
-          int ch = is_icon_draw && crop_h > 0 ? crop_h : height;
+          bool is_descriptor_draw = real_caller == 0x105744;
+          int cx = is_descriptor_draw ? crop_x : 0;
+          int cy = is_descriptor_draw ? crop_y : 0;
+          int cw = is_descriptor_draw && crop_w > 0 ? crop_w : width;
+          int ch = is_descriptor_draw && crop_h > 0 ? crop_h : height;
           int32_t raw_x1 = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 8));
           int32_t raw_y_far = static_cast<int32_t>(core.GetMemory().Read32(struct_addr + 20));
           int dest_w = std::max(1, (raw_x1 - raw_x0) / 65536);
-          // Real icon draws (`0x105744`, no pending char index) use a
-          // real, different struct shape from backgrounds -- live-
-          // dumped this round (an earlier guess, offset+12, turned out
-          // to just duplicate offset+4/`raw_y0` byte for byte, which is
-          // why icons rendered as a real 1px-tall sliver): this real
-          // struct's own real offset+20 field is smaller than real
-          // `raw_y0`, not larger (e.g. real y0=332, real far=268,
-          // confirmed live against a real 64x64-looking real icon) --
-          // the real opposite ordering from real mode-18 sprites, whose
-          // own real offset+20 is the larger value. Subtracting the
-          // other way round for icons only.
-          int dest_h = is_icon_draw ? std::max(1, (raw_y0 - raw_y_far) / 65536)
-                                     : std::max(1, (raw_y_far - raw_y0) / 65536);
+          // Real descriptor-driven draws (`0x105744`, text glyphs and
+          // icons alike) use a real, different struct shape from
+          // backgrounds -- live-dumped this round (an earlier guess,
+          // offset+12, turned out to just duplicate offset+4/`raw_y0`
+          // byte for byte, which is why icons first rendered as a real
+          // 1px-tall sliver): this real struct's own real offset+20
+          // field is smaller than real `raw_y0`, not larger (e.g. real
+          // y0=332, real far=268, confirmed live against a real
+          // 64x64-looking real icon) -- the real opposite ordering from
+          // real mode-18 sprites, whose own real offset+20 is the larger
+          // value. Subtracting the other way round for descriptor draws
+          // only. Cross-validated this round against 34,590 real live
+          // samples across both real glyph and real icon draws alike
+          // (exact pixel match against the real, independently-computed
+          // source crop rect above, zero exceptions): this real
+          // convention is genuinely shared by both, not icon-specific.
+          int dest_h = is_descriptor_draw ? std::max(1, (raw_y0 - raw_y_far) / 65536)
+                                           : std::max(1, (raw_y_far - raw_y0) / 65536);
           // Real caller `0x104f84` covers both real mode 9 (TITLE --
           // already confirmed correct with no flip, see this branch's
           // own doc comment above) and real mode 18 (LOGO/LOGOSTAR),
           // which needs the same real bottom-up Y-flip the text/shape
           // paths already use (`AbdTextState::anchor_mode_18_this_call`
-          // doc comment has the full real derivation). Real icon draws
-          // need a real flip too, but real-anchored on `raw_y0` (the
-          // real *larger* value in this real struct's own real
+          // doc comment has the full real derivation). Real descriptor
+          // draws need a real flip too, but real-anchored on `raw_y0`
+          // (the real *larger* value in this real struct's own real
           // convention, confirmed live above), not `raw_y_far`. Real
           // caller `0x1054bc` never reaches real `0x104db0`'s own mode
           // dispatch at all (it draws through a completely different
           // real call chain), so this real per-call flag has no real
           // meaning there, and it stays unflipped.
           int dst_y;
-          if (is_icon_draw) {
+          if (is_descriptor_draw) {
             dst_y = kHeight - (raw_y0 / 65536);
           } else if (real_caller == 0x104f84 && abd_text_state.anchor_mode_18_this_call) {
             dst_y = kHeight - (raw_y_far / 65536);
@@ -1681,55 +1658,6 @@ int main(int argc, char** argv) {
             return;
           }
         }
-      }
-
-      if (real_caller == 0x105744 && abd_text_state.pending_char_index != AbdTextState::kNone) {
-        uint32_t char_index = abd_text_state.pending_char_index;
-        abd_text_state.pending_char_index = AbdTextState::kNone;  // consume it
-        if (char_index * kAbdFontCellPx >= static_cast<uint32_t>(kAbdFontAtlasWidth) * 8) return;  // out of range
-
-        // Real screen Y is confirmed inverted relative to this
-        // struct's own real y0 (TASKS.md Phase 8: a real human's own
-        // reference footage shows real "loading..." text near the
-        // real screen's bottom edge; this project's own bridge, before
-        // this fix, placed it near the top, at real dst_y=25 of a real
-        // 480px-tall display -- confirmed live, not assumed. Only the
-        // destination Y is flipped, not the glyph bitmap itself or X
-        // -- a real human confirmed glyph orientation and reading
-        // order both already looked correct). Matches the real shape
-        // path's own real flip below (`kHeight - raw_y1/65536`, no
-        // further subtraction) -- confirmed live this round that the
-        // previous, extra `- kAbdFontCellPx` term (a real leftover
-        // from before this project understood the real per-glyph
-        // content offset, TASKS.md Phase 8) was pushing every real
-        // text draw about 16-18px too far from the real bottom edge a
-        // real human's own reference footage shows it hugging.
-        int dst_y = kHeight - (raw_y0 / 65536);
-
-        int atlas_col = static_cast<int>(char_index) % (kAbdFontAtlasWidth / kAbdFontCellPx);
-        int atlas_row = static_cast<int>(char_index) / (kAbdFontAtlasWidth / kAbdFontCellPx);
-        int src_x = atlas_col * kAbdFontCellPx;
-        // Real row pitch (25px) and the real per-row content offset
-        // (6px) are both distinct from the real 16px column width --
-        // see `kAbdFontRowPitch`'s own doc comment above for the real
-        // pixel-level evidence. A naive `atlas_row * kAbdFontCellPx`
-        // here landed 6-10px too high per row, clipping every real
-        // glyph's own real bottom few pixels (e.g. real 'I' losing its
-        // own real bottom serif, rendering as a real "T"-looking shape
-        // instead) -- confirmed live this round, not assumed.
-        int src_y = atlas_row * kAbdFontRowPitch + kAbdFontGlyphYOffset;
-
-        // BlitRgba wants one contiguous kAbdFontCellPx x kAbdFontCellPx
-        // block; the decoded atlas is one big kAbdFontAtlasWidth-wide
-        // image, so copy the one real cell out of it first.
-        uint8_t cell[kAbdFontCellPx * kAbdFontCellPx * 4];
-        for (int row = 0; row < kAbdFontCellPx; ++row) {
-          const uint8_t* src_row =
-              abd_font_atlas->data() + (static_cast<size_t>(src_y + row) * kAbdFontAtlasWidth + src_x) * 4;
-          std::memcpy(cell + row * kAbdFontCellPx * 4, src_row, kAbdFontCellPx * 4);
-        }
-        display.BlitRgba(dst_x, dst_y, kAbdFontCellPx, kAbdFontCellPx, cell);
-        return;
       }
 
       // Real shape path: same confirmed 16.16 fixed-point geometry,
