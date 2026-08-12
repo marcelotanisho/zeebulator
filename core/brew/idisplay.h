@@ -123,10 +123,20 @@ class IDisplayHle {
   // font-atlas glyph bridge), so there's no real ARM call site for a
   // real BitBlt implementation to intercept; the bridge has to
   // originate from this project's own emulator-side code instead.
-  // Alpha is treated as fully-transparent-or-fully-opaque (no partial
-  // blending) -- correct for this session's own confirmed real font
-  // atlas (a clean-edged bitmap font, not anti-aliased), not a general
-  // real alpha-blend implementation.
+  // Real per-pixel alpha blending, not a binary transparent/opaque
+  // threshold -- this project's own earlier version treated any nonzero
+  // alpha as fully opaque, which happened to be correct for the real
+  // font atlas (confirmed clean-edged, only two real alpha levels used)
+  // but was silently wrong for Alien Breaker Deluxe's own real menu
+  // icon sheet: found live, dumping alpha separately from RGB, that its
+  // real icon art (joystick/wrench/question-mark/door and many more) is
+  // carried *entirely* in a real 16-level alpha gradient over one real
+  // flat-tinted RGB color -- every icon rendered as a real flat blob
+  // under the old binary rule, discarding the one real channel the
+  // actual symbol lived in. `alpha==255` still takes the direct-write
+  // fast path (byte-identical to the old binary behavior for genuinely
+  // binary content like the font atlas); anything in between now really
+  // blends against whatever's already in the framebuffer.
   void BlitRgba(int x, int y, int w, int h, const uint8_t* rgba) {
     for (int row = 0; row < h; ++row) {
       int py = y + row;
@@ -135,9 +145,23 @@ class IDisplayHle {
         int px = x + col;
         if (px < 0 || px >= width_) continue;
         const uint8_t* texel = rgba + (static_cast<size_t>(row) * w + col) * 4;
-        if (texel[3] == 0) continue;
-        uint16_t color = static_cast<uint16_t>(((texel[0] >> 3) << 11) | ((texel[1] >> 2) << 5) | (texel[2] >> 3));
-        framebuffer_[static_cast<size_t>(py) * width_ + px] = color;
+        uint8_t alpha = texel[3];
+        if (alpha == 0) continue;
+        size_t idx = static_cast<size_t>(py) * width_ + px;
+        if (alpha == 255) {
+          framebuffer_[idx] = static_cast<uint16_t>(((texel[0] >> 3) << 11) |
+                                                      ((texel[1] >> 2) << 5) | (texel[2] >> 3));
+          continue;
+        }
+        uint16_t dst = framebuffer_[idx];
+        uint8_t dst_r = static_cast<uint8_t>(((dst >> 11) & 0x1F) << 3);
+        uint8_t dst_g = static_cast<uint8_t>(((dst >> 5) & 0x3F) << 2);
+        uint8_t dst_b = static_cast<uint8_t>((dst & 0x1F) << 3);
+        uint8_t out_r = static_cast<uint8_t>((texel[0] * alpha + dst_r * (255 - alpha)) / 255);
+        uint8_t out_g = static_cast<uint8_t>((texel[1] * alpha + dst_g * (255 - alpha)) / 255);
+        uint8_t out_b = static_cast<uint8_t>((texel[2] * alpha + dst_b * (255 - alpha)) / 255);
+        framebuffer_[idx] =
+            static_cast<uint16_t>(((out_r >> 3) << 11) | ((out_g >> 2) << 5) | (out_b >> 3));
       }
     }
   }

@@ -8355,6 +8355,49 @@ playable start-to-finish at full speed, standalone build.
       temporary instrumentation reverted after use; `git diff --stat`
       clean; 431/431 tests pass throughout (research-only round, no
       real code changes landed).
+      **Solved, same session, on a real, direct, correct user hunch
+      ("check the alpha channel -- no reason to have so many repeated
+      blue circles").** Every real texture dump this whole investigation
+      had only ever written RGB, silently discarding real alpha every
+      time. Re-dumped the real ICONS sheet with alpha preserved and
+      rendered it separately: **the real icon art was never missing --
+      it's carried entirely in a real 16-level alpha gradient over one
+      real flat-tinted RGB color**, invisible in every real RGB-only
+      dump this project had made. The real alpha channel alone shows,
+      unmistakably: a real gamepad, wrench, question mark, and door
+      (JOGAR/OPÇÕES/AJUDA/SAIR, exactly), a real "VS" glyph, a real
+      D-pad, real checkmark/X, real UK/Spain/Brazil flags, real locked/
+      unlocked 3D cube badges, real zone-select planets, and more --
+      the complete real UI icon set this whole investigation was
+      chasing, sitting in the one real texture (`0x803b6458`) already
+      dumped and dismissed twice before as "just zone markers."
+      **Root cause, found immediately once the real symptom was
+      understood**: `IDisplayHle::BlitRgba` (`core/brew/idisplay.h`)
+      treated real alpha as a binary opaque/transparent switch, a
+      simplification that happened to be correct for the real font atlas
+      (confirmed genuinely two-level) but was silently wrong for any
+      real gradient-alpha content -- any nonzero alpha drew fully
+      opaque in the real flat tint color, which is exactly what a real
+      flat, symbol-less blob looks like.
+      **Fixed real per-pixel alpha blending into `BlitRgba`** (blends
+      against whatever's already in the real framebuffer when
+      `0 < alpha < 255`; `alpha == 255` keeps the exact old direct-write
+      fast path, so real binary-alpha content like the font atlas is
+      byte-identical to before). **Confirmed live, screenshots**: the
+      real ARCADE/CHALLENGE/VERSUS/FRONTON submenu now shows real,
+      distinct per-item icon art (ARCADE: a token/credits badge;
+      CHALLENGE and FRONTON: a real locked-cube/locked-controller badge,
+      correctly signaling those real modes aren't unlocked yet; VERSUS:
+      a real legible "VS") -- and, unexpectedly, the real language-
+      select screen's own flag badges are fixed by the exact same real
+      change (real UK/Brazil-ish flag art now visible where real plain
+      circles were before), since it draws from the exact same real
+      icon sheet. Real splash and real title screens confirmed
+      byte-identical (both already binary-alpha content). 431/431 tests
+      pass. **This closes out the real menu-icon investigation this
+      whole file has been chasing across many rounds** -- the real
+      icons were never missing, misclassified, or vector-drawn; this
+      project's own alpha handling was simply throwing them away.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
