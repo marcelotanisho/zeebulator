@@ -2771,6 +2771,25 @@ int main(int argc, char** argv) {
       // uncommitted content" guarantee -- stays untouched.
       if (abd_font_atlas.has_value()) display.PresentLiveFramebuffer();
     }
+    if (std::getenv("ABD_HOLD_BUTTON2") != nullptr) {
+      // Diagnostic-only, reused input-injection plumbing (see
+      // ZEEBULATOR_AUTOPRESS's own doc comment below): rapidly toggles
+      // Button2 every other tick, starting at tick 360, indefinitely --
+      // reproduces the real repeated/rapid-Button2 crash (TASKS.md
+      // Phase 8, `abd.mod` pc=0x00108d98) instead of relying on real
+      // X11 key-repeat timing, which didn't reproduce it under
+      // simulated input.
+      constexpr uint64_t kStartTick = 360;
+      if (tick_count >= kStartTick && *captured_button_callback != 0) {
+        static uint64_t last_tick_acted = ~0ull;
+        static bool state = false;
+        if (tick_count != last_tick_acted) {
+          state = !state;
+          InjectHidButtonEvent(kHidUidButton2, state);
+          last_tick_acted = tick_count;
+        }
+      }
+    }
     if (std::getenv("ZEEBULATOR_AUTOPRESS")) {
       // Temporary, env-gated: no OS-level input-automation tool
       // available in this environment (no xdotool, no passwordless

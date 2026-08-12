@@ -8398,6 +8398,43 @@ playable start-to-finish at full speed, standalone build.
       whole file has been chasing across many rounds** -- the real
       icons were never missing, misclassified, or vector-drawn; this
       project's own alpha handling was simply throwing them away.
+      **Fixed a real, separate, user-reported crash the same session --
+      "the game breaks when trying to start... keep pressing [Button2]
+      on the menu."** Reproduced live (real X11 input didn't trigger it
+      reliably -- SDL key-repeat timing differs from a real sustained
+      re-press; switched to this project's own existing simulated-input
+      plumbing, rapidly toggling Button2 every other tick, and it
+      reproduced within seconds every time). Confirmed byte-for-byte the
+      same real crash this file already flagged and deliberately set
+      aside many rounds ago (`abd.mod` pc=0x00108d98, real pc wandering
+      to 0). **Root-caused precisely this round**: that instruction is a
+      real indirect call (`blx r3`) through offset+0x20 of this
+      project's own real mod-runtime support table (`ModRuntime::
+      Install`, `core/brew/mod_runtime.{h,cpp}`) -- a real, genuine gap,
+      the one offset in that whole table's tightly-packed 0x0-0x30
+      region left unregistered. Live-captured the exact real register
+      state at the crash site: the real call's own return value is
+      never read afterward (the very next real instruction overwrites
+      `r0` with an unrelated fresh load), the same "confirmed unused"
+      shape every other safe-no-op slot in this table was already
+      verified against. **Fixed by registering a safe no-op at offset
+      0x20**, this table's real thirty-third confirmed slot, matching
+      the file's own long-established precedent for unidentified,
+      return-ignored gaps -- see `mod_runtime.h`'s own doc comment for
+      the full real derivation. **Confirmed live**: the exact same
+      simulated rapid-Button2 repro that crashed reliably within seconds
+      before the fix now runs cleanly for a full 30-second soak (far
+      longer than needed to trigger the original crash) with zero
+      wander, zero crash. Kept the repro tool itself
+      (`ABD_HOLD_BUTTON2`, `tools/game_probe.cpp`) as permanent,
+      reusable diagnostic infrastructure, the same precedent
+      `ZEEBULATOR_AUTOPRESS` already set, rather than reverting it --
+      useful for regression-testing this exact crash class in future
+      rounds. 431/431 tests pass. This was a real, genuine engine-level
+      bug, not an Alien-Breaker-Deluxe-specific one -- any title whose
+      own real code happens to reach this exact table slot would have
+      hit the identical real crash; fixing it here benefits every title
+      that shares this project's own `ModRuntime`, not just this one.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

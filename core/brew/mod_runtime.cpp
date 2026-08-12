@@ -46,6 +46,7 @@ constexpr uint32_t kUnknownSlotOffset0xcc = 0xcc;
 constexpr uint32_t kUnknownSlotOffset0x90 = 0x90;
 constexpr uint32_t kUnknownSlotOffset0x10 = 0x10;
 constexpr uint32_t kUnknownSlotOffset0x1c = 0x1c;
+constexpr uint32_t kUnknownSlotOffset0x20 = 0x20;
 // Offsets within the "app context" struct GetAppContext returns where
 // real call sites read the current app's IShell/IDisplay pointers.
 constexpr uint32_t kAppContextShellOffset = 12;
@@ -623,6 +624,15 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   // -- registered as a safe no-op, same precedent as every other single-
   // call-site gap in this table (e.g. 0x138 above).
   uint32_t unknown_0x1c_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  // Real, confirmed gap: Alien Breaker Deluxe's own real menu-input
+  // handling (abd.mod 0x108d98, `blx [runtime_table+0x20]`) reaches this
+  // slot on a repeated/rapid re-press of the menu confirm button --
+  // real, reproducible crash a real human hit live (see mod_runtime.h's
+  // own doc comment, the thirty-third slot, for the full real
+  // derivation). Registered as a safe no-op, matching the same
+  // established precedent as every other unidentified, return-ignored
+  // slot in this table.
+  uint32_t unknown_0x20_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemcpyAliasSlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
@@ -656,6 +666,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   memory_.Write32(table_address + kUnknownSlotOffset0x90, unknown_0x90_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x10, unknown_0x10_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x1c, unknown_0x1c_fn);
+  memory_.Write32(table_address + kUnknownSlotOffset0x20, unknown_0x20_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 

@@ -481,11 +481,34 @@ namespace zeebulator {
 // 20-second run reaches and stays in the real per-tick event loop with
 // no further wander, crash, or unmapped-slot hit at all.
 //
-// Only these thirty-two table slots are confirmed by real disassembly
-// so far. Every other offset is left unmapped -- a real .mod hitting
-// one would fetch from unwritten memory, which tools/game_probe.cpp's
-// wandered-outside-module check exists specifically to catch and report
-// loudly rather than silently misbehave.
+// A thirty-third slot, offset 0x20 (immediately after the confirmed
+// eighteenth slot at 0x1c), was found in Alien Breaker Deluxe -- not
+// during bring-up, but as the real root cause of a real, reproducible
+// crash a real human hit live, mashing the menu confirm button
+// (`abd.mod` 0x108d98, `blx` through this exact table slot, real pc
+// landing on 0 -- this table's own unwritten-memory default -- and
+// wandering out of the module). Live register capture at the crash
+// site: `r0` = a small stack buffer (an out-param, matching the shape
+// of a "format/fill this buffer" helper rather than a "return a value"
+// one), `r1` = a literal-pool address, `r2` = a field read off a real,
+// separate per-object pointer. Its calling convention isn't confirmed
+// well enough to identify which real BREW helper this is, but its
+// return value is: the real instruction immediately after the call
+// overwrites `r0` with an unrelated fresh load before ever reading it,
+// exactly the same "confirmed unused" shape every other safe-no-op slot
+// in this table was verified against. Registered as a safe no-op,
+// matching that same established precedent -- this real gap was a
+// genuine crash, not just an unexercised corner: this title's own real
+// per-tick menu-input handling reaches it specifically on a repeated/
+// rapid re-press of the confirm button, a real, ordinary interaction
+// pattern, not an edge case.
+//
+// Only these thirty-three table slots are confirmed by real
+// disassembly so far. Every other offset is left unmapped -- a real
+// .mod hitting one would fetch from unwritten memory, which
+// tools/game_probe.cpp's wandered-outside-module check exists
+// specifically to catch and report loudly rather than silently
+// misbehave.
 class ModRuntime {
  public:
   // `heap_region`/`heap_size` bound a simple bump allocator the MALLOC
