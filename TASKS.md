@@ -8560,6 +8560,55 @@ playable start-to-finish at full speed, standalone build.
       matching this project's own established precedent for reusable
       diagnostic tooling); `git diff --stat` clean otherwise; 431/431
       tests pass.
+      **Follow-up, same session, with real, direct instruction to keep
+      chasing this specific bug rather than switch topics.** The
+      earlier round's own `y0`-to-HUD-element mapping above turned out
+      to be wrong -- captured the actual real string *content* being
+      rendered this round (not just its crop geometry) and found real
+      `y0=436` and real `y0=156` both read real, valid, literal string-
+      pool data (`"score\0zone\0alpha\0..."` and
+      `"alpha\0beta\0gamma\0..."`, null-terminated real BREW-style
+      resource strings) -- both are real, working labels (`SCORE` and
+      the real zone name). **The two real broken elements are actually
+      `y0=89` and `y0=230`, and both read from the exact same real
+      address** (a real stack buffer, not a string-pool literal),
+      containing real, visibly uninitialized-looking bytes (leading
+      spaces then real garbage) -- not two different bugs after all,
+      one shared real root cause.
+      **Traced the real render loop's own call chain (`abd.mod`
+      0x108c00) far enough to find it directly**: real per-`[real
+      self+1420]`-mode dispatch (values 0/1/6/other reach different real
+      code regions, all funneling through the same shared real text-draw
+      primitive), and inside the real mode that builds one of the two
+      broken strings, a real, explicit loop (`abd.mod`
+      0x108df8-0x108e10) that writes a real ASCII space into each of 5
+      real buffer positions, *conditionally*, gated on real individual
+      bits of a real flags word read from `[r5+116]` -- exactly the
+      real shape of a "which digit positions are significant, blank the
+      rest" real HUD-number formatter.
+      **Tested the real hypothesis directly, live, with a real memory
+      patch** (force `[r5+116] = 0xFFFFFFFF` right before this real
+      read, temporary/reverted) rather than assume: confirmed the real
+      original value genuinely is `0` (not merely unread or stale), and
+      confirmed the real patch takes effect and persists across real
+      ticks (nothing else touches this real field) -- but **the real
+      screen showed zero visible change**. This real result is still
+      informative, not a dead end: with every real bit forced set, the
+      loop should skip its own space-writes entirely and leave whatever
+      was already in the real buffer untouched, and that was *still*
+      blank -- meaning a **second real gap exists**: whatever real code
+      is supposed to write the actual real digit characters into this
+      buffer (most likely a real number-to-string formatter, possibly
+      going through this project's own `ModRuntime::SprintfImpl` or a
+      real in-app equivalent) either never runs in this project's own
+      emulation, or writes to a different real address than the one
+      this render loop reads from. **Not fixed this round** -- a real,
+      concrete, well-scoped next step for whoever continues this: find
+      what real function is supposed to populate this real buffer with
+      real digit characters (not just the space-padding flags), the
+      same way `[r5+116]`'s own real role was found. All temporary
+      instrumentation (the patch, the string-content/caller-LR logging)
+      reverted after use; `git diff --stat` clean; 431/431 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the
