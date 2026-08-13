@@ -487,21 +487,31 @@ namespace zeebulator {
 // crash a real human hit live, mashing the menu confirm button
 // (`abd.mod` 0x108d98, `blx` through this exact table slot, real pc
 // landing on 0 -- this table's own unwritten-memory default -- and
-// wandering out of the module). Live register capture at the crash
-// site: `r0` = a small stack buffer (an out-param, matching the shape
-// of a "format/fill this buffer" helper rather than a "return a value"
-// one), `r1` = a literal-pool address, `r2` = a field read off a real,
-// separate per-object pointer. Its calling convention isn't confirmed
-// well enough to identify which real BREW helper this is, but its
-// return value is: the real instruction immediately after the call
-// overwrites `r0` with an unrelated fresh load before ever reading it,
-// exactly the same "confirmed unused" shape every other safe-no-op slot
-// in this table was verified against. Registered as a safe no-op,
-// matching that same established precedent -- this real gap was a
-// genuine crash, not just an unexercised corner: this title's own real
-// per-tick menu-input handling reaches it specifically on a repeated/
-// rapid re-press of the confirm button, a real, ordinary interaction
-// pattern, not an edge case.
+// wandering out of the module). Registered as a blind no-op at first
+// (the crash-site call's own return value is genuinely unused, and
+// that fix alone was enough to stop the crash), but a real, separate
+// live investigation the same session -- chasing a real, direct human
+// report that gameplay's own SCORE/lives/shield HUD text never
+// rendered at all -- found this same slot reached again, at several
+// other real call sites, in a shape the blind stub couldn't satisfy:
+// real code passes `(dest=a stack buffer, fmt=a real literal format
+// string, value=a real plain integer, not a ppArgs cursor)` and reads
+// the real *formatted result* back out of that buffer afterward. Real
+// literal format strings observed live: `"%d"`, `"%06d"` (real score
+// values climbing 0/25/50/100/125/175/250/350/475/625/650 as bricks
+// broke), `"x%d"` (real lives count 1-4), and bare literals with no
+// `%` at all (`"EXTRA"`, passed through unchanged). **This is a real
+// sprintf-family formatter, structurally the same job as the
+// already-implemented `SprintfImpl` (offset 0x13c) but with a real,
+// simpler single-direct-value calling convention** instead of that
+// slot's own double-indirection `ppArgs` cursor -- confirmed live by
+// literally writing a placeholder character into the buffer and
+// watching real, previously-blank HUD text turn into a visible glyph
+// in exactly the positions real reference footage shows real
+// score/lives/shield digits. Implemented as `FormatSingleIntImpl`,
+// reusing the same real `%d`/`%u`/`%x`/`%X` plus width/zero-pad
+// directive support `SprintfImpl` already has, substituting the one
+// real integer argument wherever a numeric directive appears.
 //
 // A thirty-fourth slot, offset 0xa8, was found the same way, chasing a
 // second real crash the same round: Alien Breaker Deluxe's own real
@@ -622,6 +632,7 @@ class ModRuntime {
   void StrchrImpl(IArmCore& core);
   void StrstrImpl(IArmCore& core);
   void SprintfImpl(IArmCore& core);
+  void FormatSingleIntImpl(IArmCore& core);
   void GetAppContextImpl(IArmCore& core);
   void GetUpTimeMsImpl(IArmCore& core);
   void ReallocImpl(IArmCore& core);

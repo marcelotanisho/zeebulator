@@ -8609,6 +8609,42 @@ playable start-to-finish at full speed, standalone build.
       same way `[r5+116]`'s own real role was found. All temporary
       instrumentation (the patch, the string-content/caller-LR logging)
       reverted after use; `git diff --stat` clean; 431/431 tests pass.
+      **Solved, same session, immediately following up.** Traced one
+      call site further back (`abd.mod` 0x108dd4-0x108de4, right before
+      the space-padding loop) and found it's *another* call through the
+      exact same real mod-runtime table slot already fixed for the
+      menu-confirm crash, offset 0x20 -- but this real call site's own
+      real output buffer genuinely gets read afterward, unlike the
+      crash-site call. **Tested live, directly, before assuming
+      anything**: force-wrote a real placeholder character into that
+      slot's real output buffer instead of leaving it untouched --
+      real, previously-blank HUD text immediately turned into a visible
+      glyph in exactly the score/lives/shield positions, confirming
+      this slot is the real missing piece. **Captured this real slot's
+      full real argument set live** (uncapped logging across many real
+      calls): `r0`=dest buffer, `r1`=a real literal *format string*
+      (`"%d"`, `"%06d"`, `"x%d"`, and bare literals with no directive at
+      all like `"EXTRA"`), `r2`=a real plain integer value -- and the
+      real `r2` values tracked real, live gameplay state exactly (real
+      score climbing 0→25→50→100→...→650 as bricks broke; real lives
+      count 1→2→3→4). **This is a real sprintf-family formatter**,
+      structurally the same job as the already-implemented
+      `ModRuntime::SprintfImpl` (offset 0x13c) but with a real, simpler
+      single-direct-value calling convention instead of that slot's own
+      double-indirection `ppArgs` cursor. Implemented as
+      `FormatSingleIntImpl` (`core/brew/mod_runtime.{h,cpp}`), reusing
+      the same real `%d`/`%u`/`%x`/`%X` plus width/zero-pad directive
+      support already proven in `SprintfImpl`, substituting the one
+      real integer wherever a numeric directive appears. **Confirmed
+      live, screenshots**: real SCORE now shows a real, correctly
+      zero-padded six-digit value (`000650`) that climbs as bricks
+      break; the real lives panel shows the ship icon with a real `X2`
+      it updates live; a real third HUD value (`1`, likely shields/
+      extra) renders too. **This closes out the real HUD-text
+      investigation this whole thread has been chasing** -- not a
+      rendering-pipeline bug at all, a real missing sprintf-family
+      formatter, the same general shape as a gap this project has now
+      found and fixed twice in the same real table. 431/431 tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

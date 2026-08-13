@@ -528,6 +528,88 @@ void ModRuntime::SprintfImpl(IArmCore& core) {
   core.SetRegister(kR0, out - dest);
 }
 
+void ModRuntime::FormatSingleIntImpl(IArmCore& core) {
+  // Real signature: char* Func(char* dest, const char* fmt, int value) --
+  // see mod_runtime.h's own doc comment (the table's thirty-third slot)
+  // for the full real derivation. A real sprintf-family formatter, same
+  // job as SprintfImpl above, but with a real single, direct integer
+  // argument instead of that one's own double-indirection ppArgs
+  // cursor -- real format strings observed so far only ever consume
+  // exactly one directive (`%d`, `%06d`, `x%d`), so this real value is
+  // substituted at the one real numeric directive found, if any; a
+  // real literal with no directive at all (`"EXTRA"`) is copied
+  // through unchanged, same as SprintfImpl's own literal-text handling.
+  uint32_t dest = core.GetRegister(kR0);
+  uint32_t fmt = core.GetRegister(kR1);
+  int32_t value = static_cast<int32_t>(core.GetRegister(kR2));
+
+  uint32_t out = dest;
+  for (uint32_t i = 0;; ++i) {
+    uint8_t c = memory_.Read8(fmt + i);
+    if (c == 0) break;
+    if (c != '%') {
+      memory_.Write8(out++, c);
+      continue;
+    }
+    uint32_t spec_start = i;
+    ++i;
+    bool zero_pad = memory_.Read8(fmt + i) == '0';
+    if (zero_pad) ++i;
+    uint32_t width = 0;
+    bool has_width = false;
+    for (;;) {
+      uint8_t d = memory_.Read8(fmt + i);
+      if (d < '0' || d > '9') break;
+      has_width = true;
+      width = width * 10 + (d - '0');
+      ++i;
+    }
+    uint8_t spec = memory_.Read8(fmt + i);
+    if (spec == 0) break;
+    if (spec == '%' && !zero_pad && !has_width) {
+      memory_.Write8(out++, '%');
+      continue;
+    }
+    std::string formatted;
+    switch (spec) {
+      case 'd':
+        formatted = std::to_string(value);
+        break;
+      case 'u':
+        formatted = std::to_string(static_cast<uint32_t>(value));
+        break;
+      case 'x':
+      case 'X': {
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), spec == 'x' ? "%x" : "%X",
+                      static_cast<uint32_t>(value));
+        formatted = buf;
+        break;
+      }
+      default:
+        // Unknown directive: emit literally, same precedent as
+        // SprintfImpl's own fallback above.
+        for (uint32_t k = spec_start; k <= i; ++k) {
+          formatted.push_back(static_cast<char>(memory_.Read8(fmt + k)));
+        }
+        break;
+    }
+    bool numeric_directive = spec == 'd' || spec == 'u' || spec == 'x' || spec == 'X';
+    if (numeric_directive && has_width && formatted.size() < width) {
+      bool negative = numeric_directive && !formatted.empty() && formatted[0] == '-';
+      std::string digits = negative ? formatted.substr(1) : formatted;
+      std::string sign = negative ? "-" : "";
+      if (sign.size() + digits.size() < width) {
+        digits = std::string(width - sign.size() - digits.size(), zero_pad ? '0' : ' ') + digits;
+      }
+      formatted = sign + digits;
+    }
+    for (char ch : formatted) memory_.Write8(out++, static_cast<uint8_t>(ch));
+  }
+  memory_.Write8(out, 0);
+  core.SetRegister(kR0, dest);
+}
+
 void ModRuntime::GetAppContextImpl(IArmCore& core) {
   // Only (re-)written when a Set*() call is actually pending, not on
   // every call -- see the `*_pending_` members' doc comment in
@@ -625,15 +707,17 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   // -- registered as a safe no-op, same precedent as every other single-
   // call-site gap in this table (e.g. 0x138 above).
   uint32_t unknown_0x1c_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
-  // Real, confirmed gap: Alien Breaker Deluxe's own real menu-input
-  // handling (abd.mod 0x108d98, `blx [runtime_table+0x20]`) reaches this
-  // slot on a repeated/rapid re-press of the menu confirm button --
-  // real, reproducible crash a real human hit live (see mod_runtime.h's
-  // own doc comment, the thirty-third slot, for the full real
-  // derivation). Registered as a safe no-op, matching the same
-  // established precedent as every other unidentified, return-ignored
-  // slot in this table.
-  uint32_t unknown_0x20_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  // Real, confirmed gap, resolved: Alien Breaker Deluxe's own real
+  // menu-input handling (abd.mod 0x108d98, `blx [runtime_table+0x20]`)
+  // reached this slot on a repeated/rapid re-press of the menu confirm
+  // button -- the real crash that first surfaced this gap is fixed by
+  // the blind-no-op shape alone (that one real call site's own return
+  // value is genuinely unused). But the same real slot is also the
+  // real single-value sprintf-family formatter behind ABD's real
+  // gameplay HUD score/lives/shield text -- see mod_runtime.h's own
+  // doc comment (the table's thirty-third slot) for the full real
+  // derivation, and `FormatSingleIntImpl` above for the implementation.
+  uint32_t unknown_0x20_fn = hle_.Register([this](IArmCore& core) { FormatSingleIntImpl(core); });
   // Real, confirmed gap: Alien Breaker Deluxe's own real ball-spawn
   // sequence (abd.mod 0x109d54, `blx [runtime_table+0xa8]`) reaches this
   // slot exactly once, right as a real new gameplay entity (the ball) is
