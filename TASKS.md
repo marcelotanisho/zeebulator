@@ -8491,6 +8491,75 @@ playable start-to-finish at full speed, standalone build.
       round, deliberately deferred by the reporting human**: a real
       texture issue was also spotted live on the zone-select screen,
       not yet investigated.
+      **Same session, follow-up round: made `ZEEBULATOR_AUTOPRESS`
+      itself reach real gameplay unattended** (it previously stopped
+      dead at the ARCADE/CHALLENGE/VERSUS/FRONTON submenu, needing a
+      real human's own manual keypresses past that point every time) --
+      the real caution that originally limited it to "one pass, reach
+      one real screen past language-select" is stale now that both real
+      crashes above are fixed, so extended it with `kExtraButton2Slots`
+      more real Button2 holds, same real pacing, enough real margin to
+      carry a real run through the top-level menu, the ARCADE submenu,
+      and real zone-select into real gameplay on its own. Confirmed live,
+      repeatedly, this round.
+      **Investigated a real human's own three-part live gameplay bug
+      report** ("sprites... slightly to the left", "no markers for
+      points, lives or shields", "sound effects... stutter"). Started
+      with the missing HUD text, live-tracing every real caller reaching
+      real slot 107 during actual gameplay (not just menus) for the
+      first time. **Found a real, unrelated caller (`abd.mod`
+      0x0010529c) that fires constantly during gameplay** -- always
+      `tex=0`, always a real degenerate zero-size rect, its own single
+      point smoothly drifting frame to frame -- almost certainly a real
+      trail/particle position tracker, not text; ruled out as the HUD
+      bug's own cause. **Also confirmed real `IDISPLAY_DrawText` (the
+      standard real BREW API, separately implemented in
+      `core/brew/idisplay.cpp`) never fires once during real gameplay
+      either** -- the HUD text isn't going through that path.
+      **Found the real HUD text draws themselves, still going through
+      the exact same already-fixed real caller `0x105744` used for
+      menus**: four distinct real per-character text strings render
+      during gameplay, all using the real second (glowing) font atlas.
+      Two are real, confirmed-working, visible on screen ("SCORE" and
+      the real zone name "ALPHA," matching this project's own live
+      screenshots exactly). **The other two -- almost certainly the real
+      lives count and shield count next to their own icons -- never
+      render, and live tracing found two different real reasons, not
+      one:** one of them (`y0=230` in real struct space) has all five of
+      its own "characters" resolving to the exact same real descriptor
+      address, crop `(0,0,17,46)` -- i.e., this project's own
+      `AbdTextState::last_draw_descriptor_addr` (captured at real
+      `abd.mod` 0x106508) never actually updates for these specific real
+      draws, so every one of them reads back the same real, stale
+      descriptor left over from an unrelated earlier draw. Real,
+      concrete implication: this specific real HUD string is reached
+      through a **second, different real per-character geometry-pack
+      helper this project hasn't found or watched yet** (the same real
+      role 0x106508 plays for the callers already fixed, but a distinct
+      real function for this real UI context) -- until that second real
+      call site is traced the same way 0x106508 was, this project has no
+      way to capture the real, correct descriptor for it. The other
+      missing string (`y0=156`) is a real, separate puzzle: its own real
+      crop rects vary and look individually legitimate (real, distinct
+      glyph positions, the same shape as the working "SCORE" draws), yet
+      still renders nothing -- not yet explained, a real, open question
+      for whoever picks this up next (worth checking real destination-
+      rect sizing/position and real alpha at this specific call site
+      before assuming the crop data itself is wrong, since it looks
+      correct here). **Not fixed this round** -- real, concrete,
+      well-scoped next steps, not a dead end: (1) trace the real second
+      geometry-pack helper for the `y0=230` string, matching the real
+      technique already proven for 0x106508; (2) work out why `y0=156`'s
+      own real, individually-valid-looking draws still produce nothing
+      visible. **Real sprite X-offset and real audio stutter, the other
+      two parts of the same report, not yet investigated at all this
+      round** -- deliberately stopped here to report real, concrete
+      findings rather than keep chasing blind across three open
+      real bugs at once. All temporary instrumentation reverted after
+      use except the `ZEEBULATOR_AUTOPRESS` extension above (kept,
+      matching this project's own established precedent for reusable
+      diagnostic tooling); `git diff --stat` clean otherwise; 431/431
+      tests pass.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

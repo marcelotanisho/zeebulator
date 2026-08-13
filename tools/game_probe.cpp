@@ -2840,16 +2840,24 @@ int main(int argc, char** argv) {
       // having run yet) and the AVK path via `HandleEvent` directly
       // (always callable once `applet_ptr` exists, real evt/wParam
       // shape confirmed against Double Dragon).
-      // Held, once each, not cyclic: a repeated/rapid re-hold of one
-      // real button (specifically Button2) reproduced a real crash
-      // this session already set aside (TASKS.md Phase 8) -- this
-      // pass exists only to reach a real screen past language-select
-      // once, safely, the same way an earlier successful (non-
-      // crashing) round did. Paced by real `tick_count` (real
-      // processed game ticks), not real outer-loop iterations --
-      // confirmed live this round that outer-loop pacing drifts once
-      // this project's own added real per-tick decode/scale work
-      // changes how many real game ticks land within a given real
+      // Held, once each, not cyclic within the original candidate scan:
+      // a repeated/rapid re-hold of one real button (specifically
+      // Button2) used to reproduce two real crashes this project has
+      // since found and fixed (ModRuntime table offsets 0x20 and 0xa8,
+      // TASKS.md Phase 8) -- both real gaps are fixed now, so the extra
+      // caution that originally limited this pass to "reach one real
+      // screen past language-select, once" no longer applies. Extended
+      // this round to keep going past the original candidate scan,
+      // holding real Button2 (confirmed live to be this title's own
+      // real menu-confirm button) a further `kExtraButton2Slots` times
+      // with the same real pacing -- enough real presses, with real
+      // margin, to carry a real run from language-select through the
+      // top-level menu, the ARCADE/CHALLENGE/VERSUS/FRONTON submenu, and
+      // real zone-select, into real gameplay, unattended. Paced by real
+      // `tick_count` (real processed game ticks), not real outer-loop
+      // iterations -- confirmed live this round that outer-loop pacing
+      // drifts once this project's own added real per-tick decode/scale
+      // work changes how many real game ticks land within a given real
       // wall-clock interval, silently misaligning a real loop-count-
       // paced press against real game state.
       static const uint32_t kCandidates[] = {kHidUidDPadDown,  kHidUidDPadUp,
@@ -2862,17 +2870,20 @@ int main(int argc, char** argv) {
       constexpr uint64_t kGapTicks = 30;
       constexpr uint64_t kSlotTicks = kHoldTicks + kGapTicks;
       constexpr uint64_t kNumCandidates = sizeof(kCandidates) / sizeof(kCandidates[0]);
-      if (tick_count >= kStartTick && tick_count < kStartTick + kSlotTicks * kNumCandidates) {
+      constexpr uint64_t kExtraButton2Slots = 8;
+      constexpr uint64_t kTotalSlots = kNumCandidates + kExtraButton2Slots;
+      if (tick_count >= kStartTick && tick_count < kStartTick + kSlotTicks * kTotalSlots) {
         uint64_t rel = tick_count - kStartTick;
         uint64_t which = rel / kSlotTicks;
         uint64_t pos = rel % kSlotTicks;
+        uint32_t button = which < kNumCandidates ? kCandidates[which] : kHidUidButton2;
         static uint64_t last_pos_acted = ~0ull;
         if (pos != last_pos_acted && *captured_button_callback != 0) {
           if (pos == 0) {
-            InjectHidButtonEvent(kCandidates[which], true);
+            InjectHidButtonEvent(button, true);
             last_pos_acted = pos;
           } else if (pos == kHoldTicks) {
-            InjectHidButtonEvent(kCandidates[which], false);
+            InjectHidButtonEvent(button, false);
             last_pos_acted = pos;
           }
         }
