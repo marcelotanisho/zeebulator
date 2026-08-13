@@ -18,9 +18,11 @@
 #include <ctime>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/audio/mixer.h"
@@ -1334,6 +1336,24 @@ int main(int argc, char** argv) {
     // slot 107's own real draw call (below) knows which real texture,
     // if any, is currently real-bound when it fires.
     auto bound_texture = std::make_shared<uint32_t>(0);
+    // Real per-draw-call decode cache, keyed by real texture object
+    // address: every real textured draw (slot 107 below) was re-reading
+    // this real texture's own compressed bytes out of emulated memory
+    // and re-running `DecodeAtitc`/`DecodePng` on the *entire* real
+    // texture from scratch, every single real draw call -- confirmed
+    // live to be the real cause of a real, severe FPS drop (60->2) once
+    // real gameplay starts drawing dozens of real on-screen entities
+    // (bricks, paddle, ball) that mostly share one real, large 512x1024
+    // texture: this project's own bridge was fully re-decompressing
+    // that whole real texture dozens of times per real tick just to
+    // sample one small real crop out of it each time. Real texture
+    // objects are static real asset data once loaded (this project has
+    // never observed one being rewritten after creation) -- caching the
+    // real decoded RGBA buffer by real texture address, decoding once
+    // and reusing it for every subsequent real draw, is safe for this
+    // project's own single-run scope and needs no real invalidation.
+    auto decoded_texture_cache =
+        std::make_shared<std::map<uint32_t, std::pair<std::vector<uint8_t>, std::pair<int, int>>>>();
     stub_methods[33] = [bound_texture, refresh_descriptors](zeebulator::IArmCore& core) {
       refresh_descriptors(core);
       *bound_texture = core.GetRegister(zeebulator::kR2);
@@ -1383,7 +1403,8 @@ int main(int argc, char** argv) {
     // (only ever set for this one real title's own real `data.bar`) so
     // every other title stays untouched.
     stub_methods[107] = [&hle, &display, &backend, &abd_font_atlas, &abd_text_state, kHeight,
-                          bound_texture, pending_fill_color](zeebulator::IArmCore& core) {
+                          bound_texture, pending_fill_color,
+                          decoded_texture_cache](zeebulator::IArmCore& core) {
       core.SetRegister(zeebulator::kR0, 0);
       if (!abd_font_atlas.has_value()) return;
       uint32_t struct_addr = zeebulator::HleRuntime::ReadStackArg(core, 0);
@@ -1604,6 +1625,11 @@ int main(int argc, char** argv) {
             display.BlitRgba(dst_x, dst_y, dest_w, dest_h, scaled.data());
           }
         };
+        if (auto cache_it = decoded_texture_cache->find(tex); cache_it != decoded_texture_cache->end()) {
+          scale_and_blit(cache_it->second.first, cache_it->second.second.first,
+                          cache_it->second.second.second);
+          return;
+        }
         if (signature == 0xccc40002) {
           uint32_t width = mem.Read32(tex + 4);
           uint32_t height = mem.Read32(tex + 8);
@@ -1625,7 +1651,10 @@ int main(int argc, char** argv) {
                                                     static_cast<int>(width),
                                                     static_cast<int>(height), format);
             if (decoded.has_value()) {
-              scale_and_blit(*decoded, static_cast<int>(width), static_cast<int>(height));
+              auto& cached = (*decoded_texture_cache)[tex];
+              cached.first = std::move(*decoded);
+              cached.second = {static_cast<int>(width), static_cast<int>(height)};
+              scale_and_blit(cached.first, cached.second.first, cached.second.second);
               return;
             }
           }
@@ -1654,7 +1683,10 @@ int main(int argc, char** argv) {
           int width = 0, height = 0;
           auto decoded = zeebulator::DecodePng(raw.data(), raw.size(), width, height);
           if (decoded.has_value() && width > 0 && height > 0) {
-            scale_and_blit(*decoded, width, height);
+            auto& cached = (*decoded_texture_cache)[tex];
+            cached.first = std::move(*decoded);
+            cached.second = {width, height};
+            scale_and_blit(cached.first, cached.second.first, cached.second.second);
             return;
           }
         }

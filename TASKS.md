@@ -8435,6 +8435,62 @@ playable start-to-finish at full speed, standalone build.
       own real code happens to reach this exact table slot would have
       hit the identical real crash; fixing it here benefits every title
       that shares this project's own `ModRuntime`, not just this one.
+      **Same session, live-driving all the way into real gameplay for
+      the first time (a real human's own direct request: "spin the game
+      up... check some stuff"), found and fixed two more real, distinct
+      bugs blocking real gameplay entirely.**
+      **First: a second real crash, immediately past the fix above.**
+      Real gameplay start (real paddle-intro animation, then the real
+      ball spawning onto it) crashed 100% reproducibly, live-verified
+      both by a real human and by this project's own simulated-input
+      repro. Same real class of bug as the 0x20 slot above -- a real
+      indirect call (`abd.mod` 0x109d54) through a second, different gap
+      in this same mod-runtime table, offset 0xa8. This one needed more
+      care than a blind no-op: real code doesn't read the real return
+      value here, it reads a real *byte back out of its own output
+      buffer* (`ldrb r0, [sp, #36]`), checked twice before falling
+      through into real, disassembly-confirmed entity-creation code --
+      a blind "touch nothing" stub would have left that real byte as
+      whatever real stack garbage was already there, a nondeterministic
+      bug dressed as a fix. Implemented to explicitly write a real `0`
+      into the real caller's own buffer, matching this table's own
+      established "zero means success/false" convention and confirmed,
+      by reading the real branch targets, to be exactly what lets real
+      execution reach entity creation instead of a real "skip this
+      candidate" path. **Confirmed live**: the exact real sequence that
+      crashed 100% of the time before (real paddle intro, real ball
+      spawn) now runs clean.
+      **Second, found immediately after, from the same real human's own
+      report ("it's not crashing anymore, but it's at 2 fps")**: real
+      gameplay ran at a real ~2-20fps once enough real on-screen
+      entities existed (dropping further with more, per a live sample:
+      19fps with just the paddle, ~15fps once several more real
+      entities appeared), against a real, solid 60fps in every real menu
+      screen. Root cause, found immediately from already-understood code
+      (no new tracing needed): the real textured-draw path (`stub_
+      methods[107]`) was re-reading a real texture's own compressed
+      bytes out of emulated memory *and* re-running `DecodeAtitc`/
+      `DecodePng` on the real *entire* texture from scratch on **every
+      single real draw call**, with zero caching -- real gameplay's own
+      real brick/paddle/ball entities mostly share one real, large
+      512x1024 texture, so this project's own bridge was fully real-
+      decompressing that whole real texture dozens of times per real
+      tick just to sample one small real crop out of it each time,
+      exactly the kind of real cost that scales with real on-screen
+      entity count the live symptom pointed at. **Fixed with a real
+      decode cache keyed by real texture object address** (real texture
+      objects are static real asset data, never observed rewritten after
+      creation, so no real invalidation is needed for this project's own
+      single-run scope) -- decode once, reuse the same real decoded RGBA
+      buffer for every subsequent real draw referencing that texture.
+      **Confirmed live**: the same real gameplay sequence that measured
+      2-19fps before now holds a real, steady 58-60fps throughout,
+      including with multiple real dynamic entities on screen at once
+      (the ball, a real moving power-up, the paddle). 431/431 tests pass
+      across both fixes. **Real, honest remaining gap, not fixed this
+      round, deliberately deferred by the reporting human**: a real
+      texture issue was also spotted live on the zone-select screen,
+      not yet investigated.
 
 ## Phase 9 — Libretro Core
 Exit criterion: **M2 from PRD §7** — same game fully playable through the

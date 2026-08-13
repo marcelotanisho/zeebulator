@@ -503,7 +503,31 @@ namespace zeebulator {
 // rapid re-press of the confirm button, a real, ordinary interaction
 // pattern, not an edge case.
 //
-// Only these thirty-three table slots are confirmed by real
+// A thirty-fourth slot, offset 0xa8, was found the same way, chasing a
+// second real crash the same round: Alien Breaker Deluxe's own real
+// ball-spawn sequence (`abd.mod` 0x109d54, `blx` through this table
+// slot) -- reached once, exactly when a real new gameplay entity (the
+// ball) is about to be created, right after a real human got a real
+// level's paddle-intro animation on screen. Unlike the thirty-third
+// slot (and every earlier one), this real call's return value in `r0`
+// is *not* what the real caller reads -- real code passes `(buffer=a
+// stack address, flag=1)` and reads a real byte back out of that
+// buffer itself (`ldrb r0, [sp, #36]`), checked twice (`cmp r0,#0` then
+// `tst r0,#7`) before falling through into real, disassembly-confirmed
+// entity-creation code. A blind "touch nothing" stub would leave that
+// real byte as whatever real stack garbage happened to already be
+// there, making the outcome nondeterministic rather than a clean pass-
+// through. Implemented by writing a real `0` into the caller's own
+// buffer explicitly (`CheckObjectFlagImpl`-shaped, offset
+// `kCheckObjectFlagSlotOffset0xa8`) -- both real checks then read as
+// "condition not met," matching this table's own established "zero
+// means success/false uniformly" convention, and real execution
+// reaches the real entity-creation call live disassembly shows follows
+// immediately, rather than branching into what real disassembly shows
+// is a "skip this candidate, advance to the next linked entity" path
+// instead.
+//
+// Only these thirty-four table slots are confirmed by real
 // disassembly so far. Every other offset is left unmapped -- a real
 // .mod hitting one would fetch from unwritten memory, which
 // tools/game_probe.cpp's wandered-outside-module check exists

@@ -47,6 +47,7 @@ constexpr uint32_t kUnknownSlotOffset0x90 = 0x90;
 constexpr uint32_t kUnknownSlotOffset0x10 = 0x10;
 constexpr uint32_t kUnknownSlotOffset0x1c = 0x1c;
 constexpr uint32_t kUnknownSlotOffset0x20 = 0x20;
+constexpr uint32_t kCheckObjectFlagSlotOffset0xa8 = 0xa8;
 // Offsets within the "app context" struct GetAppContext returns where
 // real call sites read the current app's IShell/IDisplay pointers.
 constexpr uint32_t kAppContextShellOffset = 12;
@@ -633,6 +634,31 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   // established precedent as every other unidentified, return-ignored
   // slot in this table.
   uint32_t unknown_0x20_fn = hle_.Register([](IArmCore& core) { core.SetRegister(kR0, 0); });
+  // Real, confirmed gap: Alien Breaker Deluxe's own real ball-spawn
+  // sequence (abd.mod 0x109d54, `blx [runtime_table+0xa8]`) reaches this
+  // slot exactly once, right as a real new gameplay entity (the ball) is
+  // about to be created -- real, reproducible crash a real human hit
+  // live starting an actual level (see mod_runtime.h's own doc comment
+  // for the full real derivation). Unlike every other safe-no-op slot
+  // in this table, this one's real *return value* isn't what the real
+  // caller reads -- real code passes `(buffer=sp+36, flag=1)` and reads
+  // a real byte back out of `buffer` itself (`ldrb r0, [sp, #36]`), not
+  // r0, checked twice (`cmp r0,#0` then `tst r0,#7`) before falling
+  // through into what real disassembly shows is entity-creation code
+  // right after. A blind "touch nothing" stub would leave that real
+  // byte as whatever real stack garbage was already there, making this
+  // real check's outcome nondeterministic instead of a clean skip.
+  // Writes 0 into the real output buffer explicitly -- both real checks
+  // read as "condition not met," matching this table's own established
+  // "represent success/false uniformly as zero" convention and letting
+  // real execution reach the real entity-creation call that follows,
+  // instead of branching into what disassembly shows is a real
+  // "skip this candidate, advance to the next linked entity" path.
+  uint32_t check_object_flag_0xa8_fn = hle_.Register([](IArmCore& core) {
+    uint32_t buffer = core.GetRegister(kR0);
+    core.GetMemory().Write8(buffer, 0);
+    core.SetRegister(kR0, 0);
+  });
   memory_.Write32(table_address + kMemcpySlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemcpyAliasSlotOffset, memcpy_fn);
   memory_.Write32(table_address + kMemsetSlotOffset, memset_fn);
@@ -667,6 +693,7 @@ void ModRuntime::Install(uint32_t module_base, uint32_t table_address) {
   memory_.Write32(table_address + kUnknownSlotOffset0x10, unknown_0x10_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x1c, unknown_0x1c_fn);
   memory_.Write32(table_address + kUnknownSlotOffset0x20, unknown_0x20_fn);
+  memory_.Write32(table_address + kCheckObjectFlagSlotOffset0xa8, check_object_flag_0xa8_fn);
   memory_.Write32(module_base - 4, table_address);
 }
 
